@@ -54,7 +54,7 @@ export function ToolRail() {
           <ActionBtn icon="bracket" label="Add" onClick={() => setConnOpen(!connOpen)} title="Add a connection to the selected members" />
           {connOpen && (
             <div className="rail-pop" onMouseLeave={() => setConnOpen(false)}>
-              {CONNECTION_LIST.map((c) => (
+              {CONNECTION_LIST.filter((c) => c.type !== 'custom').map((c) => (
                 <button
                   key={c.type}
                   onClick={() => {
@@ -69,6 +69,8 @@ export function ToolRail() {
             </div>
           )}
         </div>
+        <ActionBtn icon="bracket" label="Apply" onClick={() => set({ dialog: 'applyConnection' })} title="Apply a connection type / preset / template to the selected members" />
+        <ActionBtn icon="layers" label="Custom" onClick={() => set({ dialog: 'customConnection' })} title="Build custom connections from plates and bolt groups" />
         <ActionBtn icon="auto" label="Auto" onClick={() => set({ dialog: 'autoConnect' })} title="Place connections by rules" />
       </div>
       <div className="rail-group">

@@ -127,6 +127,9 @@ export function TopBar() {
         onKeyDown={(e) => e.stopPropagation()}
       />
       <div className="grow" />
+      <button className="secondary-btn ask-btn" title="Ask the assistant (/)" onClick={() => set({ sidePanel: 'assistant', assistantFocus: Date.now() })}>
+        <Icon name="auto" size={16} /> Ask FacadeSteel
+      </button>
       <button
         className={`primary-btn ${outputs.open ? 'on' : ''}`}
         onClick={() => set({ outputs: { ...outputs, open: !outputs.open } })}

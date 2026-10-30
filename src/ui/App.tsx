@@ -77,6 +77,10 @@ function useKeyboard() {
       }
       if (mod) return;
       switch (e.key) {
+        case '/':
+          e.preventDefault();
+          s.set({ sidePanel: 'assistant', assistantFocus: Date.now() });
+          break;
         case 'Escape':
           if (s.tool !== 'select') setTool('select');
           else s.clearSelection();

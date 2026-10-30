@@ -40,6 +40,7 @@ export const slabBracket: ConnectionDef = {
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 70, unit: 'mm' },
     { key: 'slot', label: 'Fin slot length', kind: 'number', default: 30, unit: 'mm' },
     { key: 'anchor', label: 'Anchor', kind: 'bolt', default: 'M12' },
+    { key: 'anchorType', label: 'Anchor type', kind: 'select', default: 'expansion', options: ['expansion', 'bonded (chemical)', 'concrete screw', 'cast-in channel', 'undercut'] },
     { key: 'anchorLen', label: 'Anchor length', kind: 'number', default: 110, unit: 'mm' },
     { key: 'anchorEdge', label: 'Anchor edge distance', kind: 'number', default: 35, unit: 'mm' },
     { key: 'anchorSlot', label: 'Anchor slot length', kind: 'number', default: 20, unit: 'mm' },
@@ -136,7 +137,7 @@ export const slabBracket: ConnectionDef = {
       out.bolts.push({
         key: 'anchors',
         size: anchor.name,
-        grade: 'anchor',
+        grade: `anchor – ${str(v.anchorType, 'expansion')}`,
         kind: 'anchor',
         grip: backT,
         length: num(v.anchorLen, 110),
@@ -152,7 +153,7 @@ export const slabBracket: ConnectionDef = {
       out.bolts.push({
         key: 'anchors',
         size: anchor.name,
-        grade: 'anchor',
+        grade: `anchor – ${str(v.anchorType, 'expansion')}`,
         kind: 'anchor',
         grip: backT,
         length: num(v.anchorLen, 110),

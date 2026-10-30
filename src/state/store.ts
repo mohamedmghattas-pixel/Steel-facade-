@@ -6,9 +6,9 @@ import { loadAutosave, migrateProject } from './storage';
 
 export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure';
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
-export type SidePanel = 'properties' | 'library' | 'model';
+export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
 export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks';
-export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings';
+export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings' | 'applyConnection' | 'customConnection';
 
 export interface Selection {
   members: Id[];
@@ -58,6 +58,8 @@ interface State {
   calibrateTarget: Id | null;
   /** Reference-model runtime status (loading / errors) by id. */
   refStatus: Record<Id, string>;
+  /** Bumped to focus the assistant input. */
+  assistantFocus: number;
 
   apply: (label: string, fn: (draft: Project) => void) => void;
   replaceProject: (p: Project) => void;
@@ -98,6 +100,7 @@ export const useStore = create<State>((set, get) => ({
   pendingDxf: null,
   calibrateTarget: null,
   refStatus: {},
+  assistantFocus: 0,
 
   apply: (_label, fn) => {
     const { project, past, revision } = get();
@@ -141,8 +144,10 @@ export const useStore = create<State>((set, get) => ({
   },
   select: (sel, additive = false) => {
     const cur = get().selection;
+    // Keep the assistant open while it selects things for the user.
+    const panel = get().sidePanel === 'assistant' ? 'assistant' : 'properties';
     if (!additive) {
-      set({ selection: { ...emptySelection(), ...sel }, sidePanel: 'properties' });
+      set({ selection: { ...emptySelection(), ...sel }, sidePanel: panel });
       return;
     }
     const toggle = (a: Id[], b: Id[] = []) => {
@@ -159,7 +164,7 @@ export const useStore = create<State>((set, get) => ({
         nodes: toggle(cur.nodes, sel.nodes),
         connections: toggle(cur.connections, sel.connections),
       },
-      sidePanel: 'properties',
+      sidePanel: panel,
     });
   },
   clearSelection: () => set({ selection: emptySelection() }),

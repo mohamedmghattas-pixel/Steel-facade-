@@ -5,6 +5,8 @@ import { basePlate } from './basePlate';
 import type { ConnectionDef } from './common';
 import { angleCleat, endPlate, finPlate, welded } from './memberJoints';
 import { slabBracket } from './slabBracket';
+import { splicePlates } from './splice';
+import { customConnection } from './custom';
 
 export const CONNECTIONS: Record<ConnectionType, ConnectionDef> = {
   slabBracket,
@@ -13,14 +15,20 @@ export const CONNECTIONS: Record<ConnectionType, ConnectionDef> = {
   finPlate,
   endPlate,
   welded,
+  splicePlates,
+  custom: customConnection,
 };
 
 export const CONNECTION_LIST: ConnectionDef[] = Object.values(CONNECTIONS);
 
-export function resolveParams(c: Connection): Record<string, ParamValue> {
+export function paramSpecs(c: Connection, p?: Project) {
   const def = CONNECTIONS[c.type];
+  return def.paramsFor && p ? def.paramsFor(c, p) : def.params;
+}
+
+export function resolveParams(c: Connection, p?: Project): Record<string, ParamValue> {
   const v: Record<string, ParamValue> = {};
-  for (const ps of def.params) v[ps.key] = ps.default;
+  for (const ps of paramSpecs(c, p)) v[ps.key] = ps.default;
   return { ...v, ...c.params };
 }
 
@@ -134,4 +142,64 @@ function collinear(p: Project, a: { start: Id; end: Id }, b: { start: Id; end: I
   const u = d(a);
   const v = d(b);
   return Math.abs(u.x * v.x + u.y * v.y + u.z * v.z) > 0.999;
+}
+
+export interface ApplyOptions {
+  type: ConnectionType;
+  params?: Record<string, ParamValue>;
+  /** Replace connections that already sit on the same member end. */
+  replace?: boolean;
+}
+
+/**
+ * Apply one connection type (with parameters) to every end of the given
+ * members where it makes sense:
+ * - joint types and custom templates that need a main member: at each end that
+ *   meets another, non-collinear member (splices: a collinear member)
+ * - base plates: at the lower end of each member
+ * - slab brackets: by the mullion rules of auto-connect
+ * - custom templates without a main member: at the lower / start end
+ * Returns the ids created.
+ */
+export function applyConnection(p: Project, memberIds: Id[], o: ApplyOptions): Id[] {
+  const created: Id[] = [];
+  const ids = new Set(memberIds);
+  const params = o.params ?? {};
+  if (o.type === 'slabBracket') {
+    const made = autoConnect(p, { ...AUTO_DEFAULTS, joint: 'none', postBases: false, mullionBrackets: true }, ids);
+    for (const id of made) p.connections[id].params = { ...p.connections[id].params, ...params };
+    return made;
+  }
+  const def = CONNECTIONS[o.type];
+  const tplNeedsMain = o.type === 'custom' ? (p.library.templates.find((t) => t.id === params.template)?.needsMain ?? true) : def.needsMain;
+  const existing = (node: Id, sec: Id) => Object.values(p.connections).filter((c) => c.node === node && c.secondary[0] === sec);
+  for (const mid of ids) {
+    const m = p.members[mid];
+    if (!m?.profile) continue;
+    const ends: Id[] = [m.start, m.end];
+    if (!tplNeedsMain) {
+      const a = p.nodes[m.start].p;
+      const b = p.nodes[m.end].p;
+      ends.splice(0, 2, a.z <= b.z ? m.start : m.end);
+    }
+    for (const node of ends) {
+      const old = existing(node, mid);
+      if (old.length && !o.replace) continue;
+      let main: Id | null = null;
+      if (tplNeedsMain) {
+        const others = membersAtNode(p, node).filter((x) => x.member.id !== mid && x.member.profile);
+        const pick =
+          o.type === 'splicePlates'
+            ? others.find((x) => x.at !== 'through' && collinear(p, x.member, m))
+            : others.find((x) => x.at === 'through' && !collinear(p, x.member, m)) ?? others.find((x) => !collinear(p, x.member, m));
+        if (!pick) continue;
+        // Never splice a pair twice.
+        if (o.type === 'splicePlates' && Object.values(p.connections).some((c) => c.type === 'splicePlates' && c.node === node)) continue;
+        main = pick.member.id;
+      }
+      for (const c of old) delete p.connections[c.id];
+      created.push(addConnection(p, o.type, node, main, [mid], { ...params }));
+    }
+  }
+  return created;
 }

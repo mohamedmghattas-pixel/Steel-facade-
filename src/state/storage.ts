@@ -33,6 +33,7 @@ export function migrateProject(p: Project | null): Project | null {
   p.info ??= { name: 'Project', number: '', client: '', designer: '' };
   const dd = defaultDrawingSet();
   p.drawings = { settings: { ...dd.settings, ...(p.drawings?.settings ?? {}) }, revisions: p.drawings?.revisions ?? {} };
+  p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [] };
   return p;
 }
 

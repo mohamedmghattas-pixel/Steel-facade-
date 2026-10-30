@@ -14,6 +14,7 @@ export const basePlate: ConnectionDef = {
     { key: 'length', label: 'Length (0 = auto)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'edge', label: 'Anchor edge distance', kind: 'number', default: 35, unit: 'mm' },
     { key: 'anchor', label: 'Anchor', kind: 'bolt', default: 'M16' },
+    { key: 'anchorType', label: 'Anchor type', kind: 'select', default: 'expansion', options: ['expansion', 'bonded (chemical)', 'concrete screw', 'cast-in channel', 'undercut'] },
     { key: 'anchorLen', label: 'Anchor length', kind: 'number', default: 150, unit: 'mm' },
     { key: 'oversize', label: 'Hole oversize', kind: 'number', default: 4, unit: 'mm' },
   ],
@@ -59,7 +60,7 @@ export const basePlate: ConnectionDef = {
     out.bolts.push({
       key: 'anchors',
       size: anchor.name,
-      grade: 'anchor',
+      grade: `anchor – ${str(v.anchorType, 'expansion')}`,
       kind: 'anchor',
       grip: t,
       length: num(v.anchorLen, 150),

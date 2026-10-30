@@ -111,7 +111,7 @@ export function deriveModel(p: Project): DerivedModel {
     const c = p.connections[cid];
     const node = p.nodes[c.node];
     if (!node) return null;
-    return { p, c, node: node.p, v: resolveParams(c), geom: (id) => geoms.get(id) };
+    return { p, c, node: node.p, v: resolveParams(c, p), geom: (id) => geoms.get(id) };
   };
   for (const c of Object.values(p.connections)) {
     const def = CONNECTIONS[c.type];

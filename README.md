@@ -4,6 +4,10 @@ A browser-based steel detailing tool for **facade secondary steel**: the bracket
 
 Everything runs in the browser. There is no server: projects autosave to the browser and can be saved and opened as `.json` files.
 
+**Talk to it.** The **Assistant** tab (or press `/`) lets you operate the whole application in plain language. For example: "create a 4-bay, 2-storey facade with SHS 100 mullions", "put end plates on the selected rails", "check edge distances and fix them", "issue all drawings for approval".
+- It runs on Claude (`claude-opus-5-5`) with your own Anthropic API key, which is stored only in your browser.
+- Every change it makes can be undone like a normal edit.
+
 ## Workflow
 
 1. **Reference.** Bring in what you design against:
@@ -15,15 +19,23 @@ Everything runs in the browser. There is no server: projects autosave to the bro
    - Typed coordinates: `x,y,z` for world, `u,v` for work-plane, `@dx,dy` for relative, or a single length.
    - **Facade grid** generates every mullion and transom from bay widths and row heights.
 3. **Members.** Assign profiles from the **EN** and **AISC** libraries by hand, or let **Auto-assign** pick by direction or by DXF layer. Then set rotation, face alignment, offsets and extensions.
-4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs:
-   - Slab bracket (edge or top mount, with slotted fin and anchors)
-   - Base plate
-   - Angle cleat
-   - Fin plate
-   - End plate
-   - Welded joint
-
-   **Auto-connect** places them by rule. Change any parameter and the steel updates.
+4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs.
+   - **Steel to concrete:**
+     - Slab bracket (edge or top mount, with slotted fin and anchors)
+     - Base / wall plate
+     - Anchor types: expansion, bonded, screw, cast-in channel, undercut
+   - **Steel to steel:**
+     - Angle cleat
+     - Fin plate or knife plate
+     - End plate
+     - Splice plates
+     - Welded joint
+   - **Custom connections:** build your own from plates and bolt groups whose sizes and positions are formulas, e.g. `b_sec + 2*(edge + 25)`. Save them to the project library and apply them anywhere.
+   - **Applying connections:**
+     - **Apply** puts a connection type, preset or custom template on every relevant end of the selected members.
+     - **Presets** save a parameter set.
+     - Editing a parameter changes every selected connection of that type.
+     - **Auto-connect** places connections by rule.
 5. **Outputs.** Parts and assemblies are numbered automatically, with identical items sharing a mark.
    - IFC4 model export
    - Material lists (XLSX, or CSV in a zip)
@@ -86,6 +98,8 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 - DXF import reads LINE, LWPOLYLINE and POLYLINE. Arcs, blocks and text are ignored. DWG is not supported yet: save as DXF first.
 
 ## Roadmap
+
+See [docs/ROADMAP.md](docs/ROADMAP.md) for the gap analysis — what is still missing to be the leading facade steel tool — and the next milestones. Short version:
 
 - Drawing control: editable view placement, section cuts, company sheet templates
 - More connections: splices, knife plates, cast-in channels, beam clamps for main steel

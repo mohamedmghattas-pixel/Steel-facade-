@@ -8,9 +8,11 @@ import { MATERIALS } from '../core/library/materials';
 import { BOLT_SIZES } from '../core/library/bolts';
 import { PROFILES, getProfile, profileFamilies, type Standard } from '../core/library/profiles';
 import { shapeOutline } from '../core/library/shapes';
-import { CONNECTIONS, resolveParams } from '../core/connections/registry';
+import { CONNECTIONS, paramSpecs, resolveParams } from '../core/connections/registry';
+import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
 import { assignActiveProfile, removeReference } from './actions';
+import { AssistantPanel } from './AssistantPanel';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -18,13 +20,14 @@ export function SidePanel() {
   return (
     <aside className="side">
       <div className="tabs" role="tablist">
-        {(['properties', 'library', 'model'] as const).map((t) => (
+        {(['assistant', 'properties', 'library', 'model'] as const).map((t) => (
           <button key={t} role="tab" aria-selected={panel === t} className={panel === t ? 'on' : ''} onClick={() => set({ sidePanel: t })}>
-            {t === 'properties' ? 'Properties' : t === 'library' ? 'Library' : 'Model'}
+            {t === 'assistant' ? 'Assistant' : t === 'properties' ? 'Properties' : t === 'library' ? 'Library' : 'Model'}
           </button>
         ))}
       </div>
-      <div className="side-body">
+      <div className={`side-body ${panel === 'assistant' ? 'flush' : ''}`}>
+        {panel === 'assistant' && <AssistantPanel />}
         {panel === 'properties' && <PropertiesPanel />}
         {panel === 'library' && <LibraryPanel />}
         {panel === 'model' && <ModelPanel />}
@@ -166,6 +169,9 @@ function MemberProps({ ids }: { ids: string[] }) {
           <NumberInput value={c((m) => m.endExt).value as number} mixed={c((m) => m.endExt).mixed} unit="mm" onChange={(v) => patch('Extension', { endExt: v })} />
         </Field>
       </div>
+      <button className="secondary-btn wide-btn" onClick={() => useStore.getState().set({ dialog: 'applyConnection' })}>
+        <Icon name="bracket" size={15} /> Apply a connection to {ms.length === 1 ? 'this member' : `these ${ms.length} members`}…
+      </button>
       {ms.length === 1 && (
         <Field label="Name / note">
           <TextInput value={ms[0].name ?? ''} onChange={(v) => patch('Name', { name: v || undefined })} placeholder={ms[0].layer ? `layer ${ms[0].layer}` : ''} />
@@ -178,24 +184,34 @@ function MemberProps({ ids }: { ids: string[] }) {
 function ConnectionProps({ id, count }: { id: string; count: number }) {
   const project = useStore((s) => s.project);
   const apply = useStore((s) => s.apply);
+  const selIds = useStore((s) => s.selection.connections);
+  const set = useStore((s) => s.set);
   const c = project.connections[id];
+  const [presetName, setPresetName] = useState('');
   if (!c) return null;
   const def = CONNECTIONS[c.type];
-  const v = resolveParams(c);
+  const v = resolveParams(c, project);
+  const specs = paramSpecs(c, project);
+  // Edits apply to every selected connection of the same type (and template).
+  const peers = selIds.map((x) => project.connections[x]).filter((x) => x && x.type === c.type && (c.type !== 'custom' || x.params.template === c.params.template));
   const dm = derived(project);
   const out = dm.connectionOut.get(c.id);
   const parts = dm.parts.filter((pt) => pt.connectionId === c.id);
   const warnings = dm.warnings.filter((w) => w.connectionId === c.id);
+  const presets = project.library.presets.filter((pr) => pr.type === c.type);
   const setParam = (key: string, value: number | string | boolean) =>
     apply(`${def.label}: ${key}`, (p) => {
-      const cc = p.connections[id];
-      if (cc) cc.params = { ...cc.params, [key]: value };
+      for (const peer of peers) {
+        const cc = p.connections[peer.id];
+        if (cc) cc.params = { ...cc.params, [key]: value };
+      }
     });
+  const mixed = (key: string) => peers.some((x) => resolveParams(x, project)[key] !== v[key]);
   return (
     <section className="props">
       <h3>
-        {def.label}
-        {count > 1 && <span className="badge">+{count - 1} more</span>}
+        {c.type === 'custom' ? (templateFor(project, c.params.template)?.name ?? def.label) : def.label}
+        {count > 1 && <span className="badge">{peers.length > 1 ? `editing ${peers.length}` : `+${count - 1} more`}</span>}
       </h3>
       <p className="muted">{def.description}</p>
       {warnings.map((w, i) => (
@@ -210,21 +226,63 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
         <span>{out?.bolts.reduce((s, b) => s + b.positions.length, 0) ?? 0} bolts/anchors</span>
         <span>{kg(parts.reduce((s, pt) => s + pt.mass, 0))}</span>
       </div>
-      {def.params.map((ps) => (
+      {specs.map((ps) => (
         <Field key={ps.key} label={ps.label}>
-          {ps.kind === 'number' && <NumberInput value={v[ps.key] as number} unit={ps.unit} onChange={(n) => setParam(ps.key, n)} />}
-          {ps.kind === 'select' && <Select value={v[ps.key] as string} options={ps.options ?? []} onChange={(s) => setParam(ps.key, s)} />}
-          {ps.kind === 'text' && <TextInput value={String(v[ps.key])} onChange={(s) => setParam(ps.key, s)} />}
-          {ps.kind === 'bolt' && <Select value={v[ps.key] as string} options={BOLT_SIZES.map((b) => b.name)} onChange={(s) => setParam(ps.key, s)} />}
+          {ps.kind === 'number' && <NumberInput value={v[ps.key] as number} mixed={mixed(ps.key)} unit={ps.unit} onChange={(n) => setParam(ps.key, n)} />}
+          {ps.kind === 'select' && <Select value={v[ps.key] as string} mixed={mixed(ps.key)} options={ps.options ?? []} onChange={(x) => setParam(ps.key, x)} />}
+          {ps.kind === 'text' && <TextInput value={String(v[ps.key])} onChange={(x) => setParam(ps.key, x)} />}
+          {ps.kind === 'bolt' && <Select value={v[ps.key] as string} mixed={mixed(ps.key)} options={BOLT_SIZES.map((b) => b.name)} onChange={(x) => setParam(ps.key, x)} />}
           {ps.kind === 'profile' && (
-            <ProfilePicker value={v[ps.key] as string} onChange={(s) => s && setParam(ps.key, s)} filter={(n) => getProfile(n)?.shape.type === 'L'} />
+            <ProfilePicker value={v[ps.key] as string} onChange={(x) => x && setParam(ps.key, x)} filter={(n) => getProfile(n)?.shape.type === 'L'} />
+          )}
+          {ps.kind === 'template' && (
+            <Select value={String(v[ps.key])} options={project.library.templates.map((t) => ({ value: t.id, label: t.name }))} onChange={(x) => setParam(ps.key, x)} />
           )}
           {ps.kind === 'bool' && <input type="checkbox" checked={!!v[ps.key]} onChange={(e) => setParam(ps.key, e.target.checked)} />}
         </Field>
       ))}
-      <button className="link-btn" onClick={() => apply('Reset connection', (p) => void (p.connections[id].params = {}))}>
-        Reset to defaults
-      </button>
+      <div className="btn-row">
+        <button className="link-btn" onClick={() => apply('Reset connection', (p) => peers.forEach((x) => void (p.connections[x.id].params = c.type === 'custom' ? { template: c.params.template } : {})))}>
+          Reset to defaults
+        </button>
+        {c.type === 'custom' && (
+          <button className="link-btn" onClick={() => set({ dialog: 'customConnection' })}>
+            Edit template…
+          </button>
+        )}
+      </div>
+      <h4>Presets</h4>
+      {presets.map((pr) => (
+        <div className="rule" key={pr.id}>
+          <span>{pr.name}</span>
+          <button
+            className="secondary-btn"
+            onClick={() =>
+              apply(`Preset ${pr.name}`, (p) => {
+                for (const peer of peers) p.connections[peer.id].params = { ...pr.params };
+              })
+            }
+          >
+            Apply
+          </button>
+          <button className="icon-btn" title="Delete preset" onClick={() => apply('Delete preset', (p) => void (p.library.presets = p.library.presets.filter((x) => x.id !== pr.id)))}>
+            ×
+          </button>
+        </div>
+      ))}
+      <div className="row-inline">
+        <TextInput value={presetName} placeholder="Preset name" onChange={setPresetName} />
+        <button
+          className="secondary-btn"
+          disabled={!presetName.trim()}
+          onClick={() => {
+            apply('Save preset', (p) => void p.library.presets.push({ id: newId('pre'), name: presetName.trim(), type: c.type, params: { ...c.params } }));
+            setPresetName('');
+          }}
+        >
+          Save current
+        </button>
+      </div>
     </section>
   );
 }
@@ -400,6 +458,8 @@ function ProfilePreview({ name }: { name: string }) {
   );
 }
 
+const STD_LABEL: Record<string, string> = { EN: 'EN (Europe)', BS: 'BS (UK)', AISC: 'AISC (US)', Custom: 'Custom' };
+
 function LibraryPanel() {
   const active = useStore((s) => s.activeProfile);
   const role = useStore((s) => s.activeRole);
@@ -409,6 +469,7 @@ function LibraryPanel() {
   const [std, setStd] = useState<Standard>('EN');
   const [family, setFamily] = useState<string>('SHS');
   const [q, setQ] = useState('');
+  const standards = useMemo(() => [...new Set(PROFILES.map((p) => p.standard))], []);
   const families = useMemo(() => profileFamilies(std), [std]);
   const list = useMemo(() => {
     const k = q.toLowerCase().replace(/\s/g, '');
@@ -420,10 +481,7 @@ function LibraryPanel() {
     <section className="library">
       <Segmented
         value={std}
-        options={[
-          { value: 'EN', label: 'EN (European)' },
-          { value: 'AISC', label: 'AISC (US)' },
-        ]}
+        options={standards.map((x) => ({ value: x, label: STD_LABEL[x] ?? x }))}
         onChange={(v) => {
           setStd(v);
           setFamily(profileFamilies(v)[0]);
@@ -497,7 +555,7 @@ function ModelPanel() {
       </button>
       <h3>Grids</h3>
       {project.grids.map((g, i) => (
-        <div className="rule" key={g.id}>
+        <div className="rule rule4" key={g.id}>
           <TextInput value={g.name} onChange={(v) => apply('Grid', (p) => void (p.grids[i].name = v))} />
           <Select value={g.axis} options={[{ value: 'x', label: 'X =' }, { value: 'y', label: 'Y =' }]} onChange={(v) => apply('Grid', (p) => void (p.grids[i].axis = v as 'x' | 'y'))} />
           <NumberInput value={g.pos} unit="mm" onChange={(v) => apply('Grid', (p) => void (p.grids[i].pos = v))} />

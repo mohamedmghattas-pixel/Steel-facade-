@@ -86,7 +86,9 @@ export type ConnectionType =
   | 'finPlate'
   | 'angleCleat'
   | 'endPlate'
-  | 'welded';
+  | 'welded'
+  | 'splicePlates'
+  | 'custom';
 
 export type ParamValue = number | string | boolean;
 
@@ -100,6 +102,71 @@ export interface Connection {
   /** The supported member(s). */
   secondary: Id[];
   params: Record<string, ParamValue>;
+}
+
+/** A named parameter set for a connection type, applied to selected connections or members. */
+export interface ConnectionPreset {
+  id: Id;
+  name: string;
+  type: ConnectionType;
+  params: Record<string, ParamValue>;
+}
+
+/**
+ * A plate in a custom connection. Values are formulas over the template's
+ * parameters and the joint variables (h_sec, b_sec, h_main, b_main, depth_main …),
+ * in the secondary member's end frame: u along the secondary away from the main
+ * face, v across (local y), w up (local z).
+ */
+export interface CustomPlate {
+  key: string;
+  name: string;
+  /** Plate lies across the member end (normal u), on a side (normal v) or on top (normal w). */
+  plane: 'end' | 'side' | 'top';
+  t: string;
+  /** Size along the plate's first axis (v for end plates, u otherwise) and second axis (w, or v for top). */
+  width: string;
+  height: string;
+  /** Contact plane / corner position in the end frame. */
+  u: string;
+  v: string;
+  w: string;
+  /** Shop weld: to the main member, the secondary member, another plate key, or none (loose). */
+  weldTo: 'main' | 'secondary' | 'none' | string;
+  bolts?: {
+    size: string;
+    grade: string;
+    rows: string;
+    cols: string;
+    /** Spacing along the plate height / width axis. */
+    pitch: string;
+    gauge: string;
+    /** What the bolts go through besides the plate. 'concrete' makes them anchors. */
+    through: 'main' | 'secondary' | 'none' | 'concrete';
+    /** Extra slot length (0 = round holes) and slot direction: along width or height. */
+    slot?: string;
+    slotAlong?: 'width' | 'height';
+    anchorLength?: string;
+  };
+}
+
+export interface CustomTemplate {
+  id: Id;
+  name: string;
+  description: string;
+  /** Joint to a supporting member (else the plates bear on concrete or a reference). */
+  needsMain: boolean;
+  params: { key: string; label: string; default: number }[];
+  /** Cut-back of the secondary from the main face (or the node). */
+  cut: string;
+  plates: CustomPlate[];
+}
+
+export interface ProjectLibrary {
+  presets: ConnectionPreset[];
+  templates: CustomTemplate[];
+  /** User or catalogue-imported profile definitions (see core/library). */
+  profiles: Record<string, unknown>[];
 }
 
 export interface GridLine {
@@ -181,6 +248,8 @@ export interface ProjectSettings {
   bracketPrefix: string;
   autoRules: AutoAssignRule[];
   gridStep: number;
+  /** Code used for detailing checks and defaults; 'auto' follows the profile library in use. */
+  designCode: 'auto' | 'AISC360' | 'EC3';
 }
 
 // ---------------------------------------------------------------------------
@@ -251,4 +320,5 @@ export interface Project {
   underlays: Underlay[];
   settings: ProjectSettings;
   drawings: DrawingSet;
+  library: ProjectLibrary;
 }

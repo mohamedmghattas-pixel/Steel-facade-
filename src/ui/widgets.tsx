@@ -162,11 +162,7 @@ export function ProfilePicker({
             <input autoFocus placeholder="Search e.g. SHS 100, HSS4x4, L 60" value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
             <Segmented
               value={std}
-              options={[
-                { value: 'all', label: 'All' },
-                { value: 'EN', label: 'EN' },
-                { value: 'AISC', label: 'AISC' },
-              ]}
+              options={[{ value: 'all' as const, label: 'All' }, ...[...new Set(PROFILES.map((p) => p.standard))].map((x) => ({ value: x, label: x }))]}
               onChange={setStd}
             />
           </div>

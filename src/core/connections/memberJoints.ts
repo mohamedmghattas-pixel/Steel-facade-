@@ -58,6 +58,7 @@ export const finPlate: ConnectionDef = {
     { key: 'height', label: 'Plate height (0 = auto)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'gap', label: 'Gap to main', kind: 'number', default: 10, unit: 'mm' },
     { key: 'side', label: 'Side (±1)', kind: 'number', default: 1 },
+    { key: 'position', label: 'Position', kind: 'select', default: 'side', options: ['side', 'knife (centred, slotted member)'] },
     { key: 'bolt', label: 'Bolt', kind: 'bolt', default: 'M12' },
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts', kind: 'number', default: 2 },
@@ -86,7 +87,10 @@ export const finPlate: ConnectionDef = {
     const ub = face + L - e;
     let offs = boltOffsets(Math.round(num(v.bolts, 2)), num(v.pitch, 50));
     if (offs.some((o) => Math.abs(o) > H / 2 - bolt.hole)) offs = [0];
-    const origin = madd(madd(madd(Cs, ys, sec.w / 2), dIn, face), zs, -H / 2);
+    // Side plate on the member face, or a knife plate centred in a slotted member.
+    const knife = str(v.position, 'side').startsWith('knife');
+    const contact = knife ? -t / 2 : sec.w / 2;
+    const origin = madd(madd(madd(Cs, ys, contact), dIn, face), zs, -H / 2);
     const frame = plateOn(origin, ys, dIn, zs, t);
     out.plates.push({
       key: 'plate',
@@ -97,7 +101,7 @@ export const finPlate: ConnectionDef = {
       frame,
       weldedTo: `m:${j.main.member.id}`,
     });
-    const grip = t + sec.w;
+    const grip = knife ? sec.w : t + sec.w;
     out.bolts.push({
       key: 'bolts',
       size: bolt.name,
@@ -106,7 +110,7 @@ export const finPlate: ConnectionDef = {
       grip,
       length: boltLength(bolt, grip),
       dir: scale(ys, -1),
-      positions: offs.map((o) => madd(madd(madd(Cs, ys, sec.w / 2 + t), dIn, ub), zs, o)),
+      positions: offs.map((o) => madd(madd(madd(Cs, ys, knife ? sec.w / 2 : sec.w / 2 + t), dIn, ub), zs, o)),
     });
     for (const o of offs) {
       out.memberHoles.push({ member: sec.member.id, hole: { pos: madd(madd(Cs, dIn, ub), zs, o), dir: ys, d: bolt.hole } });

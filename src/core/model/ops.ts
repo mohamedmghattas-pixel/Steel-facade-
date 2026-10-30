@@ -68,6 +68,7 @@ export function defaultSettings(): ProjectSettings {
       { match: 'inclined', profile: 'CHS 48.3x3.2', role: 'brace' },
     ],
     gridStep: 50,
+    designCode: 'auto',
   };
 }
 
@@ -105,6 +106,7 @@ export function createProject(name = 'New facade project'): Project {
     underlays: [],
     settings: defaultSettings(),
     drawings: defaultDrawingSet(),
+    library: { presets: [], templates: [], profiles: [] },
   };
 }
 

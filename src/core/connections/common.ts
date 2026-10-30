@@ -78,7 +78,7 @@ export interface Trim {
 export interface ParamSpec {
   key: string;
   label: string;
-  kind: 'number' | 'select' | 'bool' | 'profile' | 'bolt' | 'text';
+  kind: 'number' | 'select' | 'bool' | 'profile' | 'bolt' | 'text' | 'template';
   default: ParamValue;
   unit?: string;
   options?: string[];
@@ -101,6 +101,8 @@ export interface ConnectionDef {
   /** Needs a supporting member (otherwise it bears on concrete / a reference). */
   needsMain: boolean;
   params: ParamSpec[];
+  /** Parameters that depend on the connection itself (custom templates). */
+  paramsFor?(c: Connection, p: Project): ParamSpec[];
   trims?(ctx: ConnCtx): Trim[];
   build(ctx: ConnCtx): ConnectionOut;
 }

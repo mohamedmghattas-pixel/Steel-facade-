@@ -8,6 +8,7 @@ import { dxfUnitScale, importDxfWireframe, parseDxf } from '../../core/io/dxfImp
 import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/types';
 import { putBlob } from '../../state/storage';
 import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
+import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -27,6 +28,10 @@ export function Dialogs() {
       return <IssueDrawingsDialog onClose={close} />;
     case 'drawingSettings':
       return <DrawingSettingsDialog onClose={close} />;
+    case 'applyConnection':
+      return <ApplyConnectionDialog onClose={close} />;
+    case 'customConnection':
+      return <CustomConnectionDialog onClose={close} />;
     default:
       return null;
   }

@@ -236,6 +236,7 @@ export function deriveModel(p: Project): DerivedModel {
     welds.push(...out.welds);
   }
   const partByRef = new Map(parts.map((pt) => [pt.ref, pt]));
+  warnings.push(...holeSpacingWarnings(parts));
 
   // Assemblies: union-find over shop welds.
   const parent = new Map<PartRef, PartRef>();
@@ -287,6 +288,33 @@ export function deriveModel(p: Project): DerivedModel {
   const dm: DerivedModel = { parts, partByRef, assemblies, bolts, geoms, connectionOut, warnings };
   number(dm, p);
   return dm;
+}
+
+/**
+ * Bolt holes in a linear part that are closer than 2.2 d0 (EN 1993-1-8 minimum
+ * spacing) usually mean two connections clash.
+ */
+function holeSpacingWarnings(parts: Part[]): DerivedModel['warnings'] {
+  const out: DerivedModel['warnings'] = [];
+  for (const pt of parts) {
+    if (pt.kind !== 'member' || pt.holes.length < 2) continue;
+    const hs = pt.holes;
+    let found = false;
+    for (let i = 0; i < hs.length && !found; i++) {
+      for (let j = i + 1; j < hs.length && !found; j++) {
+        const a = hs[i];
+        const b = hs[j];
+        if (a.face !== b.face) continue;
+        const across = a.face === 'y' ? b.z - a.z : b.y - a.y;
+        const d = Math.hypot(b.x - a.x, across);
+        if (d > 0.5 && d < 2.2 * Math.max(a.d, b.d)) {
+          out.push({ memberId: pt.memberId, text: `Bolt holes ${Math.round(d)} mm apart at ${Math.round(a.x)} mm along ${pt.profile} — two connections clash.` });
+          found = true;
+        }
+      }
+    }
+  }
+  return out;
 }
 
 function rank(pt: Part): number {

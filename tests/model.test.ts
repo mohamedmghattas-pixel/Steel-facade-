@@ -3,6 +3,7 @@ import { deriveModel, uniqueAssemblies, uniqueParts } from '../src/core/derive/m
 import { addLine, createProject, splitAtIntersections, autoAssign, deleteMembers } from '../src/core/model/ops';
 import { axesFor, v3 } from '../src/core/model/geometry';
 import { sampleFacade } from './helpers';
+import { sampleProject } from '../src/core/sample';
 
 describe('wireframe ops', () => {
   it('merges shared nodes and splits crossing lines', () => {
@@ -48,7 +49,17 @@ describe('facade derivation', () => {
     const types = Object.values(p.connections).map((c) => c.type);
     expect(types.filter((t) => t === 'slabBracket')).toHaveLength(12); // 4 lines x 3 floor lines
     expect(types.filter((t) => t === 'angleCleat')).toHaveLength(30); // both ends of every transom
-    expect(dm.warnings).toEqual([]);
+    expect(dm.warnings.filter((w) => w.connectionId)).toEqual([]);
+  });
+
+  it('flags transom cleats that clash with slab brackets on floor lines', () => {
+    expect(dm.warnings.some((w) => w.memberId && /clash/.test(w.text))).toBe(true);
+  });
+
+  it('builds the shipped sample without any warnings', () => {
+    const sample = deriveModel(sampleProject());
+    expect(sample.warnings).toEqual([]);
+    expect(sample.parts.length).toBeGreaterThan(50);
   });
 
   it('trims transoms to the mullion faces', () => {

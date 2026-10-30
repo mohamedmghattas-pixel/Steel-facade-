@@ -49,7 +49,7 @@ export function ToolRail() {
         <ActionBtn icon="auto" label="Auto-assign" onClick={autoAssignSelection} title="Assign profiles by direction / DXF layer rules" />
       </div>
       <div className="rail-group">
-        <span className="rail-title">3 · Connections</span>
+        <span className="rail-title">3 · Joints</span>
         <div className="rail-pop-host">
           <ActionBtn icon="bracket" label="Add" onClick={() => setConnOpen(!connOpen)} title="Add a connection to the selected members" />
           {connOpen && (

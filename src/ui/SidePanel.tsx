@@ -51,8 +51,8 @@ const FINISHES: { value: Finish; label: string }[] = [
 function PropertiesPanel() {
   const sel = useStore((s) => s.selection);
   const project = useStore((s) => s.project);
-  if (sel.connections.length) return <ConnectionProps id={sel.connections[0]} count={sel.connections.length} />;
   if (sel.members.length) return <MemberProps ids={sel.members} />;
+  if (sel.connections.length) return <ConnectionProps id={sel.connections[0]} count={sel.connections.length} />;
   if (sel.nodes.length) {
     const n = project.nodes[sel.nodes[0]];
     return (

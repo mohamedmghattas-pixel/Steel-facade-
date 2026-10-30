@@ -8,7 +8,6 @@ import {
   createProject,
   deleteConnections,
   deleteMembers,
-  facadeGrid,
   moveItems,
   newId,
   splitAtIntersections,
@@ -30,6 +29,7 @@ import { zip } from '../core/io/zip';
 import { allDrawings, drawingToDxf } from '../core/drawings';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
+import { sampleProject } from '../core/sample';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -63,26 +63,8 @@ export async function openProjectFile() {
   }
 }
 
-/** A worked example: two-storey curtain-wall support frame with slab brackets and cleats. */
 export function loadSample() {
-  const p = createProject('Sample facade – Block A east elevation');
-  p.info.number = 'FS-001';
-  p.info.client = 'Sample client';
-  p.info.designer = 'FacadeSteel';
-  facadeGrid(p, {
-    plane: { kind: 'XZ', offset: 0 },
-    u0: 0,
-    v0: 0,
-    bays: [1500, 1500, 1500, 1500],
-    rows: [1100, 2400, 1100, 2400],
-    floorLines: [0, 2, 4],
-    mullionProfile: 'SHS 100x100x5',
-    transomProfile: 'RHS 100x50x4',
-    transomDepthNormal: true,
-    addLevels: true,
-  });
-  p.grids = [0, 1, 2, 3, 4].map((i) => ({ id: newId('g'), name: String(i + 1), axis: 'x' as const, pos: i * 1500 }));
-  autoConnect(p);
+  const p = sampleProject();
   st().replaceProject(p);
   st().set({ viewRequest: { name: '3d', n: Date.now() } });
   notify('Loaded the sample facade. Open Outputs to see the material list, nesting and drawings.');

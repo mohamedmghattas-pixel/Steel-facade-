@@ -36,12 +36,13 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
   const [u0, setU0] = useState(0);
   const [v0, setV0] = useState(0);
   const [bays, setBays] = useState('4x1500');
-  const [rows, setRows] = useState('1100, 2400, 1100, 2400');
-  const [floors, setFloors] = useState('0, 2, 4');
+  const [rows, setRows] = useState('150, 950, 2400, 1100, 2250, 150');
+  const [floors, setFloors] = useState('0, 3, 6');
   const [mullion, setMullion] = useState<string | null>('SHS 100x100x5');
   const [transom, setTransom] = useState<string | null>('RHS 100x50x4');
   const [depthNormal, setDepthNormal] = useState(true);
   const [levels, setLevels] = useState(true);
+  const [floorTransoms, setFloorTransoms] = useState(false);
   const b = parseList(bays);
   const r = parseList(rows);
   const f = parseList(floors);
@@ -62,6 +63,7 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
         transomProfile: transom,
         transomDepthNormal: depthNormal,
         addLevels: levels,
+        floorTransoms,
       });
     });
     select({ members: ids });
@@ -132,14 +134,18 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
         <input type="checkbox" checked={depthNormal} onChange={(e) => setDepthNormal(e.target.checked)} /> Turn transoms so their depth resists wind (normal to the facade)
       </label>
       <label className="check">
+        <input type="checkbox" checked={floorTransoms} onChange={(e) => setFloorTransoms(e.target.checked)} /> Also put transoms on floor lines (they share the mullion
+        with the slab brackets)
+      </label>
+      <label className="check">
         <input type="checkbox" checked={levels} onChange={(e) => setLevels(e.target.checked)} /> Add project levels at the floor lines
       </label>
-      <GridPreview bays={b} rows={r} floors={f} />
+      <GridPreview bays={b} rows={r} floors={f} floorTransoms={floorTransoms} />
     </Modal>
   );
 }
 
-function GridPreview({ bays, rows, floors }: { bays: number[]; rows: number[]; floors: number[] }) {
+function GridPreview({ bays, rows, floors, floorTransoms }: { bays: number[]; rows: number[]; floors: number[]; floorTransoms: boolean }) {
   const W = bays.reduce((s, x) => s + x, 0) || 1;
   const H = rows.reduce((s, x) => s + x, 0) || 1;
   const us = bays.reduce<number[]>((a, x) => [...a, a[a.length - 1] + x], [0]);
@@ -148,7 +154,10 @@ function GridPreview({ bays, rows, floors }: { bays: number[]; rows: number[]; f
   return (
     <svg className="grid-preview" viewBox={`${-pad} ${-pad} ${W + 2 * pad} ${H + 2 * pad}`} preserveAspectRatio="xMidYMid meet" aria-label="Grid preview">
       {vs.map((v, i) => (
-        <line key={`h${i}`} x1={0} x2={W} y1={H - v} y2={H - v} className={floors.includes(i) ? 'floor' : 'transom'} />
+        <g key={`h${i}`}>
+          {floors.includes(i) && <line x1={-W * 0.04} x2={W * 1.04} y1={H - v} y2={H - v} className="floor" />}
+          {(!floors.includes(i) || floorTransoms) && <line x1={0} x2={W} y1={H - v} y2={H - v} className="transom" />}
+        </g>
       ))}
       {us.map((u, i) => (
         <line key={`v${i}`} x1={u} x2={u} y1={0} y2={H} className="mullion" />

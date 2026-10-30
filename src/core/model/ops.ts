@@ -358,6 +358,8 @@ export interface FacadeGridOptions {
   /** Rotate transoms so their depth is normal to the facade (typical for wind load). */
   transomDepthNormal: boolean;
   addLevels: boolean;
+  /** Also place transoms on floor/slab lines (where they compete with slab brackets). Default true. */
+  floorTransoms?: boolean;
 }
 
 export function facadeGrid(p: Project, o: FacadeGridOptions): Id[] {
@@ -388,6 +390,7 @@ export function facadeGrid(p: Project, o: FacadeGridOptions): Id[] {
   }
   // Transoms on every horizontal line, one per bay.
   for (let j = 0; j < vs.length; j++) {
+    if (o.floorTransoms === false && floors.has(j)) continue;
     for (let i = 0; i < us.length - 1; i++) {
       const id = addLine(p, planeToWorld(o.plane, us[i], vs[j]), planeToWorld(o.plane, us[i + 1], vs[j]), {
         ...base,

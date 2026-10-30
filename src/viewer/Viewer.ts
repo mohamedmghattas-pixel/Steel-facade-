@@ -114,7 +114,7 @@ export class Viewer {
     this.container = container;
     this.cb = cb;
     THREE.Object3D.DEFAULT_UP.set(0, 0, 1);
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x000000, 0);
     container.appendChild(this.renderer.domElement);

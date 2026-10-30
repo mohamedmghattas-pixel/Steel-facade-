@@ -10,7 +10,7 @@ import type { Vec2, Vec3 } from '../model/types';
 import { dot, toLocal, type Frame } from '../model/geometry';
 import type { Part } from '../derive/model';
 import { shapeOutline } from '../library/shapes';
-import { textWidth, type Sheet } from './dims';
+import type { Sheet } from './dims';
 import { convexHull } from './project';
 import { TEXT } from './standards';
 import { textExtent } from './viewLayout';
@@ -410,65 +410,28 @@ const perimeter = (poly: Poly) => {
 };
 
 /**
- * Groups even-odd regions into outlines with their holes, each as one "keyhole"
- * polygon (outer counter-clockwise, holes clockwise, joined by zero-width
- * bridges) so that a filled polygon shows a hollow section as a ring.
+ * ISO 128-50: hatching is spaced to suit the area; sections narrower than this on
+ * paper are hatched at the minimum spacing (0.7 mm), which reads as blackened in
+ * both SVG/PDF and DXF while still leaving hole voids open.
  */
-export function keyholes(regions: Poly[]): Poly[] {
-  const items = regions.filter((r) => r.length >= 3).map((r) => ({ r, a: Math.abs(signedArea(r)) }));
-  items.sort((a, b) => b.a - a.a);
-  const outers: { poly: Poly; holes: Poly[] }[] = [];
-  for (const it of items) {
-    const host = outers.find((o) => lineIntervals([o.poly], { x: 0, y: it.r[0].y }, { x: 1, y: 0 }).some(([t0, t1]) => it.r[0].x > t0 && it.r[0].x < t1));
-    const ccw = signedArea(it.r) > 0;
-    if (host) host.holes.push(ccw ? [...it.r].reverse() : it.r);
-    else outers.push({ poly: ccw ? it.r : [...it.r].reverse(), holes: [] });
-  }
-  return outers.map(({ poly, holes }) => {
-    let out = poly;
-    for (const h of holes) {
-      let bi = 0;
-      let bj = 0;
-      let bd = Infinity;
-      for (let i = 0; i < out.length; i++)
-        for (let j = 0; j < h.length; j++) {
-          const d = Math.hypot(out[i].x - h[j].x, out[i].y - h[j].y);
-          if (d < bd) {
-            bd = d;
-            bi = i;
-            bj = j;
-          }
-        }
-      out = [...out.slice(0, bi + 1), ...h.slice(bj), ...h.slice(0, bj + 1), ...out.slice(bi)];
-    }
-    return out;
-  });
-}
-
-/** ISO 128-50: sections narrower than this on paper are filled solid instead of hatched. */
 export const NARROW_SECTION = 0.9;
 
-/**
- * Draws a cut: outlines (visible), hatching without the voids (or a solid fill
- * for narrow sections), void edges and hole centre lines.
- */
+/** Draws a cut: outlines (visible), hatching without the voids, void edges and hole centre lines. */
 export function drawCut(s: Sheet, cut: Cut, map: (v: Vec2) => Vec2, style: { angle: number; spacing: number } = HATCH_STYLES[0]) {
   const regions = cut.regions.map((r) => r.map(map));
   const voids = cut.voids.map((v) => v.map(map));
   for (const r of regions) s.poly(r, true, 'visible');
-  // Mean wall thickness on paper: 2 × area / perimeter.
-  const area = Math.abs(regions.reduce((a, r) => a + (r.length >= 3 ? Math.abs(signedArea(r)) * (keyholeSign(regions, r)) : 0), 0));
+  // Mean wall thickness on paper: 2 × area / perimeter (holes count negative).
+  const area = Math.abs(regions.reduce((a, r) => a + (r.length >= 3 ? Math.abs(signedArea(r)) * evenOddSign(regions, r) : 0), 0));
   const per = regions.reduce((a, r) => a + perimeter(r), 0);
   const narrow = per > 0 && (2 * area) / per < NARROW_SECTION;
-  if (narrow && !voids.length) for (const k of keyholes(regions)) s.poly(k, true, 'thin', true);
-  // With hole voids a fill cannot leave the gaps: hatch at the ISO 128-50 minimum spacing instead.
-  else hatch(s, regions, { angle: style.angle, spacing: narrow ? 0.7 : style.spacing, exclude: voids });
+  hatch(s, regions, { angle: style.angle, spacing: narrow ? 0.7 : style.spacing, exclude: voids });
   for (const [a, b] of cut.edges) s.line(map(a), map(b), 'visible');
   for (const [a, b] of cut.axes) s.line(map(a), map(b), 'center');
 }
 
 /** +1 for an outline, −1 for a hole inside another region (even-odd). */
-function keyholeSign(regions: Poly[], r: Poly): number {
+function evenOddSign(regions: Poly[], r: Poly): number {
   const p = r[0];
   let inside = 0;
   for (const o of regions) {
@@ -503,8 +466,10 @@ export function cuttingPlane(s: Sheet, a: Vec2, b: Vec2, look: Vec2, letter = SE
     const tail = { x: mid.x - look.x * 7, y: mid.y - look.y * 7 };
     s.line(tail, tip, 'thin');
     s.arrow(tip, look);
-    const off = 1.2 + Math.abs(look.x) * (textWidth(letter, h) / 2) + Math.abs(look.y) * (h / 2);
-    const c = { x: tail.x - look.x * off, y: tail.y - look.y * off };
+    // Letter beside the arrow shaft, on the side away from the view.
+    const w = textExtent(letter, h, true);
+    const off = 1 + (Math.abs(out.y) * h + Math.abs(out.x) * w) / 2;
+    const c = { x: (tail.x + tip.x) / 2 - look.x * 0.5 + out.x * off, y: (tail.y + tip.y) / 2 - look.y * 0.5 + out.y * off };
     s.text({ x: c.x, y: c.y - h / 2 }, letter, h, 'middle', 'text', 0, true);
   }
 }

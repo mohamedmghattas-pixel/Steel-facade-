@@ -468,6 +468,13 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
       dimLinear(E, { x: MX(fb.minX), y: eEdge }, { x: MX(fb.maxX), y: eEdge }, 'h', eEdge + eSide * off, fb.maxX - fb.minX);
     }
     dimLinear(E, { x: MX(fb.minX), y: fb.minY / den }, { x: MX(fb.minX), y: fb.maxY / den }, 'v', MX(fb.minX) - 8, fb.maxY - fb.minY);
+    // The positioning dimensions' band, kept clear of weld symbols.
+    const dimBand: Poly = [
+      { x: xMin - 20, y: eEdge },
+      { x: xMax + 20, y: eEdge },
+      { x: xMax + 20, y: eEdge + eSide * (off + 5) },
+      { x: xMin - 20, y: eEdge + eSide * (off + 5) },
+    ];
 
     // PLAN
     const P = viewSheet();
@@ -509,7 +516,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
         base: pt.weldedTo && lowerPolys.has(pt.weldedTo) ? [lowerPolys.get(pt.weldedTo)!] : bandRects,
         target: pt.weldedTo && lowerPolys.has(pt.weldedTo) ? polyCenter(lowerPolys.get(pt.weldedTo)!) : { x: MX(secX.get(pt.ref) ?? L / 2), y: 0 },
       })),
-      [...bandRects, ...lowerPolys.values()],
+      [...bandRects, ...lowerPolys.values(), ...(lower === E ? [dimBand] : [])],
     );
     const secTargets = balloonTargets(
       sec.map((pt) => ({ pt, proj: upperProj.get(pt.ref)! })),

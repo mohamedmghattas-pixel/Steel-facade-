@@ -19,7 +19,8 @@ The table below shows how each standard is applied. The implementation follows t
 | Document status | ISO 7200 | In preparation → In approval → Released → Withdrawn. |
 | Revisions | ISO 7200 revision index | The revision table sits directly above the title block: Rev, description, date, drawn, checked, approved, showing the latest four entries. The index runs A, B … Z, AA … or 0, 1, 2 …. A sheet whose content changes after an issue is flagged as changed and goes back to *In preparation* until it is issued again. |
 | Projection method | ISO 5456-2, ISO 128-3 | First-angle projection. The plan view is placed below the front view, and the view from the left is placed on the right. The projection symbol (truncated cone) is shown in the title block. |
-| Views | ISO 128-3 | Long members use **interrupted views** with narrow break lines, so the cross-section stays at true scale. Dimensions always show true lengths. |
+| Views | ISO 128-3 | Every part and assembly sheet has ELEVATION, PLAN and SECTION A–A, labelled. Long members use **interrupted views** with narrow break lines, so the cross-section stays at true scale. Dimensions always show true lengths. |
+| Sections | ISO 128-3, ISO 128-50 | The cutting-plane line (long-dash dotted, wide at the ends) carries arrows for the viewing direction and the letter A. Cut material gets 45° hatching, with adjacent parts at a different angle or spacing. |
 | Line types and widths | ISO 128-2 (line group 0.5) | Visible outlines are continuous wide 0.5 mm. Dimension, extension and leader lines are continuous narrow 0.25 mm. Hidden edges are dashed narrow (12d dash, 3d gap). Centre lines are long-dash dotted narrow. The title block and grid use 0.35 mm, the frame 0.7 mm. DXF layers are named after these line types. |
 | Lettering | ISO 3098 | Lettering is a type-B style at heights of 1.8, 2.5, 3.5, 5 and 7 mm. The drawing number uses 5 mm bold. |
 | Dimensioning | ISO 129-1 | Dimension lines end in closed filled arrowheads, with the value above the line, readable from the bottom or the right. Hole positions use chain dimensions. Coordinate positions use running dimensions, with the origin marked by a small circle. |
@@ -54,15 +55,20 @@ The table below shows how each standard is applied. The implementation follows t
 - The site bolt and anchor schedule.
 
 ### Assembly drawings
-- Two orthographic views in the main part's axes, arranged per the projection method.
+- Three views of the whole assembly in the main part's axes: **ELEVATION**, **PLAN** and **SECTION A–A**, arranged per the projection method.
+  - The section cuts across the main part where a secondary part is attached.
+  - The cutting-plane line is marked on the elevation and cut parts are hatched (ISO 128-50); adjacent parts are hatched at different angles.
 - Item balloons and weld symbols for shop-welded parts.
 - Positioning dimensions.
 - A parts list with the **part drawing number** of every item.
 - The GA sheets that show the assembly.
 
 ### Part (fabrication) drawings
-- Views with hole and slot positions.
-- The section (end view).
+- Always three views: **ELEVATION**, **PLAN** and **SECTION A–A**.
+  - The section is cut through the main hole group and hatched, with hole voids left open.
+  - A small section is enlarged to a larger ISO 5455 scale, and its label states that scale.
+  - Plates get a face view, an edge view from above, and a section through the hole column.
+- Hole and slot positions dimensioned on the views.
 - A **hole table** with coordinates from the part datum. These are the same coordinates as the DSTV NC file.
 - **Machining / fabrication steps** in shop order:
   - saw cut or profile cut

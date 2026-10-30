@@ -12,12 +12,16 @@
  */
 
 export type MaterialFamily = 'carbon' | 'stainless' | 'aluminium' | 'weathering';
+/** Picker category, kept compatible with the original field: 'Stainless' covers EN and ASTM stainless grades. */
+export type MaterialStandard = 'EN' | 'AISC' | 'Stainless' | 'Aluminium';
 
 export interface Material {
   /** Unique id shown in pickers and written to IFC/DSTV (e.g. "S355J2", "A992", "1.4401"). */
   name: string;
-  /** Product standard, e.g. "EN 10025-2", "ASTM A992", "EN 10088-4". */
-  standard: string;
+  /** Category for pickers/rules (original meaning): EN, AISC (ASTM), Stainless or Aluminium. */
+  standard: MaterialStandard;
+  /** Product standard, e.g. "EN 10025-2", "ASTM A992", "EN 10088-4" (see standards.ts). */
+  spec: string;
   /** Regional grouping for pickers. */
   region: 'EN' | 'US';
   family: MaterialFamily;
@@ -87,7 +91,7 @@ const charpy: Record<string, string> = {
 
 function en(
   name: string,
-  standard: string,
+  spec: string,
   fy: number,
   fu: number,
   ec3: [number, number] | null,
@@ -98,7 +102,8 @@ function en(
 ): Material {
   return {
     name,
-    standard,
+    standard: 'EN',
+    spec,
     region: 'EN',
     family,
     ...CARBON,
@@ -112,8 +117,8 @@ function en(
   };
 }
 
-function sub(grade: string, q: string, standard: string, fy: number, fu: number, ec3: [number, number], fyT: [number, number][], family: MaterialFamily = 'carbon') {
-  return en(`${grade}${q}`, standard, fy, fu, ec3, fyT, `${standard} ${grade}${q} (Charpy ${charpy[q.replace(/W$|H$/, '')] ?? q})`, family);
+function sub(grade: string, q: string, spec: string, fy: number, fu: number, ec3: [number, number], fyT: [number, number][], family: MaterialFamily = 'carbon') {
+  return en(`${grade}${q}`, spec, fy, fu, ec3, fyT, `${spec} ${grade}${q} (Charpy ${charpy[q.replace(/W$|H$/, '')] ?? q})`, family);
 }
 
 function stainless(
@@ -128,7 +133,8 @@ function stainless(
 ): Material {
   return {
     name,
-    standard: 'EN 10088-4',
+    standard: 'Stainless',
+    spec: 'EN 10088-4',
     region: 'EN',
     family: 'stainless',
     ...(duplex ? DUPLEX : AUSTENITIC),
@@ -142,10 +148,11 @@ function stainless(
   };
 }
 
-function us(name: string, standard: string, fyKsi: number, fuKsi: number, description: string, family: MaterialFamily = 'carbon', range = 'all thicknesses in the standard', aliases?: string[]): Material {
+function us(name: string, spec: string, fyKsi: number, fuKsi: number, description: string, family: MaterialFamily = 'carbon', range = 'all thicknesses in the standard', aliases?: string[]): Material {
   return {
     name,
-    standard,
+    standard: family === 'stainless' ? 'Stainless' : 'AISC',
+    spec,
     region: 'US',
     family,
     ...US_CARBON,
@@ -158,7 +165,7 @@ function us(name: string, standard: string, fyKsi: number, fuKsi: number, descri
 }
 
 function alu(name: string, alloy: string, temper: string, fy: number, fu: number, range: string, fyT: [number, number][], description: string): Material {
-  return { name, standard: 'EN 755-2', region: 'EN', family: 'aluminium', ...ALU, fy, fu, range, fyT, description: `${description} (EN AW-${alloy} ${temper})`, aliases: [`${alloy} ${temper}`, `${alloy}-${temper}`, `AW-${alloy} ${temper}`] };
+  return { name, standard: 'Aluminium', spec: 'EN 755-2', region: 'EN', family: 'aluminium', ...ALU, fy, fu, range, fyT, description: `${description} (EN AW-${alloy} ${temper})`, aliases: [`${alloy} ${temper}`, `${alloy}-${temper}`, `AW-${alloy} ${temper}`] };
 }
 
 export const MATERIALS: Material[] = [

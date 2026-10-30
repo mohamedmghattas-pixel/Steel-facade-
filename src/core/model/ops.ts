@@ -448,3 +448,37 @@ export const ROLE_LABEL: Record<MemberRole, string> = {
 export function translateAll(p: Project, d: Vec3) {
   for (const n of Object.values(p.nodes)) n.p = add(n.p, d);
 }
+
+/**
+ * Split one (newly drawn) line wherever it crosses existing members or passes
+ * through nodes, leaving the other members continuous. Returns the resulting ids.
+ */
+export function splitLineAtCrossings(p: Project, memberId: Id): Id[] {
+  const m = p.members[memberId];
+  if (!m) return [];
+  const a = p.nodes[m.start].p;
+  const b = p.nodes[m.end].p;
+  const ts: number[] = [];
+  for (const o of Object.values(p.members)) {
+    if (o.id === memberId) continue;
+    const hit = segmentIntersection(a, b, p.nodes[o.start].p, p.nodes[o.end].p);
+    if (hit && hit.t > 1e-4 && hit.t < 1 - 1e-4) ts.push(hit.t);
+  }
+  for (const n of Object.values(p.nodes)) {
+    const ps = pointSegment(n.p, a, b);
+    if (ps.d < NODE_TOL && ps.t > 1e-4 && ps.t < 1 - 1e-4) ts.push(ps.t);
+  }
+  ts.sort((x, y) => x - y);
+  const out = [memberId];
+  let current = memberId;
+  let prev = 0;
+  for (const t of ts) {
+    if (t - prev < 1e-4) continue;
+    const res = splitMember(p, current, (t - prev) / (1 - prev));
+    if (!res) continue;
+    out.push(res.member);
+    current = res.member;
+    prev = t;
+  }
+  return out;
+}

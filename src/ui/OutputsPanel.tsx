@@ -1,0 +1,306 @@
+import { useMemo, useState } from 'react';
+import { derived, useStore, type OutputTab } from '../state/store';
+import { buildBom } from '../core/reports/bom';
+import { nestBars } from '../core/optimize/barNesting';
+import { nestPlates } from '../core/optimize/plateNesting';
+import { drawingToSvg } from '../core/drawings/render';
+import type { Drawing } from '../core/drawings/types';
+import { drawingsFor, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
+import { Icon } from './icons';
+import { Segmented, kg } from './widgets';
+
+export function OutputsPanel() {
+  const outputs = useStore((s) => s.outputs);
+  const set = useStore((s) => s.set);
+  const tabs: { value: OutputTab; label: string }[] = [
+    { value: 'bom', label: 'Material list' },
+    { value: 'nesting', label: 'Cut optimisation' },
+    { value: 'drawings', label: 'Drawings' },
+    { value: 'checks', label: 'Checks' },
+  ];
+  return (
+    <section className="outputs" aria-label="Outputs">
+      <header>
+        <Segmented value={outputs.tab} options={tabs} onChange={(tab) => set({ outputs: { open: true, tab } })} />
+        <div className="grow" />
+        <button className="secondary-btn" onClick={exportIfcFile}>
+          <Icon name="export" size={15} /> IFC
+        </button>
+        <button className="secondary-btn" onClick={exportNc}>
+          <Icon name="export" size={15} /> NC (DSTV)
+        </button>
+        <button className="icon-btn" aria-label="Close outputs" onClick={() => set({ outputs: { ...outputs, open: false } })}>
+          <Icon name="close" />
+        </button>
+      </header>
+      <div className="outputs-body">
+        {outputs.tab === 'bom' && <BomView />}
+        {outputs.tab === 'nesting' && <NestingView />}
+        {outputs.tab === 'drawings' && <DrawingsView />}
+        {outputs.tab === 'checks' && <ChecksView />}
+      </div>
+    </section>
+  );
+}
+
+function Table({ rows, onRowClick }: { rows: (string | number)[][]; onRowClick?: (row: (string | number)[]) => void }) {
+  if (rows.length <= 1) return <p className="muted pad">Nothing to list yet — assign profiles to the wireframe.</p>;
+  const [head, ...body] = rows;
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            {head.map((h, i) => (
+              <th key={i}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {body.map((r, i) => (
+            <tr key={i} onClick={() => onRowClick?.(r)} className={onRowClick ? 'clickable' : ''}>
+              {r.map((c, j) => (
+                <td key={j} className={typeof c === 'number' ? 'num' : ''}>
+                  {typeof c === 'number' ? (Number.isInteger(c) ? c : c.toFixed(2)) : c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function BomView() {
+  const project = useStore((s) => s.project);
+  const select = useStore((s) => s.select);
+  const bom = useMemo(() => buildBom(project, derived(project)), [project]);
+  const [tab, setTab] = useState<'parts' | 'assemblies' | 'profiles' | 'bolts'>('assemblies');
+  const dm = derived(project);
+  const selectMark = (mark: string) => {
+    const members = dm.parts.filter((pt) => (pt.mark === mark || pt.assembly === mark) && pt.memberId).map((pt) => pt.memberId!);
+    const conns = dm.parts.filter((pt) => (pt.mark === mark || pt.assembly === mark) && pt.connectionId).map((pt) => pt.connectionId!);
+    select({ members: [...new Set(members)], connections: [...new Set(conns)] });
+  };
+  return (
+    <div className="bom">
+      <div className="bom-bar">
+        <Segmented
+          value={tab}
+          options={[
+            { value: 'assemblies', label: `Assemblies (${bom.totals.assemblies})` },
+            { value: 'parts', label: `Parts (${bom.totals.parts})` },
+            { value: 'profiles', label: 'Profile summary' },
+            { value: 'bolts', label: `Bolts (${bom.totals.bolts})` },
+          ]}
+          onChange={setTab}
+        />
+        <span className="total">
+          Total {kg(bom.totals.weight)} · {bom.totals.surface.toFixed(1)} m² surface
+        </span>
+        <div className="grow" />
+        <button className="secondary-btn" onClick={() => exportBom('xlsx')}>
+          <Icon name="export" size={15} /> XLSX
+        </button>
+        <button className="secondary-btn" onClick={() => exportBom('csv')}>
+          <Icon name="export" size={15} /> CSV
+        </button>
+      </div>
+      <Table rows={bom[tab]} onRowClick={tab === 'parts' || tab === 'assemblies' ? (r) => selectMark(String(r[0])) : undefined} />
+    </div>
+  );
+}
+
+function NestingView() {
+  const project = useStore((s) => s.project);
+  const dm = derived(project);
+  const bars = useMemo(() => nestBars(project, dm), [project, dm]);
+  const plates = useMemo(() => nestPlates(project, dm), [project, dm]);
+  const [mode, setMode] = useState<'bars' | 'plates'>('bars');
+  return (
+    <div className="nesting">
+      <div className="bom-bar">
+        <Segmented
+          value={mode}
+          options={[
+            { value: 'bars', label: 'Bars (1D)' },
+            { value: 'plates', label: 'Plates (2D)' },
+          ]}
+          onChange={setMode}
+        />
+        <span className="muted">
+          Stock {project.settings.stockLengths.join(' / ')} mm · kerf {project.settings.kerf} mm · end trim {project.settings.endTrim} mm — change in Project settings
+        </span>
+      </div>
+      {mode === 'bars' && (
+        <div className="nest-groups">
+          {!bars.length && <p className="muted pad">No linear parts to nest.</p>}
+          {bars.map((g) => (
+            <div className="nest-group" key={`${g.profile}-${g.material}`}>
+              <h4>
+                {g.profile} · {g.material}
+                <span className="badge">{(g.efficiency * 100).toFixed(1)}% used</span>
+              </h4>
+              <p className="muted">
+                {g.pieces} pieces · net {(g.netLength / 1000).toFixed(2)} m · buy {g.purchase.map((x) => `${x.qty} × ${x.stock / 1000} m`).join(' + ')}
+              </p>
+              {g.unplaced.length > 0 && (
+                <p className="warning">
+                  <Icon name="warn" size={14} /> {g.unplaced.length} piece(s) longer than the longest stock bar: {g.unplaced.map((u) => `${u.mark} ${Math.round(u.length)}`).join(', ')}
+                </p>
+              )}
+              <div className="bars">
+                {g.bars.map((b, i) => (
+                  <div className="bar" key={i} title={`Bar ${i + 1}: ${b.stock} mm, waste ${Math.round(b.waste)} mm`}>
+                    <span className="bar-label">{b.stock}</span>
+                    <div className="bar-track">
+                      {b.cuts.map((c, j) => (
+                        <span key={j} className="cut" style={{ width: `${(c.length / b.stock) * 100}%` }} title={`${c.mark} — ${Math.round(c.length)} mm`}>
+                          {c.length / b.stock > 0.06 ? c.mark : ''}
+                        </span>
+                      ))}
+                    </div>
+                    <span className="bar-waste">{Math.round(b.waste)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {mode === 'plates' && (
+        <div className="nest-groups">
+          {!plates.length && <p className="muted pad">No plates to nest.</p>}
+          {plates.map((g) => (
+            <div className="nest-group" key={`${g.thickness}-${g.material}`}>
+              <h4>
+                PL{g.thickness} · {g.material}
+                <span className="badge">{(g.utilisation * 100).toFixed(1)}% used</span>
+              </h4>
+              {g.unplaced.length > 0 && <p className="warning">Too large for any sheet: {g.unplaced.join(', ')}</p>}
+              <div className="sheets">
+                {g.sheets.map((s, i) => (
+                  <figure key={i} className="sheet">
+                    <svg viewBox={`0 0 ${s.sheet.w} ${s.sheet.h}`} preserveAspectRatio="xMidYMid meet">
+                      <rect x={0} y={0} width={s.sheet.w} height={s.sheet.h} className="sheet-bg" />
+                      {s.placements.map((pl, j) => (
+                        <g key={j}>
+                          <rect x={pl.x} y={s.sheet.h - pl.y - pl.h} width={pl.w} height={pl.h} className="sheet-part" />
+                          {pl.w > 60 && pl.h > 30 && (
+                            <text x={pl.x + pl.w / 2} y={s.sheet.h - pl.y - pl.h / 2} className="sheet-text" fontSize={Math.min(pl.w, pl.h) / 3}>
+                              {pl.mark}
+                            </text>
+                          )}
+                        </g>
+                      ))}
+                    </svg>
+                    <figcaption>
+                      {s.sheet.w} × {s.sheet.h} · {(s.utilisation * 100).toFixed(0)}%
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DrawingsView() {
+  const project = useStore((s) => s.project);
+  const drawings = useMemo(() => {
+    void project;
+    try {
+      return drawingsFor();
+    } catch (e) {
+      console.error(e);
+      return [] as Drawing[];
+    }
+  }, [project]);
+  const [kind, setKind] = useState<Drawing['kind'] | 'all'>('all');
+  const [current, setCurrent] = useState(0);
+  const list = drawings.filter((d) => kind === 'all' || d.kind === kind);
+  const d = list[Math.min(current, list.length - 1)];
+  const svg = useMemo(() => (d ? drawingToSvg(d) : ''), [d]);
+  return (
+    <div className="drawings">
+      <div className="drawing-list">
+        <Segmented
+          value={kind}
+          options={[
+            { value: 'all', label: 'All' },
+            { value: 'ga', label: 'GA' },
+            { value: 'assembly', label: 'Assembly' },
+            { value: 'part', label: 'Part' },
+          ]}
+          onChange={(k) => {
+            setKind(k);
+            setCurrent(0);
+          }}
+        />
+        <div className="list">
+          {list.map((x, i) => (
+            <button key={x.id} className={i === current ? 'on' : ''} onClick={() => setCurrent(i)}>
+              <span className={`kind ${x.kind}`}>{x.kind === 'ga' ? 'GA' : x.kind === 'assembly' ? 'ASM' : 'PART'}</span>
+              <span>{x.mark || x.title}</span>
+              <span className="muted">{x.scale}</span>
+            </button>
+          ))}
+          {!list.length && <p className="muted pad">No drawings yet — assign profiles first.</p>}
+        </div>
+        <div className="btn-col">
+          <button className="secondary-btn" disabled={!list.length} onClick={() => void exportDrawingsPdf(list)}>
+            <Icon name="export" size={15} /> {list.length} sheets → PDF
+          </button>
+          <button className="secondary-btn" disabled={!list.length} onClick={() => exportDrawingsDxf(list)}>
+            <Icon name="export" size={15} /> {list.length} sheets → DXF
+          </button>
+          {d && (
+            <button className="link-btn" onClick={() => void exportDrawingsPdf([d])}>
+              This sheet only (PDF)
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="drawing-preview" dangerouslySetInnerHTML={{ __html: svg }} />
+    </div>
+  );
+}
+
+function ChecksView() {
+  const project = useStore((s) => s.project);
+  const select = useStore((s) => s.select);
+  const dm = derived(project);
+  const unassigned = Object.values(project.members).filter((m) => !m.profile);
+  const short = dm.parts.filter((pt) => pt.kind === 'member' && pt.length < 50);
+  const items: { text: string; onClick?: () => void; level: 'warn' | 'info' }[] = [
+    ...dm.warnings.map((w) => ({
+      text: w.text,
+      level: 'warn' as const,
+      onClick: () => select(w.connectionId ? { connections: [w.connectionId] } : { members: w.memberId ? [w.memberId] : [] }),
+    })),
+    ...(unassigned.length
+      ? [{ text: `${unassigned.length} wireframe line(s) have no profile yet.`, level: 'info' as const, onClick: () => select({ members: unassigned.map((m) => m.id) }) }]
+      : []),
+    ...short.map((pt) => ({ text: `${pt.mark} is only ${Math.round(pt.length)} mm long after cut-backs.`, level: 'warn' as const, onClick: () => select({ members: [pt.memberId!] }) })),
+  ];
+  return (
+    <div className="checks">
+      {!items.length && (
+        <p className="ok">
+          <Icon name="check" /> No problems found.
+        </p>
+      )}
+      <ul>
+        {items.map((it, i) => (
+          <li key={i} className={it.level} onClick={it.onClick}>
+            <Icon name={it.level === 'warn' ? 'warn' : 'help'} size={15} /> {it.text}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}

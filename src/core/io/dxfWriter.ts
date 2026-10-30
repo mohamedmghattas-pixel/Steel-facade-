@@ -81,6 +81,15 @@ export class DxfWriter {
     return this;
   }
 
+  /** Filled triangle / quadrilateral (DXF SOLID: the 3rd and 4th corners are listed crosswise). */
+  solid(pts: { x: number; y: number }[], layer = '0'): this {
+    if (pts.length < 3) return this;
+    this.ensure(layer);
+    const [a, b, c, d = pts[2]] = pts;
+    this.push(0, 'SOLID', 8, layer, 10, a.x, 20, a.y, 30, 0, 11, b.x, 21, b.y, 31, 0, 12, d.x, 22, d.y, 32, 0, 13, c.x, 23, c.y, 33, 0);
+    return this;
+  }
+
   toString(): string {
     const out: string[] = [];
     const p = (...pairs: (string | number)[]) => {
@@ -91,8 +100,9 @@ export class DxfWriter {
     // Linetypes
     p(0, 'TABLE', 2, 'LTYPE', 70, 3);
     p(0, 'LTYPE', 2, 'CONTINUOUS', 70, 0, 3, 'Solid line', 72, 65, 73, 0, 40, '0.0');
-    p(0, 'LTYPE', 2, 'DASHED', 70, 0, 3, '__ __ __', 72, 65, 73, 2, 40, '4.0', 49, '2.5', 49, '-1.5');
-    p(0, 'LTYPE', 2, 'CENTER', 70, 0, 3, '____ _ ____', 72, 65, 73, 4, 40, '10.0', 49, '6.0', 49, '-1.5', 49, '1.0', 49, '-1.5');
+    // ISO 128-2 patterns for 0.25 mm lines: dashed 12d/3d, long-dash dotted 24d/3d/0.5d/3d.
+    p(0, 'LTYPE', 2, 'DASHED', 70, 0, 3, 'ISO dashed __ __ __', 72, 65, 73, 2, 40, '3.75', 49, '3.0', 49, '-0.75');
+    p(0, 'LTYPE', 2, 'CENTER', 70, 0, 3, 'ISO long-dash dotted ____ . ____', 72, 65, 73, 4, 40, '7.625', 49, '6.0', 49, '-0.75', 49, '0.125', 49, '-0.75');
     p(0, 'ENDTAB');
     // Layers
     p(0, 'TABLE', 2, 'LAYER', 70, this.layers.size);

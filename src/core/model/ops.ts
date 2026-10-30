@@ -15,6 +15,7 @@ import type {
   ParamValue,
   Project,
   ProjectSettings,
+  DrawingSet,
   Vec3,
   WorkPlane,
 } from './types';
@@ -70,6 +71,26 @@ export function defaultSettings(): ProjectSettings {
   };
 }
 
+export function defaultDrawingSet(): DrawingSet {
+  return {
+    settings: {
+      standard: 'ISO',
+      sheet: 'A3',
+      gaSheet: 'A3',
+      numberPrefix: '',
+      executionClass: 'EXC2',
+      weldSize: 4,
+      weldProcess: '135',
+      legalOwner: '',
+      checkedBy: '',
+      approvedBy: '',
+      revisionScheme: 'alpha',
+      extraNotes: [],
+    },
+    revisions: {},
+  };
+}
+
 export function createProject(name = 'New facade project'): Project {
   return {
     version: 1,
@@ -83,6 +104,7 @@ export function createProject(name = 'New facade project'): Project {
     references: [],
     underlays: [],
     settings: defaultSettings(),
+    drawings: defaultDrawingSet(),
   };
 }
 

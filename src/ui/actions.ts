@@ -294,6 +294,11 @@ export function exportNc() {
   notify(`Exported ${files.length} DSTV NC1 file${files.length === 1 ? '' : 's'}.`);
 }
 
+/** "FS-001-A-M1_revA" — identification number plus revision index. */
+export function drawingFileName(d: Drawing): string {
+  return safeName(`${d.number}_rev${d.rev === '-' ? '0' : d.rev}`);
+}
+
 export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
   const p = st().project;
   const all = allDrawings(p, derived(p));
@@ -303,7 +308,7 @@ export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
 export function exportDrawingsDxf(list?: Drawing[]) {
   if (!guardModel()) return;
   const ds = list ?? drawingsFor();
-  const files = ds.map((d) => ({ name: `${safeName(`${d.kind}-${d.mark || d.title}`)}.dxf`, data: drawingToDxf(d) }));
+  const files = ds.map((d) => ({ name: `${drawingFileName(d)}.dxf`, data: drawingToDxf(d) }));
   download(`${fileBase()}-drawings-dxf.zip`, zip(files), 'application/zip');
 }
 
@@ -313,7 +318,7 @@ export async function exportDrawingsPdf(list?: Drawing[]) {
   notify(`Creating PDF with ${ds.length} sheet${ds.length === 1 ? '' : 's'}…`);
   try {
     const blob = await drawingsToPdf(ds);
-    download(`${fileBase()}-drawings.pdf`, blob, 'application/pdf');
+    download(ds.length === 1 ? `${drawingFileName(ds[0])}.pdf` : `${fileBase()}-drawings.pdf`, blob, 'application/pdf');
   } catch (e) {
     notify(`PDF export failed: ${(e as Error).message}`, 'error');
   }

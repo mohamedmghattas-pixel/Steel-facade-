@@ -209,8 +209,11 @@ function NestingView() {
   );
 }
 
+const KIND_LABEL: Record<Drawing['kind'], string> = { register: 'REG', ga: 'GA', assembly: 'ASM', part: 'PART' };
+
 function DrawingsView() {
   const project = useStore((s) => s.project);
+  const set = useStore((s) => s.set);
   const drawings = useMemo(() => {
     void project;
     try {
@@ -220,20 +223,24 @@ function DrawingsView() {
       return [] as Drawing[];
     }
   }, [project]);
-  const [kind, setKind] = useState<Drawing['kind'] | 'all'>('all');
+  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed'>('all');
   const [current, setCurrent] = useState(0);
-  const list = drawings.filter((d) => kind === 'all' || d.kind === kind);
+  const list = drawings.filter((d) => kind === 'all' || (kind === 'changed' ? d.changed : d.kind === kind));
   const d = list[Math.min(current, list.length - 1)];
   const svg = useMemo(() => (d ? drawingToSvg(d) : ''), [d]);
+  const changed = drawings.filter((x) => x.changed).length;
+  const std = project.drawings.settings.standard;
   return (
     <div className="drawings">
       <div className="drawing-list">
         <Segmented
           value={kind}
           options={[
-            { value: 'all', label: 'All' },
+            { value: 'all', label: `All ${drawings.length}` },
+            { value: 'changed', label: `Changed ${changed}`, title: 'Not issued yet, or changed since the last issue' },
+            { value: 'register', label: 'Reg' },
             { value: 'ga', label: 'GA' },
-            { value: 'assembly', label: 'Assembly' },
+            { value: 'assembly', label: 'Asm' },
             { value: 'part', label: 'Part' },
           ]}
           onChange={(k) => {
@@ -243,15 +250,24 @@ function DrawingsView() {
         />
         <div className="list">
           {list.map((x, i) => (
-            <button key={x.id} className={i === current ? 'on' : ''} onClick={() => setCurrent(i)}>
-              <span className={`kind ${x.kind}`}>{x.kind === 'ga' ? 'GA' : x.kind === 'assembly' ? 'ASM' : 'PART'}</span>
-              <span>{x.mark || x.title}</span>
-              <span className="muted">{x.scale}</span>
+            <button key={x.id} className={i === current ? 'on' : ''} onClick={() => setCurrent(i)} title={x.title}>
+              <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
+              <span className="dwg-no">{x.number}</span>
+              <span className={`rev ${x.changed ? 'changed' : ''}`} title={x.changed ? (x.revisions.length ? `Changed since rev ${x.rev}` : 'Not issued yet') : x.status}>
+                {x.rev}
+                {x.changed ? ' •' : ''}
+              </span>
             </button>
           ))}
-          {!list.length && <p className="muted pad">No drawings yet — assign profiles first.</p>}
+          {!list.length && <p className="muted pad">{kind === 'changed' ? 'Every drawing is issued and up to date.' : 'No drawings yet — assign profiles first.'}</p>}
         </div>
         <div className="btn-col">
+          <button className="primary-btn" disabled={!drawings.length} onClick={() => set({ dialog: 'issueDrawings' })} title="Record a new revision (ISO 7200 revision index) for drawings">
+            <Icon name="check" size={15} /> Issue / revise…
+          </button>
+          <button className="secondary-btn" onClick={() => set({ dialog: 'drawingSettings' })}>
+            Drawing settings · {std === 'ISO' ? 'ISO' : 'ASME'}
+          </button>
           <button className="secondary-btn" disabled={!list.length} onClick={() => void exportDrawingsPdf(list)}>
             <Icon name="export" size={15} /> {list.length} sheets → PDF
           </button>

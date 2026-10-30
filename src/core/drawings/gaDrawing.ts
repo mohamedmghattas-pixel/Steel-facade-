@@ -1,17 +1,20 @@
 /**
  * General arrangement drawings: the whole model projected onto an elevation or
- * plan, with grids, levels and assembly marks.
+ * plan with grids, levels and assembly marks, plus the assembly schedule (marks →
+ * assembly drawing numbers) and the site bolt / anchor schedule.
  */
 import type { Project, Vec2, Vec3 } from '../model/types';
 import { toWorld } from '../model/geometry';
-import type { DerivedModel } from '../derive/model';
-import { type Drawing } from './types';
-import { MARGIN, Sheet, fitScale, titleBlock } from './dims';
+import { uniqueAssemblies, type DerivedModel } from '../derive/model';
+import type { Drawing } from './types';
+import { notesBlock, packBlocks, tableBlock, type Block } from './layout';
+import { dimChain, dimLinear } from './dims';
+import { TEXT, generalNotes, isoScale, scaleLabel } from './standards';
 import { bounds, centroid, convexHull, partCorners } from './project';
+import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
+import { drawingNumber } from './register';
 
 export type GaView = 'front' | 'plan' | 'side';
-
-const GA_SCALES = [10, 20, 25, 50, 75, 100, 125, 150, 200, 250, 500, 1000, 2000, 5000];
 
 const VIEW_LABEL: Record<GaView, string> = {
   front: 'Front elevation (looking north)',
@@ -30,16 +33,79 @@ export function projectPoint(view: GaView, p: Vec3): Vec2 {
   }
 }
 
-export function gaDrawing(p: Project, dm: DerivedModel, view: GaView): Drawing {
-  const s = new Sheet();
+export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
+  const size = p.drawings.settings.gaSheet;
+  const s = newSheet(size);
+
+  // Schedules.
+  const asmRows = uniqueAssemblies(dm).map(({ assembly, qty }) => {
+    const main = dm.partByRef.get(assembly.main)!;
+    return [assembly.mark, qty, designation(main), assembly.mass.toFixed(1), drawingNumber(p, `asm-${assembly.mark}`)];
+  });
+  const bolts = new Map<string, { size: string; grade: string; kind: string; length: number; qty: number }>();
+  for (const b of dm.bolts) {
+    const k = `${b.kind}|${b.size}|${b.grade}|${b.length}`;
+    const e = bolts.get(k);
+    if (e) e.qty += b.positions.length;
+    else bolts.set(k, { size: b.size, grade: b.grade, kind: b.kind, length: b.length, qty: b.positions.length });
+  }
+  const blocks: Block[] = [
+    notesBlock(
+      'General notes',
+      generalNotes(p, {
+        kind: 'ga',
+        welded: false,
+        hdg: dm.parts.some((pt) => pt.finish.includes('hdg')),
+        paint: dm.parts.some((pt) => pt.finish.includes('paint')),
+        hollowClosed: false,
+        plates: false,
+        bolts: dm.bolts.length > 0,
+      }),
+    ),
+  ];
+  // Split long schedules into columns so they stay within the bottom band.
+  const chunk = <T,>(arr: T[], n: number) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
+  chunk(asmRows, 14).forEach((rows, i) =>
+    blocks.push(
+      tableBlock({
+        title: i === 0 ? 'Assembly schedule' : 'Assembly schedule (cont.)',
+        cols: [
+          { head: 'Mark', w: 12 },
+          { head: 'Qty', w: 9, align: 'end' },
+          { head: 'Main part', w: 40 },
+          { head: 'kg', w: 12, align: 'end' },
+          { head: 'Assembly drawing', w: 32 },
+        ],
+        rows,
+      }),
+    ),
+  );
+  if (bolts.size) {
+    blocks.push(
+      tableBlock({
+        title: 'Site bolts and anchors',
+        cols: [
+          { head: 'Type', w: 14 },
+          { head: 'Size', w: 11 },
+          { head: 'Length', w: 13, align: 'end' },
+          { head: 'Grade', w: 15 },
+          { head: 'Qty', w: 10, align: 'end' },
+        ],
+        rows: [...bolts.values()]
+          .sort((a, b) => a.kind.localeCompare(b.kind) || a.size.localeCompare(b.size) || a.length - b.length)
+          .map((b) => [b.kind === 'anchor' ? 'Anchor' : 'Bolt', b.size, b.length, b.grade, b.qty]),
+      }),
+    );
+  }
+  const areas = packBlocks(s, size, blocks);
+
   const hulls = dm.parts.map((pt) => ({ pt, hull: convexHull(partCorners(pt).map((c) => projectPoint(view, c))) }));
   const pts = hulls.flatMap((h) => h.hull);
-  // Grids and levels relevant to this view.
   const vGrids = p.grids.filter((g) => (view === 'side' ? g.axis === 'y' : g.axis === 'x'));
   const hGrids = view === 'plan' ? p.grids.filter((g) => g.axis === 'y') : [];
   const levels = view === 'plan' ? [] : p.levels;
-  const bbPts: Vec2[] = [...pts];
   const ref = pts.length ? bounds(pts) : { minX: 0, minY: 0, maxX: 1000, maxY: 1000 };
+  const bbPts: Vec2[] = [...pts];
   for (const g of vGrids) bbPts.push({ x: g.pos, y: ref.minY });
   for (const g of hGrids) bbPts.push({ x: ref.minX, y: g.pos });
   for (const l of levels) bbPts.push({ x: ref.minX, y: l.z });
@@ -47,13 +113,15 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView): Drawing {
   const Wr = Math.max(bb.maxX - bb.minX, 100);
   const Hr = Math.max(bb.maxY - bb.minY, 100);
 
-  const areaX0 = MARGIN + 35;
-  const areaW = s.w - 2 * MARGIN - 50;
-  const areaY0 = MARGIN + 40 + 18;
-  const areaH = s.h - 2 * MARGIN - 40 - 18 - 22;
-  const den = Math.max(fitScale(Wr, areaW, GA_SCALES), fitScale(Hr, areaH, GA_SCALES));
-  const x0 = areaX0 + (areaW - Wr / den) / 2;
-  const y0 = areaY0 + (areaH - Hr / den) / 2;
+  // Use whichever free area gives the larger ISO scale.
+  const padL = 36;
+  const fit = (a: typeof areas.full) => Math.max(isoScale(Wr, a.x1 - a.x0 - padL - 12), isoScale(Hr, a.y1 - a.y0 - 40));
+  const area = fit(areas.full) <= fit(areas.left) ? areas.full : areas.left;
+  const den = fit(area);
+  const availW = area.x1 - area.x0 - padL - 12;
+  const availH = area.y1 - area.y0 - 40;
+  const x0 = area.x0 + padL + (availW - Wr / den) / 2;
+  const y0 = area.y0 + 18 + (availH - Hr / den) / 2;
   const P = (v: Vec2) => ({ x: x0 + (v.x - bb.minX) / den, y: y0 + (v.y - bb.minY) / den });
   const left = x0 - 8;
   const right = x0 + Wr / den + 8;
@@ -64,47 +132,59 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView): Drawing {
     const x = P({ x: g.pos, y: 0 }).x;
     s.line({ x, y: bottom }, { x, y: top }, 'center');
     s.circle({ x, y: top + 4 }, 3.5, 'thin');
-    s.text({ x, y: top + 3 }, g.name, 2.5, 'middle');
+    s.text({ x, y: top + 2.8 }, g.name, TEXT.small, 'middle');
+  }
+  // Grid spacing and overall dimensions below the view.
+  const gx = [...new Set(vGrids.map((g) => g.pos))].sort((a, b) => a - b);
+  if (gx.length > 1) {
+    dimChain(
+      s,
+      gx.map((x) => ({ x: P({ x, y: 0 }).x, y: bottom })),
+      gx.slice(1).map((x, i) => x - gx[i]),
+      'h',
+      bottom - 7,
+    );
+    if (gx.length > 2) dimLinear(s, { x: P({ x: gx[0], y: 0 }).x, y: bottom }, { x: P({ x: gx[gx.length - 1], y: 0 }).x, y: bottom }, 'h', bottom - 14, gx[gx.length - 1] - gx[0]);
   }
   for (const g of hGrids) {
     const y = P({ x: 0, y: g.pos }).y;
     s.line({ x: left, y }, { x: right, y }, 'center');
     s.circle({ x: left - 4, y }, 3.5, 'thin');
-    s.text({ x: left - 4, y: y - 1 }, g.name, 2.5, 'middle');
+    s.text({ x: left - 4, y: y - 1.2 }, g.name, TEXT.small, 'middle');
   }
   for (const l of levels) {
     const y = P({ x: 0, y: l.z }).y;
     s.line({ x: left, y }, { x: right, y }, 'center');
-    s.text({ x: MARGIN + 3, y: y + 1 }, `${l.name} ${l.z >= 0 ? '+' : ''}${Math.round(l.z)}`, 2.2, 'start');
+    // Level marker: triangle on the line with the level value.
+    s.poly(
+      [
+        { x: left - 2, y },
+        { x: left - 4, y: y + 2.5 },
+        { x: left, y: y + 2.5 },
+      ],
+      true,
+      'thin',
+    );
+    s.text({ x: left - 5, y: y + 0.8 }, `${l.name} ${l.z >= 0 ? '+' : ''}${(l.z / 1000).toFixed(3)}`, TEXT.small, 'end');
   }
-
   for (const { hull } of hulls) if (hull.length >= 2) s.poly(hull.map(P), hull.length > 2, 'visible');
 
-  // Assembly marks at the middle of each assembly's main part (loose cleats are left unlabelled).
   for (const a of dm.assemblies) {
     const main = dm.partByRef.get(a.main);
     if (!main || main.kind === 'profile') continue;
-    let at: Vec2;
-    if (main.kind === 'plate') {
-      const h = hulls.find((x) => x.pt === main)?.hull ?? [];
-      at = centroid(h);
-    } else {
-      at = projectPoint(view, toWorld(main.frame, main.length / 2, 0, 0));
-    }
+    const at =
+      main.kind === 'plate' ? centroid(hulls.find((x) => x.pt === main)?.hull ?? []) : projectPoint(view, toWorld(main.frame, main.length / 2, 0, 0));
     const pp = P(at);
-    s.text({ x: pp.x + 1.2, y: pp.y + 1.2 }, a.mark, main.kind === 'plate' ? 1.6 : 2.2, 'start');
+    s.text({ x: pp.x + 1.2, y: pp.y + 1.2 }, a.mark, main.kind === 'plate' ? TEXT.label : TEXT.small, 'start');
   }
+  s.text({ x: area.x0 + 2, y: area.y1 - 4 }, `${VIEW_LABEL[view]}   ${scaleLabel(den)}`, TEXT.normal, 'start', 'text', 0, true);
 
-  s.text({ x: areaX0, y: s.h - MARGIN - 8 }, `${VIEW_LABEL[view]} – 1:${den}`, 3.5);
-  const scale = `1:${den}`;
-  titleBlock(s, p, { title: `General arrangement – ${VIEW_LABEL[view]}`, mark: `GA-${view.toUpperCase()}`, scale });
-  return {
+  return finalize(ctx, s, size, {
     id: `ga-${view}`,
     kind: 'ga',
     mark: `GA-${view.toUpperCase()}`,
-    title: `GA ${view}`,
-    sheet: { w: s.w, h: s.h },
-    scale,
-    entities: s.ents,
-  };
+    title: `General arrangement – ${VIEW_LABEL[view]}`,
+    subtitle: `${dm.assemblies.length} assemblies · ${dm.parts.reduce((t, pt) => t + pt.mass, 0).toFixed(0)} kg steel`,
+    scale: scaleLabel(den),
+  });
 }

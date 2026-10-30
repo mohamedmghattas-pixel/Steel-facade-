@@ -8,7 +8,7 @@ export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'properties' | 'library' | 'model';
 export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks';
-export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about';
+export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings';
 
 export interface Selection {
   members: Id[];

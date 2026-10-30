@@ -183,6 +183,54 @@ export interface ProjectSettings {
   gridStep: number;
 }
 
+// ---------------------------------------------------------------------------
+// Drawings
+
+/** ISO: first-angle projection, ISO 2553 welds, EN 1090-2 notes. ASME: third-angle, AWS A2.4 welds, AISC 303 notes. */
+export type DrawingStandard = 'ISO' | 'ASME';
+export type SheetSize = 'A4' | 'A3' | 'A2' | 'A1' | 'A0';
+/** ISO 7200 document status. */
+export type DocStatus = 'In preparation' | 'In approval' | 'Released' | 'Withdrawn';
+
+export interface DrawingSettings {
+  standard: DrawingStandard;
+  /** Sheet for part and assembly drawings / for GA drawings. */
+  sheet: SheetSize;
+  gaSheet: SheetSize;
+  /** Prefix of drawing numbers (defaults to the project number). */
+  numberPrefix: string;
+  /** EN 1090-2 execution class. */
+  executionClass: string;
+  /** Default fillet weld throat (ISO) / leg (ASME), mm, and process (ISO 4063 number). */
+  weldSize: number;
+  weldProcess: string;
+  legalOwner: string;
+  checkedBy: string;
+  approvedBy: string;
+  /** Revision index style: A, B, C… (ISO 7200) or 0, 1, 2… */
+  revisionScheme: 'alpha' | 'numeric';
+  /** Extra general notes printed on every drawing. */
+  extraNotes: string[];
+}
+
+export interface DrawingRevision {
+  rev: string;
+  date: string;
+  description: string;
+  drawn: string;
+  checked: string;
+  approved: string;
+  status: DocStatus;
+  /** Content hash at issue — used to detect drawings changed since the last issue. */
+  fingerprint: string;
+}
+
+export interface DrawingSet {
+  settings: DrawingSettings;
+  /** Revision history keyed by drawing id (e.g. "asm-M1", "part-m1", "ga-front"). */
+  revisions: Record<string, DrawingRevision[]>;
+}
+
 export interface ProjectInfo {
   name: string;
   number: string;
@@ -202,4 +250,5 @@ export interface Project {
   references: ReferenceModel[];
   underlays: Underlay[];
   settings: ProjectSettings;
+  drawings: DrawingSet;
 }

@@ -1,5 +1,5 @@
 import type { Project } from '../core/model/types';
-import { defaultSettings } from '../core/model/ops';
+import { defaultDrawingSet, defaultSettings } from '../core/model/ops';
 
 const KEY = 'facadesteel.autosave.v1';
 
@@ -31,6 +31,8 @@ export function migrateProject(p: Project | null): Project | null {
   p.references ??= [];
   p.underlays ??= [];
   p.info ??= { name: 'Project', number: '', client: '', designer: '' };
+  const dd = defaultDrawingSet();
+  p.drawings = { settings: { ...dd.settings, ...(p.drawings?.settings ?? {}) }, revisions: p.drawings?.revisions ?? {} };
   return p;
 }
 

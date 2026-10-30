@@ -7,6 +7,7 @@ import { runAutoConnect } from '../actions';
 import { dxfUnitScale, importDxfWireframe, parseDxf } from '../../core/io/dxfImport';
 import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/types';
 import { putBlob } from '../../state/storage';
+import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -22,6 +23,10 @@ export function Dialogs() {
       return <DxfImportDialog onClose={close} />;
     case 'about':
       return <AboutDialog onClose={close} />;
+    case 'issueDrawings':
+      return <IssueDrawingsDialog onClose={close} />;
+    case 'drawingSettings':
+      return <DrawingSettingsDialog onClose={close} />;
     default:
       return null;
   }
@@ -462,8 +467,11 @@ function AboutDialog({ onClose }: { onClose: () => void }) {
           <strong>Connections.</strong> Auto-connect places slab brackets, base plates and cleats; change any parameter in Properties and the steel updates.
         </li>
         <li>
-          <strong>Outputs.</strong> Parts and assemblies are numbered automatically. Export IFC4, material lists (XLSX/CSV), cutting plans, shop and fabrication drawings
-          (PDF/DXF) and DSTV NC files.
+          <strong>Outputs.</strong> Parts and assemblies are numbered automatically. Export IFC4, material lists (XLSX/CSV), cutting plans and DSTV NC files.
+        </li>
+        <li>
+          <strong>Drawings.</strong> A numbered set to ISO (or ASME) drawing standards: drawing register, GA with assembly schedule, assembly drawings with
+          parts lists and weld symbols, and part drawings with hole tables and machining steps. Issue sheets to give them revisions; changed sheets are flagged.
         </li>
       </ol>
       <p className="muted">

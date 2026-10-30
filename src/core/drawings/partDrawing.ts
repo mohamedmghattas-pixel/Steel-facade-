@@ -1,330 +1,317 @@
 /**
- * Single-part fabrication drawings: linear parts (members, cleats) and plates.
+ * Single-part (fabrication) drawings: linear parts (members, cleats) and plates.
+ *
+ * Views follow ISO 128-3 / ISO 5456-2 (first-angle: plan below, view from the left
+ * on the right; third-angle for ASME). Long parts use interrupted views at a true
+ * ISO 5455 scale. The sheet carries the parts list (ISO 7573), the hole table
+ * (coordinates from the part datum), the machining operations, the assemblies the
+ * part is used in, and the general notes.
  */
-import type { Project, Vec2 } from '../model/types';
+import type { Vec2 } from '../model/types';
 import { bbox2 } from '../model/geometry';
-import type { DerivedModel, Part } from '../derive/model';
+import type { Part } from '../derive/model';
 import { shapeBox, shapeOutline, type Shape } from '../library/shapes';
-import { A3, type Drawing } from './types';
-import {
-  MARGIN,
-  SCALES,
-  Sheet,
-  dimChain,
-  dimLinear,
-  dimRunning,
-  fitScale,
-  fmtLen,
-  table,
-  titleBlock,
-} from './dims';
+import { holeRows, machiningOps, type HoleRow } from '../fabrication/machining';
+import type { Drawing } from './types';
+import { Sheet, dimChain, dimLinear, dimRunning } from './dims';
+import { notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
+import { ISO_SCALES, FINISH_LABEL, TEXT, generalNotes, isoScale, scaleLabel } from './standards';
+import { brokenAxis, frontInnerLines, topInnerLines, uniqSorted } from './views';
+import { closedByWelding, designation, finalize, newSheet, type DrawCtx } from './compose';
+import { drawingNumber } from './register';
 
-const FINISH_LABEL: Record<string, string> = { none: '—', hdg: 'HDG', paint: 'Paint', 'hdg+paint': 'HDG + paint' };
-export const finishLabel = (f: string) => FINISH_LABEL[f] ?? f;
+export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
+  const { p } = ctx;
+  const size = p.drawings.settings.sheet;
+  const s = newSheet(size);
+  const holes = holeRows(part);
+  const closed = closedByWelding(ctx, part);
 
-/** Paper y-band where views may be placed (above title block / parts list). */
-export const VIEW_BOTTOM = MARGIN + 40 + 15;
-export const VIEW_TOP = A3.h - MARGIN - 12;
-
-function uniqSorted(vals: number[], tol = 0.5): number[] {
-  const out: number[] = [];
-  for (const v of [...vals].sort((a, b) => a - b)) if (!out.length || Math.abs(v - out[out.length - 1]) > tol) out.push(v);
-  return out;
-}
-
-/** Inner edge lines of a section seen from +y (front view): z values, visible or hidden. */
-export function frontInnerLines(s: Shape): { z: number; hidden: boolean }[] {
-  switch (s.type) {
-    case 'I':
-    case 'U':
-      return [
-        { z: s.h / 2 - s.tf, hidden: false },
-        { z: -s.h / 2 + s.tf, hidden: false },
-      ];
-    case 'L':
-      return [{ z: -s.h / 2 + s.t, hidden: false }];
-    case 'RHS':
-      return [
-        { z: s.h / 2 - s.t, hidden: true },
-        { z: -s.h / 2 + s.t, hidden: true },
-      ];
-    case 'CHS':
-      return [
-        { z: s.d / 2 - s.t, hidden: true },
-        { z: -s.d / 2 + s.t, hidden: true },
-      ];
-    case 'C':
-      return [
-        { z: s.h / 2 - s.t, hidden: false },
-        { z: -s.h / 2 + s.t, hidden: false },
-        { z: s.h / 2 - s.c, hidden: false },
-        { z: -s.h / 2 + s.c, hidden: false },
-      ];
-    case 'Z':
-      return [
-        { z: s.h / 2 - s.t, hidden: false },
-        { z: s.h / 2 - s.c, hidden: false },
-        { z: -s.h / 2 + s.t, hidden: true },
-        { z: -s.h / 2 + s.c, hidden: true },
-      ];
-    default:
-      return [];
+  const blocks: Block[] = [
+    notesBlock(
+      'General notes',
+      generalNotes(p, {
+        kind: 'part',
+        welded: false,
+        hdg: part.finish.includes('hdg'),
+        paint: part.finish.includes('paint'),
+        hollowClosed: closed,
+        plates: part.kind === 'plate',
+        bolts: false,
+      }),
+    ),
+    tableBlock({
+      title: 'Parts list',
+      cols: [
+        { head: 'Item', w: 13 },
+        { head: 'Qty', w: 9, align: 'end' },
+        { head: 'Designation', w: 50 },
+        { head: 'Material', w: 18 },
+        { head: 'kg/pc', w: 14, align: 'end' },
+        { head: 'kg total', w: 16, align: 'end' },
+        { head: 'Finish', w: 20 },
+      ],
+      rows: [[part.mark, qty, designation(part), part.material, part.mass.toFixed(2), (part.mass * qty).toFixed(1), FINISH_LABEL[part.finish] ?? part.finish]],
+    }),
+    tableBlock({
+      title: 'Machining / fabrication',
+      cols: [
+        { head: 'Step', w: 9 },
+        { head: 'Operation', w: 20 },
+        { head: 'Detail', w: 92 },
+        { head: 'Qty', w: 9, align: 'end' },
+      ],
+      rows: machiningOps(part, p.drawings.settings.standard, { hollowClosed: closed }).map((o) => [o.step, o.op, o.detail, o.qty]),
+    }),
+  ];
+  if (holes.length) {
+    blocks.push(
+      tableBlock({
+        title: part.kind === 'plate' ? 'Hole table (datum: bottom-left)' : 'Hole table (X from start end)',
+        cols: [
+          { head: 'Hole', w: 10 },
+          { head: 'Face', w: 10 },
+          { head: 'X', w: 13, align: 'end' },
+          { head: 'Y', w: 13, align: 'end' },
+          { head: 'Ø', w: 9, align: 'end' },
+          { head: 'Slot', w: 11, align: 'end' },
+        ],
+        rows: holes.map((h) => [h.ref, h.face === 'plate' ? '—' : h.face === 'v' ? 'side' : 'top', Math.round(h.x), Math.round(h.y), h.d, h.slotLength ? Math.round(h.slotLength) : '—']),
+      }),
+    );
   }
-}
-
-/** Inner edge lines seen from +z (top view): y values across the width. */
-export function topInnerLines(s: Shape): { y: number; hidden: boolean }[] {
-  switch (s.type) {
-    case 'I':
-      return [
-        { y: s.tw / 2, hidden: true },
-        { y: -s.tw / 2, hidden: true },
-      ];
-    case 'U':
-      return [{ y: -s.b / 2 + s.tw, hidden: true }];
-    case 'L':
-      return [{ y: -s.b / 2 + s.t, hidden: false }];
-    case 'RHS':
-      return [
-        { y: s.b / 2 - s.t, hidden: true },
-        { y: -s.b / 2 + s.t, hidden: true },
-      ];
-    case 'CHS':
-      return [
-        { y: s.d / 2 - s.t, hidden: true },
-        { y: -s.d / 2 + s.t, hidden: true },
-      ];
-    case 'C':
-      return [
-        { y: -s.b / 2 + s.t, hidden: true },
-        { y: s.b / 2 - s.t, hidden: true },
-      ];
-    case 'Z':
-      return [
-        { y: s.t / 2, hidden: true },
-        { y: -s.t / 2, hidden: true },
-      ];
-    default:
-      return [];
+  const usage = ctx.usage.get(part.mark) ?? [];
+  if (usage.length) {
+    blocks.push(
+      tableBlock({
+        title: 'Used in',
+        cols: [
+          { head: 'Assembly', w: 17 },
+          { head: 'Per asm', w: 14, align: 'end' },
+          { head: 'Asm qty', w: 14, align: 'end' },
+          { head: 'Drawing no.', w: 38 },
+        ],
+        rows: usage.map((u) => [u.assembly, u.perAssembly, u.assemblies, drawingNumber(p, `asm-${u.assembly}`)]),
+      }),
+    );
   }
-}
+  const area = packBlocks(s, size, blocks);
+  const scale = part.kind === 'plate' || !part.shape ? drawPlate(ctx, s, part, holes, area) : drawLinear(ctx, s, part, part.shape, holes, area);
 
-function partsListBlock(s: Sheet, part: Part, qty: number) {
-  const len = part.kind === 'plate' ? `${fmtLen(part.length)}x${fmtLen(part.width)}` : fmtLen(part.length);
-  table(
-    s,
-    MARGIN + 5,
-    MARGIN + 40,
-    [20, 11, 42, 22, 24, 22, 22],
-    [
-      ['Mark', 'Qty', 'Profile', 'Material', 'Length', 'kg each', 'Finish'],
-      [part.mark, qty, part.profile, part.material, len, part.mass.toFixed(2), finishLabel(part.finish)],
-      ['', '', '', '', 'Total kg', (part.mass * qty).toFixed(1), part.assembly ? `in ${part.assembly}` : ''],
-    ],
-    6,
-    2.4,
-  );
-}
-
-function holeNotes(part: Part): string[] {
-  const groups = new Map<string, number>();
-  if (part.kind === 'plate') {
-    for (const h of part.plateHoles ?? []) {
-      const k = h.slot ? `Ø${h.d} slot +${fmtLen(h.slot)}` : `Ø${h.d}`;
-      groups.set(k, (groups.get(k) ?? 0) + 1);
-    }
-  } else {
-    for (const h of part.holes) {
-      const k = `Ø${h.d}${h.slot ? ` slot +${fmtLen(h.slot)}` : ''} through ${h.face === 'y' ? 'side' : 'top'}`;
-      groups.set(k, (groups.get(k) ?? 0) + 1);
-    }
-  }
-  return [...groups].map(([k, n]) => `${n}× ${k}`);
-}
-
-export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: number): Drawing {
-  void dm;
-  const s = new Sheet();
-  const scale = part.kind === 'plate' || !part.shape ? drawPlate(s, part) : drawLinear(s, part, part.shape);
-  partsListBlock(s, part, qty);
-  const notes = holeNotes(part);
-  notes.forEach((n, i) => s.text({ x: MARGIN + 5, y: VIEW_TOP - 2 - i * 4.5 }, n, 2.5));
-  const desc = part.name === part.profile ? part.profile : `${part.name} ${part.profile}`;
-  titleBlock(s, p, { title: `Part ${part.mark} – ${desc}`, mark: part.mark, scale });
-  return {
+  return finalize(ctx, s, size, {
     id: `part-${part.mark}`,
     kind: 'part',
     mark: part.mark,
-    title: `Part ${part.mark}`,
-    sheet: { w: s.w, h: s.h },
+    title: `Part ${part.mark} – ${part.name === part.profile ? part.profile : part.name}`,
+    subtitle: `${designation(part)} · ${part.material} · ${qty} off`,
     scale,
-    entities: s.ents,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------
 
-function drawLinear(s: Sheet, part: Part, shape: Shape): string {
+function holeLabel(s: Sheet, c: Vec2, r: number, ref: string) {
+  s.text({ x: c.x + r + 0.6, y: c.y + r + 0.4 }, ref, TEXT.label, 'start');
+}
+
+function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: HoleRow[], areas: { left: Rect; full: Rect }): string {
+  const first = ctx.std.projection === 'first';
   const box = shapeBox(shape);
   const L = Math.max(part.length, 1);
   const H = box.h;
   const W = box.w;
-  const yHoles = part.holes.filter((h) => h.face === 'y');
-  const zHoles = part.holes.filter((h) => h.face === 'z');
-  const x0 = 40;
-  const rightLimit = A3.w - MARGIN - 20;
+  const vHoles = holes.filter((h) => h.face === 'v');
+  const oHoles = holes.filter((h) => h.face === 'o');
+  const needTop = oHoles.length > 0;
+  const features = holes.map((h) => h.x);
 
-  let den = fitScale(L, rightLimit - x0 - 40);
-  const crossFor = (d: number) => {
-    const cands = SCALES.filter((x) => x <= d);
-    let c = d;
-    if (H / d < 12) c = [...cands].reverse().find((x) => H / x >= 12) ?? cands[0] ?? 1;
-    while ((H / c > 60 || W / c > 60) && c < d) c = SCALES.find((x) => x > c) ?? c * 2;
-    return c;
+  const area = areas.full.y1 - areas.full.y0 >= 70 ? areas.full : areas.left;
+  const availW = area.x1 - area.x0 - 25;
+  const availH = area.y1 - area.y0 - 12;
+  let den = ISO_SCALES[ISO_SCALES.length - 1];
+  let axis = brokenAxis(L, features, den, L);
+  for (const d of ISO_SCALES) {
+    const secP = H / d;
+    if (secP > Math.min(40, availH / (needTop ? 4 : 3))) continue;
+    const keep = Math.max(1.2 * Math.max(H, W), 14 * d, 40);
+    const ax = brokenAxis(L, features, d, keep);
+    const totalW = ax.length + 22 + W / d;
+    const totalH = secP + (needTop ? W / d + 54 : 28);
+    if (totalW <= availW && totalH <= availH) {
+      den = d;
+      axis = ax;
+      break;
+    }
+  }
+  const Lp = axis.length;
+  const Hp = H / den;
+  const Wp = W / den;
+  const blockH = Hp + (needTop ? Wp + 54 : 28);
+  const x0 = area.x0 + 20 + Math.max(0, (availW - (Lp + 22 + Wp)) / 2);
+  const yBase = area.y0 + 6 + Math.max(0, (availH - blockH) / 2);
+  // First angle: plan view below the front view; third angle: above.
+  let yF: number;
+  let yT = 0;
+  let desigY: number;
+  if (needTop && first) {
+    yT = yBase + 12;
+    yF = yT + Wp + 14;
+    desigY = yF + Hp + 24;
+  } else if (needTop) {
+    yF = yBase + 20;
+    yT = yF + Hp + 14;
+    desigY = yT + Wp + 16;
+  } else {
+    yF = yBase + 20;
+    desigY = yF + Hp + 4;
+  }
+  const X = (x: number) => x0 + axis.map(x);
+  const ZF = (z: number) => yF + (z + H / 2) / den;
+
+  // Designation above the views (ISO 5261 style).
+  s.text({ x: x0, y: desigY }, designation(part), TEXT.small, 'start');
+
+  // Front view, segment by segment between breaks.
+  const drawBand = (y0: number, hP: number, inner: { v: number; hidden: boolean }[], toY: (v: number) => number) => {
+    for (const seg of axis.segments) {
+      const xa = X(seg.a);
+      const xb = X(seg.b);
+      const atStart = seg.a <= 1e-6;
+      const atEnd = seg.b >= L - 1e-6;
+      s.line({ x: xa, y: y0 }, { x: xb, y: y0 }, 'visible');
+      s.line({ x: xa, y: y0 + hP }, { x: xb, y: y0 + hP }, 'visible');
+      if (atStart) s.line({ x: xa, y: y0 }, { x: xa, y: y0 + hP }, 'visible');
+      if (atEnd) s.line({ x: xb, y: y0 }, { x: xb, y: y0 + hP }, 'visible');
+      for (const ln of inner) s.line({ x: xa, y: toY(ln.v) }, { x: xb, y: toY(ln.v) }, ln.hidden ? 'hidden' : 'visible');
+    }
+    for (const bx of axis.breaks) {
+      s.breakLine(x0 + bx - 2, y0, y0 + hP);
+      s.breakLine(x0 + bx + 2, y0, y0 + hP);
+    }
   };
-  let cross = crossFor(den);
-  // Make room for the end view on the right.
-  const endW = () => W / cross + 30;
-  if (L / den + endW() > rightLimit - x0) {
-    den = fitScale(L, rightLimit - x0 - endW());
-    cross = crossFor(den);
+  drawBand(
+    yF,
+    Hp,
+    frontInnerLines(shape).map((l) => ({ v: l.z, hidden: l.hidden })),
+    ZF,
+  );
+  if (shape.type === 'CHS' || shape.type === 'RHS' || shape.type === 'I') s.line({ x: X(0) - 3, y: ZF(0) }, { x: X(L) + 3, y: ZF(0) }, 'center');
+  for (const h of vHoles) {
+    const c = { x: X(h.x), y: yF + h.y / den };
+    const r = Math.max(0.6, h.d / 2 / den);
+    s.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, 0);
+    holeLabel(s, c, r, h.ref);
   }
-  const exaggerated = cross < den;
-  const scale = exaggerated ? `1:${den} / section 1:${cross}` : `1:${den}`;
 
-  const Lp = L / den;
-  const Hp = H / cross;
-  const Wp = W / cross;
-  const stackH = Hp + (zHoles.length ? 24 + Wp + 14 : 0);
-  const yF = Math.max(VIEW_BOTTOM + 30, (VIEW_BOTTOM + 30 + VIEW_TOP - 20) / 2 - stackH / 2);
-  const X = (x: number) => x0 + x / den;
-  const YF = (z: number) => yF + (z + H / 2) / cross;
-
-  // Front view.
-  s.rect(x0, yF, Lp, Hp, 'visible');
-  for (const ln of frontInnerLines(shape)) s.line({ x: X(0), y: YF(ln.z) }, { x: X(L), y: YF(ln.z) }, ln.hidden ? 'hidden' : 'visible');
-  if (shape.type === 'CHS') s.line({ x: X(0) - 3, y: YF(0) }, { x: X(L) + 3, y: YF(0) }, 'center');
-  for (const h of yHoles) {
-    const c = { x: X(h.x), y: YF(h.z) };
-    const r = Math.max(0.8, h.d / 2 / den);
-    s.slot(c, 2 * r, (h.slot ?? 0) / den, 0);
-  }
-  s.text({ x: x0, y: yF + Hp + 4 }, 'FRONT', 2.5);
-
-  // Dimensions under the front view.
-  dimLinear(s, { x: X(0), y: yF }, { x: X(L), y: yF }, 'h', yF - 18, part.length);
-  const xs = uniqSorted(yHoles.map((h) => h.x));
+  // Front view dimensions on the side away from the plan view.
+  const dimDown = !(needTop && first);
+  const dimY = (k: number) => (dimDown ? yF - 8 * k : yF + Hp + 8 * k);
+  const xs = uniqSorted(vHoles.map((h) => h.x));
   if (xs.length) {
     const vals = [0, ...xs, L];
     dimChain(
       s,
-      vals.map((v) => ({ x: X(v), y: yF })),
+      vals.map((v) => ({ x: X(v), y: dimDown ? yF : yF + Hp })),
       vals.slice(1).map((v, i) => v - vals[i]),
       'h',
-      yF - 9,
+      dimY(1),
     );
-    const zs = uniqSorted(yHoles.map((h) => h.z));
-    const pts = [{ x: x0, y: YF(-H / 2) }, ...zs.map((z) => ({ x: x0, y: YF(z) }))];
-    dimRunning(s, pts, [0, ...zs.map((z) => z + H / 2)], 'v', x0 - 9);
+    const ys = uniqSorted(vHoles.map((h) => h.y));
+    dimRunning(
+      s,
+      [{ x: x0, y: yF }, ...ys.map((y) => ({ x: x0, y: yF + y / den }))],
+      [0, ...ys],
+      'v',
+      x0 - 9,
+    );
   }
+  dimLinear(s, { x: X(0), y: dimDown ? yF : yF + Hp }, { x: X(L), y: dimDown ? yF : yF + Hp }, 'h', dimY(xs.length ? 2 : 1), part.length);
 
-  // Top view for holes drilled through the top face.
-  if (zHoles.length) {
-    const yT = yF + Hp + 24;
-    const YT = (y: number) => yT + (y + W / 2) / cross;
-    s.rect(x0, yT, Lp, Wp, 'visible');
-    for (const ln of topInnerLines(shape)) s.line({ x: X(0), y: YT(ln.y) }, { x: X(L), y: YT(ln.y) }, ln.hidden ? 'hidden' : 'visible');
-    for (const h of zHoles) {
-      const r = Math.max(0.8, h.d / 2 / den);
-      s.slot({ x: X(h.x), y: YT(h.y) }, 2 * r, (h.slot ?? 0) / den, 0);
+  // Plan view (holes drilled through the top / flange).
+  if (needTop) {
+    const YT = (y: number) => yT + (y + W / 2) / den;
+    drawBand(
+      yT,
+      Wp,
+      topInnerLines(shape).map((l) => ({ v: l.y, hidden: l.hidden })),
+      YT,
+    );
+    for (const h of oHoles) {
+      const c = { x: X(h.x), y: yT + h.y / den };
+      const r = Math.max(0.6, h.d / 2 / den);
+      s.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, 0);
+      holeLabel(s, c, r, h.ref);
     }
-    s.text({ x: x0, y: yT + Wp + 4 }, 'TOP', 2.5);
-    const zx = uniqSorted(zHoles.map((h) => h.x));
+    const outward = first ? -1 : 1;
+    const edge = first ? yT : yT + Wp;
+    const zx = uniqSorted(oHoles.map((h) => h.x));
     const vals = [0, ...zx, L];
     dimChain(
       s,
-      vals.map((v) => ({ x: X(v), y: yT + Wp })),
+      vals.map((v) => ({ x: X(v), y: edge })),
       vals.slice(1).map((v, i) => v - vals[i]),
       'h',
-      yT + Wp + 10,
+      edge + outward * 8,
     );
-    const ys = uniqSorted(zHoles.map((h) => h.y));
-    dimRunning(s, [{ x: x0, y: YT(-W / 2) }, ...ys.map((y) => ({ x: x0, y: YT(y) }))], [0, ...ys.map((y) => y + W / 2)], 'v', x0 - 9);
+    const ys = uniqSorted(oHoles.map((h) => h.y));
+    dimRunning(s, [{ x: x0, y: yT }, ...ys.map((y) => ({ x: x0, y: yT + y / den }))], [0, ...ys], 'v', x0 - 9);
   }
 
-  // End view (section).
-  const xE = X(L) + 22;
+  // End view on the right: first angle shows the view from the left (start end), third angle from the right.
+  const xE = X(L) + 18;
   const cE = { x: xE + Wp / 2, y: yF + Hp / 2 };
   const o = shapeOutline(shape);
-  const map = (v: Vec2) => ({ x: cE.x + v.x / cross, y: cE.y + v.y / cross });
+  const mirror = first ? -1 : 1;
+  const map = (v: Vec2) => ({ x: cE.x + (mirror * v.x) / den, y: cE.y + v.y / den });
   s.poly(o.outer.map(map), true, 'visible');
   for (const hole of o.holes) s.poly(hole.map(map), true, 'visible');
   s.line({ x: cE.x - Wp / 2 - 3, y: cE.y }, { x: cE.x + Wp / 2 + 3, y: cE.y }, 'center');
   s.line({ x: cE.x, y: cE.y - Hp / 2 - 3 }, { x: cE.x, y: cE.y + Hp / 2 + 3 }, 'center');
-  dimLinear(s, { x: xE + Wp, y: yF }, { x: xE + Wp, y: yF + Hp }, 'v', xE + Wp + 7, H);
-  dimLinear(s, { x: xE, y: yF }, { x: xE + Wp, y: yF }, 'h', yF - 9, W);
-  s.text({ x: cE.x, y: yF + Hp + 6 }, part.profile, 2.5, 'middle');
-
-  if (exaggerated) s.text({ x: x0, y: VIEW_BOTTOM - 4 }, 'Not to scale across the section – use dimensions', 2.5);
-  return scale;
+  dimLinear(s, { x: xE + Wp, y: yF }, { x: xE + Wp, y: yF + Hp }, 'v', xE + Wp + 8, H);
+  dimLinear(s, { x: xE, y: yF }, { x: xE + Wp, y: yF }, 'h', yF - 8, W);
+  return scaleLabel(den);
 }
 
 // ---------------------------------------------------------------------------
 
-function drawPlate(s: Sheet, part: Part): string {
+function drawPlate(_ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: { left: Rect; full: Rect }): string {
   const outline = part.outline ?? [];
   const bb = bbox2(outline.length ? outline : [{ x: 0, y: 0 }]);
   const W = Math.max(bb.maxX - bb.minX, 1);
   const H = Math.max(bb.maxY - bb.minY, 1);
   const t = part.thickness;
-  const den = Math.max(fitScale(W, 240), fitScale(H, VIEW_TOP - VIEW_BOTTOM - 70));
-  const x0 = 50;
-  const y0 = Math.max(VIEW_BOTTOM + 30, (VIEW_BOTTOM + 30 + VIEW_TOP - 20) / 2 - H / den / 2);
-  const X = (x: number) => x0 + (x - bb.minX) / den;
-  const Y = (y: number) => y0 + (y - bb.minY) / den;
+  const area = areas.left.x1 - areas.left.x0 > 120 ? areas.left : areas.full;
+  const availW = area.x1 - area.x0 - 60;
+  const availH = area.y1 - area.y0 - 40;
+  const den = Math.max(isoScale(W, availW), isoScale(H, availH));
   const Wp = W / den;
   const Hp = H / den;
+  const x0 = area.x0 + 30 + Math.max(0, (availW - Wp) / 2);
+  const y0 = area.y0 + 24 + Math.max(0, (availH - Hp) / 2);
+  const X = (x: number) => x0 + (x - bb.minX) / den;
+  const Y = (y: number) => y0 + (y - bb.minY) / den;
 
   s.poly(outline.map((v) => ({ x: X(v.x), y: Y(v.y) })), true, 'visible');
-  const holes = part.plateHoles ?? [];
   for (const h of holes) {
-    const c = { x: X(h.x), y: Y(h.y) };
+    const c = { x: x0 + h.x / den, y: y0 + h.y / den };
     const r = Math.max(0.5, h.d / 2 / den);
-    s.slot(c, 2 * r, (h.slot ?? 0) / den, h.angle ?? 0);
-    const m = r + 1.5 + (h.slot ?? 0) / den / 2;
-    s.line({ x: c.x - m, y: c.y }, { x: c.x + m, y: c.y }, 'center');
-    s.line({ x: c.x, y: c.y - m }, { x: c.x, y: c.y + m }, 'center');
+    s.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, h.angle);
+    holeLabel(s, c, r, h.ref);
   }
-  s.text({ x: x0, y: y0 + Hp + 6 }, `PL ${t} x ${fmtLen(W)} x ${fmtLen(H)}`, 3.5);
+  s.text({ x: x0, y: y0 + Hp + 5 }, designation(part), TEXT.small, 'start');
 
-  dimLinear(s, { x: X(bb.minX), y: y0 }, { x: X(bb.maxX), y: y0 }, 'h', y0 - 18, W);
-  dimLinear(s, { x: x0, y: Y(bb.minY) }, { x: x0, y: Y(bb.maxY) }, 'v', x0 - 18, H);
-  if (holes.length) {
-    const xs = uniqSorted(holes.map((h) => h.x)).filter((x) => x > bb.minX + 0.5 && x < bb.maxX - 0.5);
-    const xv = [bb.minX, ...xs, bb.maxX];
-    dimChain(
-      s,
-      xv.map((x) => ({ x: X(x), y: y0 })),
-      xv.slice(1).map((v, i) => v - xv[i]),
-      'h',
-      y0 - 9,
-    );
-    const ys = uniqSorted(holes.map((h) => h.y)).filter((y) => y > bb.minY + 0.5 && y < bb.maxY - 0.5);
-    const yv = [bb.minY, ...ys, bb.maxY];
-    dimChain(
-      s,
-      yv.map((y) => ({ x: x0, y: Y(y) })),
-      yv.slice(1).map((v, i) => v - yv[i]),
-      'v',
-      x0 - 9,
-    );
-  }
+  // Running dimensions from the datum corner (matches the hole table).
+  const xs = uniqSorted(holes.map((h) => h.x)).filter((x) => x > 0.5 && x < W - 0.5);
+  const ys = uniqSorted(holes.map((h) => h.y)).filter((y) => y > 0.5 && y < H - 0.5);
+  if (xs.length) dimRunning(s, [{ x: x0, y: y0 }, ...xs.map((x) => ({ x: x0 + x / den, y: y0 }))], [0, ...xs], 'h', y0 - 8);
+  if (ys.length) dimRunning(s, [{ x: x0, y: y0 }, ...ys.map((y) => ({ x: x0, y: y0 + y / den }))], [0, ...ys], 'v', x0 - 8);
+  dimLinear(s, { x: x0, y: y0 }, { x: x0 + Wp, y: y0 }, 'h', y0 - (xs.length ? 18 : 9), W);
+  dimLinear(s, { x: x0, y: y0 }, { x: x0, y: y0 + Hp }, 'v', x0 - (ys.length ? 20 : 9), H);
 
-  // Edge view showing the thickness.
-  const xE = x0 + Wp + 25;
-  const tp = Math.max(t / den, 0.8);
+  // Edge view on the right (thickness).
+  const xE = x0 + Wp + 20;
+  const tp = Math.max(t / den, 0.7);
   s.rect(xE, y0, tp, Hp, 'visible');
-  dimLinear(s, { x: xE, y: y0 + Hp }, { x: xE + tp, y: y0 + Hp }, 'h', y0 + Hp + 8, t);
-  s.text({ x: xE + tp / 2, y: y0 - 6 }, 'EDGE', 2.5, 'middle');
-  return `1:${den}`;
+  dimLinear(s, { x: xE, y: y0 + Hp }, { x: xE + tp, y: y0 + Hp }, 'h', y0 + Hp + 7, t);
+  return scaleLabel(den);
 }

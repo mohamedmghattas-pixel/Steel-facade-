@@ -28,7 +28,7 @@ Everything runs in the browser. There is no server: projects autosave to the bro
    - IFC4 model export
    - Material lists (XLSX, or CSV in a zip)
    - Cut optimisation for bars (1D) and plates (2D nesting)
-   - GA, assembly and single-part drawings (PDF / DXF)
+   - A numbered drawing set (PDF / DXF) to ISO drawing standards: drawing register, GA, assembly and part drawings with revision tables, cross-references, hole tables and machining steps. See [docs/DRAWING_STANDARDS.md](docs/DRAWING_STANDARDS.md).
    - DSTV NC1 files for CNC
    - Checks (warnings, clashing bolt holes, unassigned lines)
 
@@ -87,7 +87,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 ## Roadmap
 
-- Drawing control: dimension styles, section views, sheet templates, revision tables
+- Drawing control: editable view placement, section cuts, company sheet templates
 - More connections: splices, knife plates, cast-in channels, beam clamps for main steel
 - Facade design checks: wind load on mullions and transoms, deflection limits, automatic profile sizing
 - Clash detection, DWG import, cloud projects and team sharing

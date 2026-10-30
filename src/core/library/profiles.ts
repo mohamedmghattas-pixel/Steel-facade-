@@ -1,15 +1,29 @@
-import { sectionProps, shapeBox, type SectionProps, type Shape } from './shapes';
+import { sectionProps, shapeBox, validateShape, type SectionProps, type Shape, type ShapeType } from './shapes';
+import * as EN from './sections/en';
+import * as BS from './sections/bs';
+import * as US from './sections/aisc';
 
 /**
- * Profile library: EN (European) and AISC (American) sections.
+ * Profile library: EN (European), BS (British), AISC (American) and custom sections.
  *
- * Rolled sections carry their catalogue mass; for everything else the mass is
- * computed from the drawn cross-section (including corner/root radii), which
- * matches catalogue values to within about 1 %. Always verify critical values
- * against the mill or supplier tables before fabrication.
+ * Rolled I/U/T sections carry their catalogue mass (massSource 'catalogue');
+ * for everything else the mass is computed from the drawn cross-section
+ * (including corner/root radii), which matches catalogue values to about 1 %.
+ * Always verify critical values against the mill or supplier tables before
+ * fabrication. `spec` names the dimensional standard (see standards.ts).
  */
 
-export type Standard = 'EN' | 'AISC';
+export type Standard = 'EN' | 'BS' | 'AISC' | 'Custom';
+
+/** Standards in display order, with labels for pickers. */
+export const STANDARDS_LIST: readonly { value: Standard; label: string; description: string }[] = [
+  { value: 'EN', label: 'EN (European)', description: 'IPE, HE, IPN, UPN, UPE, T, angles, hollow sections, bars, cold-formed' },
+  { value: 'BS', label: 'BS (British)', description: 'BS 4-1 universal beams, universal columns, parallel flange channels' },
+  { value: 'AISC', label: 'AISC (US)', description: 'W, WT, S, C, MC, angles, HSS and pipe (US customary sizes)' },
+  { value: 'Custom', label: 'Custom', description: 'User-defined and imported sections' },
+];
+
+export type MassSource = 'catalogue' | 'computed' | 'user';
 
 export interface Profile extends SectionProps {
   /** Unique name, also used as the profile id (e.g. "SHS 100x100x5", "HSS4x4x1/4"). */
@@ -22,6 +36,16 @@ export interface Profile extends SectionProps {
   /** Overall section height (local z) and width (local y), mm. */
   h: number;
   b: number;
+  /** 'catalogue' = tabulated mass, 'computed' = from the drawn section, 'user' = given on import. */
+  massSource?: MassSource;
+  /** Dimensional/product standard of the section, e.g. 'EN 10365', 'EN 10219-2', 'ASTM A500'. */
+  spec?: string;
+  /** AISC design wall thickness for HSS and pipe (0.93 × nominal for ASTM A500/A53), mm. */
+  tdes?: number;
+  /** Alternative designations that getProfile/searchProfiles also accept. */
+  aliases?: string[];
+  /** True for user-registered (custom/imported) profiles. */
+  custom?: boolean;
 }
 
 export const STEEL_DENSITY = 7850; // kg/m³
@@ -30,253 +54,163 @@ const IN = 25.4;
 const LBFT = 1.48816394;
 
 const all: Profile[] = [];
+const byName = new Map<string, Profile>();
 
-function addProfile(name: string, standard: Standard, family: string, shape: Shape, mass?: number) {
+interface BuildOpts {
+  mass?: number;
+  massSource?: MassSource;
+  spec?: string;
+  tdes?: number;
+  aliases?: string[];
+  custom?: boolean;
+}
+
+function buildProfile(name: string, standard: Standard, family: string, shape: Shape, o: BuildOpts = {}): Profile {
   const props = sectionProps(shape);
   const box = shapeBox(shape);
-  all.push({
+  const p: Profile = {
     name,
     standard,
     family,
     shape,
     ...props,
-    mass: mass ?? (props.area * STEEL_DENSITY) / 1e6,
+    mass: o.mass ?? (props.area * STEEL_DENSITY) / 1e6,
     h: box.h,
     b: box.w,
-  });
+    massSource: o.massSource ?? (o.mass === undefined ? 'computed' : 'catalogue'),
+  };
+  if (o.spec) p.spec = o.spec;
+  if (o.tdes !== undefined) p.tdes = o.tdes;
+  if (o.aliases?.length) p.aliases = o.aliases;
+  if (o.custom) p.custom = true;
+  return p;
+}
+
+function addProfile(name: string, standard: Standard, family: string, shape: Shape, o: BuildOpts = {}) {
+  const p = buildProfile(name, standard, family, shape, o);
+  all.push(p);
+  byName.set(name, p);
 }
 
 /** Trim trailing zeros for names: 3.0 → "3", 2.5 → "2.5". */
 const n = (v: number) => String(Number(v.toFixed(2)));
 
 // ---------------------------------------------------------------------------
-// EN rolled sections: [size, h, b, tw, tf, r, kg/m]
+// EN hot-rolled
 
-const IPE: number[][] = [
-  [80, 80, 46, 3.8, 5.2, 5, 6.0],
-  [100, 100, 55, 4.1, 5.7, 7, 8.1],
-  [120, 120, 64, 4.4, 6.3, 7, 10.4],
-  [140, 140, 73, 4.7, 6.9, 7, 12.9],
-  [160, 160, 82, 5.0, 7.4, 9, 15.8],
-  [180, 180, 91, 5.3, 8.0, 9, 18.8],
-  [200, 200, 100, 5.6, 8.5, 12, 22.4],
-  [220, 220, 110, 5.9, 9.2, 12, 26.2],
-  [240, 240, 120, 6.2, 9.8, 15, 30.7],
-  [270, 270, 135, 6.6, 10.2, 15, 36.1],
-  [300, 300, 150, 7.1, 10.7, 15, 42.2],
-  [330, 330, 160, 7.5, 11.5, 18, 49.1],
-  [360, 360, 170, 8.0, 12.7, 18, 57.1],
-  [400, 400, 180, 8.6, 13.5, 21, 66.3],
-];
-const HEA: number[][] = [
-  [100, 96, 100, 5, 8, 12, 16.7],
-  [120, 114, 120, 5, 8, 12, 19.9],
-  [140, 133, 140, 5.5, 8.5, 12, 24.7],
-  [160, 152, 160, 6, 9, 15, 30.4],
-  [180, 171, 180, 6, 9.5, 15, 35.5],
-  [200, 190, 200, 6.5, 10, 18, 42.3],
-  [220, 210, 220, 7, 11, 18, 50.5],
-  [240, 230, 240, 7.5, 12, 21, 60.3],
-  [260, 250, 260, 7.5, 12.5, 24, 68.2],
-  [280, 270, 280, 8, 13, 24, 76.4],
-  [300, 290, 300, 8.5, 14, 27, 88.3],
-];
-const HEB: number[][] = [
-  [100, 100, 100, 6, 10, 12, 20.4],
-  [120, 120, 120, 6.5, 11, 12, 26.7],
-  [140, 140, 140, 7, 12, 12, 33.7],
-  [160, 160, 160, 8, 13, 15, 42.6],
-  [180, 180, 180, 8.5, 14, 15, 51.2],
-  [200, 200, 200, 9, 15, 18, 61.3],
-  [220, 220, 220, 9.5, 16, 18, 71.5],
-  [240, 240, 240, 10, 17, 21, 83.2],
-  [260, 260, 260, 10, 17.5, 24, 93.0],
-  [280, 280, 280, 10.5, 18, 24, 103],
-  [300, 300, 300, 11, 19, 27, 117],
-];
-const UPN: number[][] = [
-  [50, 50, 38, 5, 7, 7, 5.59],
-  [65, 65, 42, 5.5, 7.5, 7.5, 7.09],
-  [80, 80, 45, 6, 8, 8, 8.64],
-  [100, 100, 50, 6, 8.5, 8.5, 10.6],
-  [120, 120, 55, 7, 9, 9, 13.4],
-  [140, 140, 60, 7, 10, 10, 16.0],
-  [160, 160, 65, 7.5, 10.5, 10.5, 18.8],
-  [180, 180, 70, 8, 11, 11, 22.0],
-  [200, 200, 75, 8.5, 11.5, 11.5, 25.3],
-  [220, 220, 80, 9, 12.5, 12.5, 29.4],
-  [240, 240, 85, 9.5, 13, 13, 33.2],
-  [260, 260, 90, 10, 14, 14, 37.9],
-  [300, 300, 100, 10, 16, 16, 46.2],
-];
-for (const [s, h, b, tw, tf, r, m] of IPE) addProfile(`IPE ${s}`, 'EN', 'IPE', { type: 'I', h, b, tw, tf, r }, m);
-for (const [s, h, b, tw, tf, r, m] of HEA) addProfile(`HEA ${s}`, 'EN', 'HEA', { type: 'I', h, b, tw, tf, r }, m);
-for (const [s, h, b, tw, tf, r, m] of HEB) addProfile(`HEB ${s}`, 'EN', 'HEB', { type: 'I', h, b, tw, tf, r }, m);
-for (const [s, h, b, tw, tf, r, m] of UPN) addProfile(`UPN ${s}`, 'EN', 'UPN', { type: 'U', h, b, tw, tf, r }, m);
+for (const [s, h, b, tw, tf, r, m] of EN.IPE) addProfile(`IPE ${s}`, 'EN', 'IPE', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'EN 10365' });
+for (const [s, h, b, tw, tf, r, m] of EN.HEA)
+  addProfile(`HEA ${s}`, 'EN', 'HEA', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'EN 10365', aliases: [`HE ${s} A`] });
+for (const [s, h, b, tw, tf, r, m] of EN.HEB)
+  addProfile(`HEB ${s}`, 'EN', 'HEB', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'EN 10365', aliases: [`HE ${s} B`] });
+for (const [s, h, b, tw, tf, r, m] of EN.HEM)
+  addProfile(`HEM ${s}`, 'EN', 'HEM', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'EN 10365', aliases: [`HE ${s} M`] });
+for (const [s, h, b, tw, tf, r, m] of EN.IPN)
+  addProfile(`IPN ${s}`, 'EN', 'IPN', { type: 'I', h, b, tw, tf, r, r2: Number((0.6 * tw).toFixed(2)) }, { mass: m, spec: 'EN 10365', aliases: [`I ${s}`] });
+for (const [s, h, b, tw, tf, r, m] of EN.UPN)
+  addProfile(`UPN ${s}`, 'EN', 'UPN', { type: 'U', h, b, tw, tf, r, r2: r / 2 }, { mass: m, spec: 'EN 10365', aliases: [`U ${s}`] });
+for (const [s, h, b, tw, tf, r, m] of EN.UPE) addProfile(`UPE ${s}`, 'EN', 'UPE', { type: 'U', h, b, tw, tf, r }, { mass: m, spec: 'EN 10365' });
+for (const [h, t, m] of EN.T_EN)
+  addProfile(`T ${h}x${h}x${n(t)}`, 'EN', 'T', { type: 'T', h, b: h, tw: t, tf: t, r: t, r2: t / 2, r3: t / 4 }, { mass: m, spec: 'EN 10055', aliases: [`T ${h}`] });
 
-// EN 10056 angles: [h, b, t, r]
-const L_EN: number[][] = [
-  [20, 20, 3, 3.5], [25, 25, 3, 3.5], [25, 25, 4, 3.5], [30, 30, 3, 5], [30, 30, 4, 5],
-  [35, 35, 4, 5], [40, 40, 4, 6], [40, 40, 5, 6], [45, 45, 5, 7], [50, 50, 4, 7],
-  [50, 50, 5, 7], [50, 50, 6, 7], [60, 60, 5, 8], [60, 60, 6, 8], [60, 60, 8, 8],
-  [65, 65, 7, 9], [70, 70, 6, 9], [70, 70, 7, 9], [75, 75, 6, 9], [75, 75, 8, 9],
-  [80, 80, 8, 10], [80, 80, 10, 10], [90, 90, 8, 11], [90, 90, 9, 11], [100, 100, 8, 12],
-  [100, 100, 10, 12], [100, 100, 12, 12], [120, 120, 10, 13], [120, 120, 12, 13],
-  [150, 150, 12, 16], [150, 150, 15, 16],
-  [60, 40, 5, 6], [60, 40, 6, 6], [75, 50, 6, 7], [75, 50, 8, 7], [80, 40, 6, 7],
-  [80, 60, 7, 8], [100, 50, 6, 8], [100, 50, 8, 8], [100, 65, 7, 10], [100, 75, 8, 10],
-  [120, 80, 8, 11], [120, 80, 10, 11], [150, 75, 9, 11], [150, 90, 10, 12], [150, 100, 10, 12],
-];
-for (const [h, b, t, r] of L_EN) addProfile(`L ${h}x${b}x${n(t)}`, 'EN', 'L', { type: 'L', h, b, t, r });
-
-/** EN 10219 cold-formed hollow section outer corner radius. */
-const en10219Radius = (t: number) => (t <= 6 ? 2 * t : t <= 10 ? 2.5 * t : 3 * t);
-
-// SHS [b, t...]
-const SHS: [number, number[]][] = [
-  [40, [2, 3, 4]],
-  [50, [3, 4, 5]],
-  [60, [3, 4, 5]],
-  [70, [4, 5]],
-  [80, [3, 4, 5, 6]],
-  [90, [4, 5]],
-  [100, [4, 5, 6, 8]],
-  [120, [5, 6, 8]],
-  [140, [5, 6, 8]],
-  [150, [6, 8]],
-  [160, [6, 8]],
-  [200, [6, 8, 10]],
-];
-for (const [b, ts] of SHS) {
-  for (const t of ts) addProfile(`SHS ${b}x${b}x${n(t)}`, 'EN', 'SHS', { type: 'RHS', h: b, b, t, ro: en10219Radius(t) });
+// EN 10056-1 angles (toe radius r2 = r1/2)
+for (const [a, r, ts] of EN.L_EQUAL) {
+  for (const t of ts) addProfile(`L ${a}x${a}x${n(t)}`, 'EN', 'L', { type: 'L', h: a, b: a, t, r, r2: r / 2 }, { spec: 'EN 10056-1' });
 }
-// RHS [h, b, t...] — h is the deeper side
-const RHS: [number, number, number[]][] = [
-  [40, 20, [2, 3]],
-  [50, 25, [2, 3]],
-  [50, 30, [3, 4]],
-  [60, 30, [3]],
-  [60, 40, [3, 4]],
-  [80, 40, [3, 4, 5]],
-  [100, 40, [3, 4]],
-  [100, 50, [3, 4, 5, 6]],
-  [100, 60, [4, 5]],
-  [120, 60, [4, 5, 6]],
-  [120, 80, [4, 5, 6]],
-  [140, 80, [5, 6]],
-  [150, 50, [4, 5]],
-  [150, 100, [5, 6, 8]],
-  [160, 80, [5, 6]],
-  [200, 100, [5, 6, 8]],
-  [250, 150, [6, 8]],
-];
-for (const [h, b, ts] of RHS) {
-  for (const t of ts) addProfile(`RHS ${h}x${b}x${n(t)}`, 'EN', 'RHS', { type: 'RHS', h, b, t, ro: en10219Radius(t) });
-}
-const CHS: [number, number[]][] = [
-  [33.7, [2.6, 3.2]],
-  [42.4, [2.6, 3.2, 4]],
-  [48.3, [2.6, 3.2, 4, 5]],
-  [60.3, [3.2, 4, 5]],
-  [76.1, [3.2, 4, 5]],
-  [88.9, [3.2, 4, 5, 6.3]],
-  [101.6, [4, 5, 6.3]],
-  [114.3, [4, 5, 6.3]],
-  [139.7, [5, 6.3, 8]],
-  [168.3, [5, 6.3, 8]],
-  [219.1, [6.3, 8, 10]],
-];
-for (const [d, ts] of CHS) for (const t of ts) addProfile(`CHS ${n(d)}x${n(t)}`, 'EN', 'CHS', { type: 'CHS', d, t });
-
-// Flat bars: FL width x thickness
-for (const h of [20, 25, 30, 40, 50, 60, 70, 80, 100, 120, 150, 200, 250]) {
-  for (const t of [5, 6, 8, 10, 12, 15, 20]) {
-    if (t * 2 >= h) continue;
-    addProfile(`FL ${h}x${t}`, 'EN', 'FL', { type: 'FL', h, t });
-  }
-}
-
-// Cold-formed lipped C and Z purlins/rails: [h, b, lip, t...]
-const CF: [number, number, number, number[]][] = [
-  [100, 50, 15, [1.5, 2]],
-  [120, 50, 15, [1.5, 2]],
-  [150, 65, 20, [1.5, 2, 2.5]],
-  [175, 65, 20, [2, 2.5]],
-  [200, 75, 20, [2, 2.5, 3]],
-  [250, 75, 20, [2.5, 3]],
-];
-for (const [h, b, c, ts] of CF) {
-  for (const t of ts) {
-    addProfile(`C ${h}x${b}x${c}x${n(t)}`, 'EN', 'C (cold-formed)', { type: 'C', h, b, c, t });
-    addProfile(`Z ${h}x${b}x${c}x${n(t)}`, 'EN', 'Z (cold-formed)', { type: 'Z', h, b, c, t });
-  }
+for (const [a, b, r, ts] of EN.L_UNEQUAL) {
+  for (const t of ts) addProfile(`L ${a}x${b}x${n(t)}`, 'EN', 'L', { type: 'L', h: a, b, t, r, r2: r / 2 }, { spec: 'EN 10056-1' });
 }
 
 // ---------------------------------------------------------------------------
-// AISC (dimensions in inches, converted). Mass of W and C shapes comes from the
-// nominal weight in the designation.
+// EN hollow sections
 
-// W: [designation, d, bf, tw, tf]
-const W: [string, number, number, number, number][] = [
-  ['W4x13', 4.16, 4.06, 0.28, 0.345],
-  ['W5x16', 5.01, 5.0, 0.24, 0.36],
-  ['W5x19', 5.15, 5.03, 0.27, 0.43],
-  ['W6x9', 5.9, 3.94, 0.17, 0.215],
-  ['W6x12', 6.03, 4.0, 0.23, 0.28],
-  ['W6x15', 5.99, 5.99, 0.23, 0.26],
-  ['W6x16', 6.28, 4.03, 0.26, 0.405],
-  ['W6x20', 6.2, 6.02, 0.26, 0.365],
-  ['W6x25', 6.38, 6.08, 0.32, 0.455],
-  ['W8x10', 7.89, 3.94, 0.17, 0.205],
-  ['W8x13', 7.99, 4.0, 0.23, 0.255],
-  ['W8x15', 8.11, 4.01, 0.245, 0.315],
-  ['W8x18', 8.14, 5.25, 0.23, 0.33],
-  ['W8x21', 8.28, 5.27, 0.25, 0.4],
-  ['W8x24', 7.93, 6.5, 0.245, 0.4],
-  ['W8x28', 8.06, 6.54, 0.285, 0.465],
-  ['W8x31', 8.0, 8.0, 0.285, 0.435],
-  ['W8x35', 8.12, 8.02, 0.31, 0.495],
-  ['W10x12', 9.87, 3.96, 0.19, 0.21],
-  ['W10x15', 9.99, 4.0, 0.23, 0.27],
-  ['W10x19', 10.2, 4.02, 0.25, 0.395],
-  ['W10x22', 10.2, 5.75, 0.24, 0.36],
-  ['W10x26', 10.3, 5.77, 0.26, 0.44],
-  ['W10x30', 10.5, 5.81, 0.3, 0.51],
-  ['W10x33', 9.73, 7.96, 0.29, 0.435],
-  ['W12x14', 11.9, 3.97, 0.2, 0.225],
-  ['W12x16', 12.0, 3.99, 0.22, 0.265],
-  ['W12x19', 12.2, 4.01, 0.235, 0.35],
-  ['W12x22', 12.3, 4.03, 0.26, 0.425],
-  ['W12x26', 12.2, 6.49, 0.23, 0.38],
-  ['W12x30', 12.3, 6.52, 0.26, 0.44],
-  ['W12x35', 12.5, 6.56, 0.3, 0.52],
-];
-for (const [name, d, bf, tw, tf] of W) {
-  const lbft = Number(name.split('x')[1]);
-  addProfile(name, 'AISC', 'W', { type: 'I', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: Math.max(6, tf * IN * 0.8) }, lbft * LBFT);
+/** EN 10219-2 cold-formed hollow section outer corner radius (used for mass and properties). */
+export const en10219Radius = (t: number) => (t <= 6 ? 2 * t : t <= 10 ? 2.5 * t : 3 * t);
+/** EN 10210-2 hot-finished outer corner radius (inner radius = t). */
+export const en10210Radius = (t: number) => 1.5 * t;
+
+for (const [b, ts] of EN.SHS_CF) {
+  for (const t of ts) addProfile(`SHS ${b}x${b}x${n(t)}`, 'EN', 'SHS', { type: 'RHS', h: b, b, t, ro: en10219Radius(t) }, { spec: 'EN 10219-2' });
 }
-// C: [designation, d, bf, tw, tf]
-const C_AISC: [string, number, number, number, number][] = [
-  ['C3x4.1', 3, 1.41, 0.17, 0.273],
-  ['C3x5', 3, 1.5, 0.258, 0.273],
-  ['C4x5.4', 4, 1.58, 0.184, 0.296],
-  ['C4x7.25', 4, 1.72, 0.321, 0.296],
-  ['C5x6.7', 5, 1.75, 0.19, 0.32],
-  ['C5x9', 5, 1.89, 0.325, 0.32],
-  ['C6x8.2', 6, 1.92, 0.2, 0.343],
-  ['C6x10.5', 6, 2.03, 0.314, 0.343],
-  ['C6x13', 6, 2.16, 0.437, 0.343],
-  ['C7x9.8', 7, 2.09, 0.21, 0.366],
-  ['C8x11.5', 8, 2.26, 0.22, 0.39],
-  ['C8x13.75', 8, 2.34, 0.303, 0.39],
-  ['C9x13.4', 9, 2.43, 0.233, 0.413],
-  ['C10x15.3', 10, 2.6, 0.24, 0.436],
-  ['C10x20', 10, 2.74, 0.379, 0.436],
-  ['C12x20.7', 12, 2.94, 0.282, 0.501],
-];
-for (const [name, d, bf, tw, tf] of C_AISC) {
-  const lbft = Number(name.split('x')[1]);
-  addProfile(name, 'AISC', 'C', { type: 'U', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: Math.max(5, tf * IN * 0.7) }, lbft * LBFT);
+for (const [h, b, ts] of EN.RHS_CF) {
+  for (const t of ts) addProfile(`RHS ${h}x${b}x${n(t)}`, 'EN', 'RHS', { type: 'RHS', h, b, t, ro: en10219Radius(t) }, { spec: 'EN 10219-2' });
+}
+for (const [b, ts] of EN.SHS_HF) {
+  for (const t of ts) addProfile(`SHS ${b}x${b}x${n(t)} HF`, 'EN', 'SHS HF', { type: 'RHS', h: b, b, t, ro: en10210Radius(t), ri: t }, { spec: 'EN 10210-2' });
+}
+for (const [h, b, ts] of EN.RHS_HF) {
+  for (const t of ts) addProfile(`RHS ${h}x${b}x${n(t)} HF`, 'EN', 'RHS HF', { type: 'RHS', h, b, t, ro: en10210Radius(t), ri: t }, { spec: 'EN 10210-2' });
+}
+for (const [d, ts] of EN.CHS_EN) {
+  for (const t of ts) addProfile(`CHS ${n(d)}x${n(t)}`, 'EN', 'CHS', { type: 'CHS', d, t }, { spec: 'EN 10219-2 / EN 10210-2' });
+}
+
+// ---------------------------------------------------------------------------
+// EN bars
+
+for (const h of EN.FLAT_WIDTHS) {
+  for (const t of EN.FLAT_THICKNESSES) {
+    if (t * 2 > h || t * 50 < h) continue;
+    addProfile(`FL ${h}x${t}`, 'EN', 'FL', { type: 'FL', h, t }, { spec: 'EN 10058' });
+  }
+}
+for (const a of EN.SQUARE_BARS) addProfile(`SQ ${a}`, 'EN', 'SQ', { type: 'FL', h: a, t: a }, { spec: 'EN 10059' });
+for (const d of EN.ROUND_BARS) addProfile(`RD ${d}`, 'EN', 'RD', { type: 'RD', d }, { spec: 'EN 10060' });
+
+// ---------------------------------------------------------------------------
+// EN cold-formed (inner bend radius = t)
+
+for (const [h, b, c, ts] of EN.CF_LIPPED) {
+  for (const t of ts) {
+    addProfile(`C ${h}x${b}x${c}x${n(t)}`, 'EN', 'C (cold-formed)', { type: 'C', h, b, c, t, r: t }, { spec: 'EN 10162' });
+    addProfile(`Z ${h}x${b}x${c}x${n(t)}`, 'EN', 'Z (cold-formed)', { type: 'Z', h, b, c, t, r: t }, { spec: 'EN 10162' });
+  }
+}
+for (const [h, b, ts] of EN.CF_CHANNELS) {
+  for (const t of ts) {
+    addProfile(`CU ${h}x${b}x${n(t)}`, 'EN', 'U (cold-formed)', { type: 'U', h, b, tw: t, tf: t, r: t, ro: 2 * t }, { spec: 'EN 10162' });
+  }
+}
+for (const [h, b, ts] of EN.CF_ANGLES) {
+  for (const t of ts) addProfile(`CL ${h}x${b}x${n(t)}`, 'EN', 'L (cold-formed)', { type: 'L', h, b, t, r: t, ro: 2 * t }, { spec: 'EN 10162' });
+}
+
+// ---------------------------------------------------------------------------
+// British BS 4-1
+
+for (const [des, h, b, tw, tf, r, m] of BS.UB)
+  addProfile(`UB ${des}`, 'BS', 'UB', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'BS 4-1', aliases: [`UKB ${des}`] });
+for (const [des, h, b, tw, tf, r, m] of BS.UC)
+  addProfile(`UC ${des}`, 'BS', 'UC', { type: 'I', h, b, tw, tf, r }, { mass: m, spec: 'BS 4-1', aliases: [`UKC ${des}`] });
+for (const [des, h, b, tw, tf, r, m] of BS.PFC)
+  addProfile(`PFC ${des}`, 'BS', 'PFC', { type: 'U', h, b, tw, tf, r }, { mass: m, spec: 'BS 4-1', aliases: [`UKPFC ${des}`] });
+
+// ---------------------------------------------------------------------------
+// AISC (dimensions in inches, converted). Mass of rolled shapes comes from the
+// nominal weight in the designation; fillet radii are estimated from tf.
+
+const wFillet = (tf: number) => Math.max(6, tf * IN * 0.8);
+const cFillet = (tf: number) => Math.max(5, tf * IN * 0.7);
+const lbft = (name: string) => Number(name.split('x')[1]);
+
+for (const [name, d, bf, tw, tf] of US.W) {
+  const shape: Shape = { type: 'I', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: wFillet(tf) };
+  addProfile(name, 'AISC', 'W', shape, { mass: lbft(name) * LBFT, spec: 'ASTM A6' });
+}
+for (const [name, d, bf, tw, tf] of US.W) {
+  const nominal = Number(name.slice(1).split('x')[0]);
+  const wt = `WT${n(nominal / 2)}x${n(lbft(name) / 2)}`;
+  const shape: Shape = { type: 'T', h: (d / 2) * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: wFillet(tf) };
+  addProfile(wt, 'AISC', 'WT', shape, { mass: (lbft(name) / 2) * LBFT, spec: 'ASTM A6' });
+}
+for (const [name, d, bf, tw, tf] of US.S) {
+  addProfile(name, 'AISC', 'S', { type: 'I', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: wFillet(tf) }, { mass: lbft(name) * LBFT, spec: 'ASTM A6' });
+}
+for (const [name, d, bf, tw, tf] of US.C) {
+  addProfile(name, 'AISC', 'C', { type: 'U', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: cFillet(tf) }, { mass: lbft(name) * LBFT, spec: 'ASTM A6' });
+}
+for (const [name, d, bf, tw, tf] of US.MC) {
+  addProfile(name, 'AISC', 'MC', { type: 'U', h: d * IN, b: bf * IN, tw: tw * IN, tf: tf * IN, r: cFillet(tf) }, { mass: lbft(name) * LBFT, spec: 'ASTM A6' });
 }
 
 /** "2-1/2" → 2.5, "1/4" → 0.25, "4" → 4 */
@@ -286,59 +220,406 @@ export function parseInch(s: string): number {
   return Number(s);
 }
 
-// L angles: [leg1, leg2, t] as strings
-const L_AISC: [string, string, string][] = [
-  ['2', '2', '1/8'], ['2', '2', '3/16'], ['2', '2', '1/4'], ['2-1/2', '2-1/2', '3/16'], ['2-1/2', '2-1/2', '1/4'],
-  ['3', '3', '3/16'], ['3', '3', '1/4'], ['3', '3', '3/8'], ['3-1/2', '3-1/2', '1/4'], ['4', '4', '1/4'],
-  ['4', '4', '5/16'], ['4', '4', '3/8'], ['4', '4', '1/2'], ['5', '5', '3/8'], ['6', '6', '3/8'], ['6', '6', '1/2'],
-  ['3', '2', '1/4'], ['3-1/2', '2-1/2', '1/4'], ['4', '3', '1/4'], ['4', '3', '3/8'], ['5', '3', '1/4'],
-  ['5', '3-1/2', '3/8'], ['6', '4', '3/8'],
-];
-for (const [a, b, t] of L_AISC) {
+for (const [a, b, ts] of US.L) {
   const h = parseInch(a) * IN;
   const w = parseInch(b) * IN;
-  const tt = parseInch(t) * IN;
   const r = h <= 3 * IN ? 0.25 * IN : h <= 4 * IN ? 0.375 * IN : 0.5 * IN;
-  addProfile(`L${a}x${b}x${t}`, 'AISC', 'L', { type: 'L', h, b: w, t: tt, r });
+  for (const t of ts) addProfile(`L${a}x${b}x${t}`, 'AISC', 'L', { type: 'L', h, b: w, t: parseInch(t) * IN, r }, { spec: 'ASTM A6' });
 }
 
-// HSS rectangular: [h, b, t] — weight uses nominal wall, corner radius 2t
-const HSS_R: [string, string, string][] = [
-  ['2', '2', '1/8'], ['2', '2', '3/16'], ['2', '2', '1/4'], ['2-1/2', '2-1/2', '3/16'], ['3', '3', '1/8'],
-  ['3', '3', '3/16'], ['3', '3', '1/4'], ['3-1/2', '3-1/2', '1/4'], ['4', '4', '1/8'], ['4', '4', '3/16'],
-  ['4', '4', '1/4'], ['4', '4', '5/16'], ['5', '5', '1/4'], ['6', '6', '1/4'], ['6', '6', '3/8'],
-  ['8', '8', '1/4'], ['8', '8', '3/8'], ['3', '2', '3/16'], ['4', '2', '3/16'], ['4', '2', '1/4'],
-  ['4', '3', '1/4'], ['5', '3', '1/4'], ['6', '2', '1/4'], ['6', '3', '1/4'], ['6', '4', '1/4'],
-  ['8', '4', '1/4'], ['8', '4', '3/8'], ['8', '6', '1/4'],
-];
-for (const [a, b, t] of HSS_R) {
-  const tt = parseInch(t) * IN;
-  addProfile(`HSS${a}x${b}x${t}`, 'AISC', 'HSS rect', { type: 'RHS', h: parseInch(a) * IN, b: parseInch(b) * IN, t: tt, ro: 2 * tt });
+// HSS: weight from the nominal wall with outer corner radius 2t (AISC Manual basis);
+// design properties per AISC 360 B4.2 use tdes = 0.93 t for ASTM A500.
+for (const [a, b, ts] of US.HSS_RECT) {
+  for (const t of ts) {
+    const tt = parseInch(t) * IN;
+    addProfile(`HSS${a}x${b}x${t}`, 'AISC', 'HSS rect', { type: 'RHS', h: parseInch(a) * IN, b: parseInch(b) * IN, t: tt, ro: 2 * tt }, { spec: 'ASTM A500', tdes: 0.93 * tt });
+  }
 }
-// HSS round: [d, t] in inches
-const HSS_C: [number, number][] = [
-  [1.9, 0.145], [2.375, 0.154], [2.875, 0.203], [3.5, 0.216], [4.0, 0.226], [4.5, 0.237], [5.563, 0.258], [6.625, 0.28],
-];
-for (const [d, t] of HSS_C) {
-  addProfile(`HSS${d.toFixed(3)}x${t.toFixed(3)}`, 'AISC', 'HSS round', { type: 'CHS', d: d * IN, t: t * IN });
+for (const [d, ts] of US.HSS_ROUND) {
+  for (const t of ts) {
+    addProfile(`HSS${d.toFixed(3)}x${t.toFixed(3)}`, 'AISC', 'HSS round', { type: 'CHS', d: d * IN, t: t * IN }, { spec: 'ASTM A500', tdes: 0.93 * t * IN });
+  }
+}
+for (const [nps, d, std, xs] of US.PIPE) {
+  addProfile(`Pipe${nps}STD`, 'AISC', 'Pipe', { type: 'CHS', d: d * IN, t: std * IN }, { spec: 'ASTM A53', tdes: 0.93 * std * IN });
+  addProfile(`Pipe${nps}XS`, 'AISC', 'Pipe', { type: 'CHS', d: d * IN, t: xs * IN }, { spec: 'ASTM A53', tdes: 0.93 * xs * IN });
 }
 
 // ---------------------------------------------------------------------------
+// Lookup
 
 export const PROFILES: readonly Profile[] = all;
-const byName = new Map(all.map((p) => [p.name, p]));
+const builtIn = new Set(all.map((p) => p.name));
 
+/** Normalised key: case, spaces, "*" and "×" are ignored. */
+const norm = (s: string) => s.toLowerCase().replace(/[\s*]/g, '').replace(/×/g, 'x');
+
+/** Normalised name/alias → profile name ('' when ambiguous). */
+let byKey = new Map<string, string>();
+function rebuildKeys() {
+  byKey = new Map();
+  const put = (k: string, name: string) => {
+    const hit = byKey.get(k);
+    byKey.set(k, hit === undefined || hit === name ? name : '');
+  };
+  for (const p of all) {
+    put(norm(p.name), p.name);
+    for (const a of p.aliases ?? []) put(norm(a), p.name);
+  }
+}
+rebuildKeys();
+
+/** Exact name first, then a unique case/space-insensitive match on name or alias ("hea200", "HE 200 A"). */
 export function getProfile(name: string | null | undefined): Profile | undefined {
-  return name ? byName.get(name) : undefined;
+  if (!name) return undefined;
+  const hit = byName.get(name);
+  if (hit) return hit;
+  const k = byKey.get(norm(name));
+  return k ? byName.get(k) : undefined;
 }
 
 export function profileFamilies(standard?: Standard): string[] {
   return [...new Set(all.filter((p) => !standard || p.standard === standard).map((p) => p.family))];
 }
 
-/** Loose search: "shs100", "SHS 100x100", "hss4x4" all match. */
+/** Loose search: "shs100", "SHS 100x100", "hss4x4" all match. Names starting with the query come first. */
 export function searchProfiles(q: string, standard?: Standard): Profile[] {
-  const norm = (s: string) => s.toLowerCase().replace(/[\s*]/g, '');
   const k = norm(q);
-  return all.filter((p) => (!standard || p.standard === standard) && (!k || norm(p.name).includes(k)));
+  const hits = all.filter(
+    (p) => (!standard || p.standard === standard) && (!k || norm(p.name).includes(k) || (p.aliases ?? []).some((a) => norm(a).includes(k))),
+  );
+  if (!k) return hits;
+  const starts = (p: Profile) => norm(p.name).startsWith(k) || (p.aliases ?? []).some((a) => norm(a).startsWith(k));
+  return [...hits.filter(starts), ...hits.filter((p) => !starts(p))];
+}
+
+// ---------------------------------------------------------------------------
+// Custom / imported profiles
+
+/** A user-defined section. Dimensions in mm; mass (kg/m) is computed from the shape when omitted. */
+export interface ProfileDef {
+  name: string;
+  /** Defaults to 'Custom'. */
+  standard?: Standard;
+  /** Defaults to "Custom <type>". */
+  family?: string;
+  shape: Shape;
+  mass?: number;
+  spec?: string;
+}
+
+/** Build a Profile from a definition (throws on an invalid shape or name). */
+export function profileFromDef(def: ProfileDef): Profile {
+  const name = def.name?.trim();
+  if (!name) throw new Error('Profile name is required');
+  if (!def.shape || typeof def.shape !== 'object') throw new Error(`${name}: shape is required`);
+  const err = validateShape(def.shape);
+  if (err) throw new Error(`${name}: ${err}`);
+  if (def.mass !== undefined && !(Number.isFinite(def.mass) && def.mass > 0)) throw new Error(`${name}: mass must be > 0`);
+  return buildProfile(name, def.standard ?? 'Custom', def.family?.trim() || `Custom ${def.shape.type}`, { ...def.shape }, {
+    mass: def.mass,
+    massSource: def.mass === undefined ? 'computed' : 'user',
+    spec: def.spec,
+    custom: true,
+  });
+}
+
+const customDefs = new Map<string, ProfileDef>();
+/** Built-in profiles temporarily replaced by a custom one (restored on unregister). */
+const shadowed = new Map<string, Profile>();
+const listeners = new Set<() => void>();
+let revision = 0;
+
+function changed() {
+  revision++;
+  rebuildKeys();
+  for (const fn of listeners) fn();
+}
+
+/** Increments whenever custom profiles are registered or removed (for memo dependencies). */
+export function profileLibraryRevision(): number {
+  return revision;
+}
+
+/** Subscribe to catalogue changes; returns an unsubscribe function. */
+export function subscribeProfiles(fn: () => void): () => void {
+  listeners.add(fn);
+  return () => void listeners.delete(fn);
+}
+
+/**
+ * Add or replace profiles in the live catalogue so getProfile/searchProfiles/PROFILES
+ * find them. Built-in names are protected unless `replaceBuiltIn` is set; invalid
+ * definitions are skipped (use parseProfileCsv for messages). Returns how many were registered.
+ */
+export function registerProfiles(defs: readonly ProfileDef[], opts: { replaceBuiltIn?: boolean } = {}): number {
+  let count = 0;
+  for (const def of defs) {
+    let p: Profile;
+    try {
+      p = profileFromDef(def);
+    } catch {
+      continue;
+    }
+    const existing = byName.get(p.name);
+    if (existing && builtIn.has(p.name) && !customDefs.has(p.name)) {
+      if (!opts.replaceBuiltIn) continue;
+      shadowed.set(p.name, existing);
+    }
+    if (existing) all[all.indexOf(existing)] = p;
+    else all.push(p);
+    byName.set(p.name, p);
+    customDefs.set(p.name, { ...def, name: p.name, shape: { ...def.shape } });
+    count++;
+  }
+  if (count) changed();
+  return count;
+}
+
+/** Remove custom profiles by name (built-ins they replaced come back). Returns how many were removed. */
+export function unregisterProfiles(names: Iterable<string>): number {
+  let count = 0;
+  for (const name of names) {
+    if (!customDefs.has(name)) continue;
+    const p = byName.get(name)!;
+    const i = all.indexOf(p);
+    const orig = shadowed.get(name);
+    if (orig) {
+      all[i] = orig;
+      byName.set(name, orig);
+      shadowed.delete(name);
+    } else {
+      all.splice(i, 1);
+      byName.delete(name);
+    }
+    customDefs.delete(name);
+    count++;
+  }
+  if (count) changed();
+  return count;
+}
+
+/** Definitions of all registered custom profiles (e.g. to store with a project). */
+export function customProfileDefs(): ProfileDef[] {
+  return [...customDefs.values()].map((d) => ({ ...d, shape: { ...d.shape } }));
+}
+
+export function isCustomProfile(name: string): boolean {
+  return customDefs.has(name);
+}
+
+/**
+ * CSV format for custom profiles — one header row, then one profile per row:
+ *
+ *   name,family,type,h,b,tw,tf,r,t,d,c,mass
+ *   Rail C120,Rails,C,120,50,,,2,2,,15,
+ *   Bracket tee,Tees,T,80,100,8,10,6,,,,
+ *   Tube 60x3,,CHS,,,,,,3,60,,4.22
+ *
+ * - Columns are matched by header name in any order (case-insensitive); unused cells stay
+ *   blank. Optional extra columns: `standard` (EN, BS, AISC or Custom — default Custom) and
+ *   `spec`. Unknown columns are ignored.
+ * - Delimiter is comma, semicolon or tab, taken from the header row. With semicolon or tab,
+ *   decimal commas ("2,5") are accepted. Fields may be double-quoted. Blank lines and lines
+ *   starting with # are skipped.
+ * - Dimensions in mm, mass in kg/m. A blank mass is computed from the section at 7850 kg/m³.
+ * - `type` and the columns it needs:
+ *     I, U, T   h, b, tw, tf    r = root radius (optional)
+ *     L         h, b, t         r = root radius (optional)
+ *     RHS       h, b, t         r = OUTER corner radius (default 2t); SHS also accepted (b defaults to h)
+ *     CHS       d, t
+ *     RD        d               solid round bar
+ *     FL        h, t            flat / plate strip; SQ also accepted (square bar, h only)
+ *     C, Z      h, b, c, t      lipped cold-formed; r = inner bend radius (optional)
+ */
+export const PROFILE_CSV_COLUMNS = ['name', 'family', 'type', 'h', 'b', 'tw', 'tf', 'r', 't', 'd', 'c', 'mass'] as const;
+
+function splitCsvLine(line: string, delim: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let quoted = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (quoted) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else quoted = false;
+      } else cur += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === delim) {
+      out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+const TYPE_ALIASES: Record<string, ShapeType | 'SHS' | 'SQ'> = {
+  I: 'I', H: 'I', U: 'U', CHANNEL: 'U', T: 'T', TEE: 'T', L: 'L', ANGLE: 'L',
+  RHS: 'RHS', SHS: 'SHS', CHS: 'CHS', TUBE: 'CHS', PIPE: 'CHS', RD: 'RD', ROUND: 'RD',
+  FL: 'FL', FLAT: 'FL', PL: 'FL', SQ: 'SQ', C: 'C', Z: 'Z',
+};
+
+const STANDARD_VALUES = new Set<string>(STANDARDS_LIST.map((s) => s.value));
+
+export function parseProfileCsv(text: string): { defs: ProfileDef[]; errors: string[] } {
+  const defs: ProfileDef[] = [];
+  const errors: string[] = [];
+  const lines = text.replace(/^﻿/, '').split(/\r\n|\r|\n/);
+  let header: string[] | null = null;
+  let delim = ',';
+  const seen = new Set<string>();
+  for (let li = 0; li < lines.length; li++) {
+    const raw = lines[li];
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    const ln = li + 1;
+    if (!header) {
+      delim = raw.includes(';') ? ';' : raw.includes('\t') ? '\t' : ',';
+      header = splitCsvLine(raw, delim).map((h) => h.toLowerCase());
+      if (!header.includes('name') || !header.includes('type')) {
+        errors.push(`line ${ln}: header must include "name" and "type" columns`);
+        return { defs, errors };
+      }
+      continue;
+    }
+    const cells = splitCsvLine(raw, delim);
+    const cell = (k: string) => {
+      const i = header!.indexOf(k);
+      return i >= 0 ? (cells[i] ?? '') : '';
+    };
+    const bad: string[] = [];
+    const num = (k: string): number | undefined => {
+      const s = cell(k);
+      if (!s) return undefined;
+      const v = Number(delim === ',' ? s : s.replace(',', '.'));
+      if (!Number.isFinite(v)) bad.push(k);
+      return v;
+    };
+    const name = cell('name');
+    if (!name) {
+      errors.push(`line ${ln}: missing name`);
+      continue;
+    }
+    if (seen.has(name)) {
+      errors.push(`line ${ln}: duplicate name "${name}"`);
+      continue;
+    }
+    const type = TYPE_ALIASES[cell('type').toUpperCase()];
+    if (!type) {
+      errors.push(`line ${ln} (${name}): unknown type "${cell('type')}"`);
+      continue;
+    }
+    const [h, b, tw, tf, r, t, d, c, mass] = ['h', 'b', 'tw', 'tf', 'r', 't', 'd', 'c', 'mass'].map(num);
+    if (bad.length) {
+      errors.push(`line ${ln} (${name}): not a number in ${bad.join(', ')}`);
+      continue;
+    }
+    const need = (vals: Record<string, number | undefined>): boolean => {
+      const missing = Object.entries(vals).filter(([, v]) => v === undefined).map(([k]) => k);
+      if (missing.length) errors.push(`line ${ln} (${name}): ${type} needs ${missing.join(', ')}`);
+      return !missing.length;
+    };
+    let shape: Shape | null = null;
+    switch (type) {
+      case 'I':
+      case 'U':
+      case 'T':
+        if (need({ h, b, tw, tf })) shape = { type, h: h!, b: b!, tw: tw!, tf: tf!, r: r ?? 0 };
+        break;
+      case 'L':
+        if (need({ h, b, t })) shape = { type, h: h!, b: b!, t: t!, r: r ?? 0 };
+        break;
+      case 'RHS':
+      case 'SHS':
+        if (need({ h, t })) {
+          if (type === 'RHS' && b === undefined) need({ b });
+          else shape = { type: 'RHS', h: h!, b: b ?? h!, t: t!, ro: r ?? 2 * t! };
+        }
+        break;
+      case 'CHS':
+        if (need({ d, t })) shape = { type, d: d!, t: t! };
+        break;
+      case 'RD':
+        if (need({ d })) shape = { type, d: d! };
+        break;
+      case 'FL':
+        if (need({ h, t })) shape = { type, h: h!, t: t! };
+        break;
+      case 'SQ':
+        if (need({ h })) shape = { type: 'FL', h: h!, t: h! };
+        break;
+      case 'C':
+      case 'Z':
+        if (need({ h, b, c, t })) shape = { type, h: h!, b: b!, c: c!, t: t!, ...(r ? { r } : {}) };
+        break;
+    }
+    if (!shape) continue;
+    const err = validateShape(shape);
+    if (err) {
+      errors.push(`line ${ln} (${name}): ${err}`);
+      continue;
+    }
+    if (mass !== undefined && !(mass > 0)) {
+      errors.push(`line ${ln} (${name}): mass must be > 0`);
+      continue;
+    }
+    const std = cell('standard');
+    if (std && !STANDARD_VALUES.has(std)) {
+      errors.push(`line ${ln} (${name}): unknown standard "${std}"`);
+      continue;
+    }
+    const def: ProfileDef = { name, shape };
+    if (std) def.standard = std as Standard;
+    if (cell('family')) def.family = cell('family');
+    if (cell('spec')) def.spec = cell('spec');
+    if (mass !== undefined) def.mass = mass;
+    seen.add(name);
+    defs.push(def);
+  }
+  if (!header) errors.push('no header row found');
+  return { defs, errors };
+}
+
+/** Write definitions in the parseProfileCsv format (extra radii such as r2/ro are not representable). */
+export function profileDefsToCsv(defs: readonly ProfileDef[]): string {
+  const withStd = defs.some((d) => d.standard && d.standard !== 'Custom');
+  const withSpec = defs.some((d) => d.spec);
+  const cols: string[] = [...PROFILE_CSV_COLUMNS, ...(withStd ? ['standard'] : []), ...(withSpec ? ['spec'] : [])];
+  const q = (s: string) => (/[",;\t\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
+  const f = (v: number | undefined) => (v === undefined ? '' : String(Number(v.toFixed(4))));
+  const rows = defs.map((d) => {
+    const s = d.shape;
+    const v: Record<string, string> = { name: q(d.name), family: q(d.family ?? ''), type: s.type, mass: f(d.mass), standard: d.standard ?? '', spec: q(d.spec ?? '') };
+    switch (s.type) {
+      case 'I':
+      case 'U':
+      case 'T':
+        Object.assign(v, { h: f(s.h), b: f(s.b), tw: f(s.tw), tf: f(s.tf), r: f(s.r) });
+        break;
+      case 'L':
+        Object.assign(v, { h: f(s.h), b: f(s.b), t: f(s.t), r: f(s.r) });
+        break;
+      case 'RHS':
+        Object.assign(v, { h: f(s.h), b: f(s.b), t: f(s.t), r: f(s.ro) });
+        break;
+      case 'CHS':
+        Object.assign(v, { d: f(s.d), t: f(s.t) });
+        break;
+      case 'RD':
+        Object.assign(v, { d: f(s.d) });
+        break;
+      case 'FL':
+        Object.assign(v, { h: f(s.h), t: f(s.t) });
+        break;
+      case 'C':
+      case 'Z':
+        Object.assign(v, { h: f(s.h), b: f(s.b), c: f(s.c), t: f(s.t), r: f(s.r) });
+        break;
+    }
+    return cols.map((k) => v[k] ?? '').join(',');
+  });
+  return [cols.join(','), ...rows].join('\n') + '\n';
 }

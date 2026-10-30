@@ -207,9 +207,15 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
           real(s.b),
           real(s.h),
           real(s.t),
-          real(Math.max(0, s.ro - s.t)),
+          real(s.ri ?? Math.max(0, s.ro - s.t)),
           real(s.ro),
         ]);
+        break;
+      case 'T':
+        ref = w.add('IFCTSHAPEPROFILEDEF', [A, str(name), pos2d, real(s.h), real(s.b), real(s.tw), real(s.tf), real(s.r), '$', '$', '$', '$']);
+        break;
+      case 'RD':
+        ref = w.add('IFCCIRCLEPROFILEDEF', [A, str(name), pos2d, real(s.d / 2)]);
         break;
       case 'CHS':
         ref = w.add('IFCCIRCLEHOLLOWPROFILEDEF', [A, str(name), pos2d, real(s.d / 2), real(s.t)]);
@@ -448,7 +454,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
 }
 
 function sectionHeight(s: Shape): number {
-  return s.type === 'CHS' ? s.d : s.h;
+  return s.type === 'CHS' || s.type === 'RD' ? s.d : s.h;
 }
 
 function perpendicular(d: Vec3): Vec3 {

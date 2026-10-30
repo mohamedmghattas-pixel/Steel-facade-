@@ -38,7 +38,7 @@ export const slabBracket: ConnectionDef = {
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts in fin', kind: 'number', default: 2 },
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 70, unit: 'mm' },
-    { key: 'slot', label: 'Fin slot length', kind: 'number', default: 30, unit: 'mm' },
+    { key: 'slot', label: 'Fin slot (extra length; long slot ≤ 2.5d overall)', kind: 'number', default: 17, unit: 'mm' },
     { key: 'anchor', label: 'Anchor', kind: 'bolt', default: 'M12' },
     { key: 'anchorType', label: 'Anchor type', kind: 'select', default: 'expansion', options: ['expansion', 'bonded (chemical)', 'concrete screw', 'cast-in channel', 'undercut'] },
     { key: 'anchorLen', label: 'Anchor length', kind: 'number', default: 110, unit: 'mm' },
@@ -100,7 +100,7 @@ export const slabBracket: ConnectionDef = {
     const finOrigin = madd(madd(sideFace, x, -finH / 2), zN, v0);
     const finFrame = plateOn(finOrigin, y, x, zN, finT);
     const offsets = nb === 1 ? [0] : Array.from({ length: nb }, (_, i) => (i - (nb - 1) / 2) * pitch);
-    const finHoles: Hole2D[] = offsets.map((u) => ({ x: finH / 2 + u, y: -v0, d: bolt.hole, slot: num(v.slot, 30), angle: 0 }));
+    const finHoles: Hole2D[] = offsets.map((u) => ({ x: finH / 2 + u, y: -v0, d: bolt.hole, slot: num(v.slot, 17), angle: 0 }));
     out.plates.push({
       key: 'fin',
       name: 'Fin plate',

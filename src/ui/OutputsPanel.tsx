@@ -7,7 +7,8 @@ import { drawingToSvg } from '../core/drawings/render';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsFor, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
 import { Icon } from './icons';
-import { Segmented, kg } from './widgets';
+import { Segmented, Select, kg } from './widgets';
+import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
 
 export function OutputsPanel() {
   const outputs = useStore((s) => s.outputs);
@@ -289,33 +290,96 @@ function DrawingsView() {
 function ChecksView() {
   const project = useStore((s) => s.project);
   const select = useStore((s) => s.select);
+  const apply = useStore((s) => s.apply);
   const dm = derived(project);
+  const code = codeForProject(project);
+  const findings = useMemo(() => runCodeChecks(project, dm, code), [project, dm, code]);
+  const [level, setLevel] = useState<'all' | 'error' | 'warning' | 'info'>('all');
+  const [open, setOpen] = useState<string | null>(null);
   const unassigned = Object.values(project.members).filter((m) => !m.profile);
-  const short = dm.parts.filter((pt) => pt.kind === 'member' && pt.length < 50);
-  const items: { text: string; onClick?: () => void; level: 'warn' | 'info' }[] = [
+  const model: { text: string; onClick?: () => void }[] = [
     ...dm.warnings.map((w) => ({
       text: w.text,
-      level: 'warn' as const,
       onClick: () => select(w.connectionId ? { connections: [w.connectionId] } : { members: w.memberId ? [w.memberId] : [] }),
     })),
-    ...(unassigned.length
-      ? [{ text: `${unassigned.length} wireframe line(s) have no profile yet.`, level: 'info' as const, onClick: () => select({ members: unassigned.map((m) => m.id) }) }]
-      : []),
-    ...short.map((pt) => ({ text: `${pt.mark} is only ${Math.round(pt.length)} mm long after cut-backs.`, level: 'warn' as const, onClick: () => select({ members: [pt.memberId!] }) })),
+    ...(unassigned.length ? [{ text: `${unassigned.length} wireframe line(s) have no profile yet.`, onClick: () => select({ members: unassigned.map((m) => m.id) }) }] : []),
   ];
+  const shown = findings.filter((f) => level === 'all' || f.severity === level);
+  const pick = (f: (typeof findings)[number]) => {
+    const part = f.partRef ? dm.partByRef.get(f.partRef) : undefined;
+    const conn = f.connectionId ?? part?.connectionId;
+    const mem = f.memberId ?? part?.memberId;
+    select(conn ? { connections: [conn] } : { members: mem ? [mem] : [] });
+  };
+  const counts = { error: 0, warning: 0, info: 0 } as Record<string, number>;
+  for (const f of findings) counts[f.severity]++;
   return (
     <div className="checks">
-      {!items.length && (
+      <div className="bom-bar">
+        <span>
+          Detailing code{' '}
+          <Select
+            value={project.settings.designCode}
+            options={[
+              { value: 'auto', label: `Auto (${code === 'AISC360' ? 'AISC 360' : 'EN 1993-1-8'})` },
+              { value: 'EC3', label: 'EN 1993-1-8 + EN 1090-2' },
+              { value: 'AISC360', label: 'AISC 360-22' },
+            ]}
+            onChange={(v) => apply('Design code', (p) => void (p.settings.designCode = v as typeof p.settings.designCode))}
+          />
+        </span>
+        <Segmented
+          value={level}
+          options={[
+            { value: 'all', label: `All ${findings.length}` },
+            { value: 'error', label: `Errors ${counts.error}` },
+            { value: 'warning', label: `Warnings ${counts.warning}` },
+            { value: 'info', label: `Info ${counts.info}` },
+          ]}
+          onChange={setLevel}
+        />
+        <span className="muted">Rules and sources: docs/CODE_RULES.md</span>
+      </div>
+      {!model.length && !findings.some((f) => f.severity !== 'info') && (
         <p className="ok">
-          <Icon name="check" /> No problems found.
+          <Icon name="check" /> No model problems and no code errors or warnings.
         </p>
       )}
       <ul>
-        {items.map((it, i) => (
-          <li key={i} className={it.level} onClick={it.onClick}>
-            <Icon name={it.level === 'warn' ? 'warn' : 'help'} size={15} /> {it.text}
+        {model.map((it, i) => (
+          <li key={`m${i}`} className="warn" onClick={it.onClick}>
+            <Icon name="warn" size={15} /> {it.text}
           </li>
         ))}
+        {shown.map((f) => {
+          const rule = ruleById(f.rule);
+          return (
+            <li key={f.id} className={f.severity === 'error' ? 'error' : f.severity === 'warning' ? 'warn' : 'info'} onClick={() => pick(f)}>
+              <Icon name={f.severity === 'info' ? 'help' : 'warn'} size={15} />
+              <span className="check-text">
+                {f.message}
+                {f.count && f.count > 1 ? '' : ''}
+                {rule && (
+                  <button
+                    className="link-btn small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setOpen(open === f.id ? null : f.id);
+                    }}
+                  >
+                    {open === f.id ? 'hide rule' : 'rule'}
+                  </button>
+                )}
+                {open === f.id && rule && (
+                  <span className="rule-detail">
+                    <strong>{rule.title}</strong> — {rule.clause}, {rule.edition}. {rule.values}{' '}
+                    <em>({rule.verification === 'cross-checked' ? 'cross-checked against published reproductions' : rule.verification === 'guidance' ? 'industry guidance' : 'not re-verified against the primary text'})</em>
+                  </span>
+                )}
+              </span>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

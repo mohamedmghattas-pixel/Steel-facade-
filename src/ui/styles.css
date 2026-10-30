@@ -1573,3 +1573,27 @@ textarea:focus {
 .rule.rule4 {
   grid-template-columns: 1fr 1.4fr 1fr auto;
 }
+
+.checks li.error {
+  color: var(--err);
+}
+.check-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.link-btn.small {
+  font-size: 11px;
+  padding: 0;
+  align-self: flex-start;
+}
+.rule-detail {
+  font-size: 11.5px;
+  color: var(--text-2);
+}
+.checks .bom-bar select {
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+}

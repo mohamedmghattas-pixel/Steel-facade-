@@ -30,6 +30,10 @@ function profileCode(shape: Shape | undefined, kind: Part['kind']): string {
       return 'B';
     case 'C':
       return 'C';
+    case 'T':
+      return 'T';
+    case 'RD':
+      return 'RU';
     case 'Z':
       return 'SO';
   }
@@ -52,6 +56,10 @@ function sectionDims(shape: Shape): [number, number, number, number, number] {
     case 'C':
     case 'Z':
       return [shape.h, shape.b, shape.t, shape.t, 0];
+    case 'T':
+      return [shape.h, shape.b, shape.tf, shape.tw, shape.r];
+    case 'RD':
+      return [shape.d, shape.d, 0, 0, 0];
   }
 }
 

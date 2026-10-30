@@ -3,6 +3,21 @@ import type { Id, MemberRole, PlaneKind, Project, WorkPlane } from '../core/mode
 import { createProject } from '../core/model/ops';
 import { deriveModel, type DerivedModel } from '../core/derive/model';
 import { loadAutosave, migrateProject } from './storage';
+import { registerProfiles, unregisterProfiles, type ProfileDef } from '../core/library/profiles';
+
+/** Keep the global profile catalogue in step with the project's custom profiles. */
+let registered = new Set<string>();
+export function syncCustomProfiles(p: Project) {
+  const defs = (p.library?.profiles ?? []) as unknown as ProfileDef[];
+  const names = new Set(defs.map((d) => d.name));
+  const stale = [...registered].filter((n) => !names.has(n));
+  if (stale.length) unregisterProfiles(stale);
+  if (defs.length) registerProfiles(defs);
+  registered = names;
+}
+
+const initialProject = migrateProject(loadAutosave()) ?? createProject();
+syncCustomProfiles(initialProject);
 
 export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure';
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
@@ -76,7 +91,7 @@ interface State {
 const HISTORY = 80;
 
 export const useStore = create<State>((set, get) => ({
-  project: migrateProject(loadAutosave()) ?? createProject(),
+  project: initialProject,
   past: [],
   future: [],
   revision: 0,
@@ -106,6 +121,7 @@ export const useStore = create<State>((set, get) => ({
     const { project, past, revision } = get();
     const draft = structuredClone(project);
     fn(draft);
+    if (draft.library?.profiles !== project.library?.profiles || JSON.stringify(draft.library?.profiles) !== JSON.stringify(project.library?.profiles)) syncCustomProfiles(draft);
     const sel = get().selection;
     set({
       project: draft,
@@ -116,12 +132,14 @@ export const useStore = create<State>((set, get) => ({
     });
   },
   replaceProject: (p) => {
+    syncCustomProfiles(p);
     set({ project: p, past: [], future: [], revision: get().revision + 1, selection: emptySelection() });
   },
   undo: () => {
     const { past, project, future, revision } = get();
     if (!past.length) return;
     const prev = past[past.length - 1];
+    syncCustomProfiles(prev);
     set({
       project: prev,
       past: past.slice(0, -1),
@@ -134,6 +152,7 @@ export const useStore = create<State>((set, get) => ({
     const { past, project, future, revision } = get();
     if (!future.length) return;
     const next = future[0];
+    syncCustomProfiles(next);
     set({
       project: next,
       past: [...past, project],

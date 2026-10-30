@@ -71,6 +71,9 @@ export function frontInnerLines(s: Shape): { z: number; hidden: boolean }[] {
       ];
     case 'L':
       return [{ z: -s.h / 2 + s.t, hidden: true }];
+    case 'T':
+      // Flange underside, seen past the stem.
+      return [{ z: s.h / 2 - s.tf, hidden: false }];
     case 'RHS':
       return [
         { z: s.h / 2 - s.t, hidden: true },
@@ -113,6 +116,12 @@ export function topInnerLines(s: Shape): { y: number; hidden: boolean }[] {
       return [{ y: -s.b / 2 + s.tw, hidden: true }];
     case 'L':
       return [{ y: -s.b / 2 + s.t, hidden: false }];
+    case 'T':
+      // Stem faces below the flange.
+      return [
+        { y: s.tw / 2, hidden: true },
+        { y: -s.tw / 2, hidden: true },
+      ];
     case 'RHS':
       return [
         { y: s.b / 2 - s.t, hidden: true },

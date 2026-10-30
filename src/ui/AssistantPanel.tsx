@@ -51,6 +51,7 @@ const TOOL_LABEL: Record<string, string> = {
   auto_assign_profiles: 'Auto-assigned profiles',
   edit_geometry: 'Edited geometry',
   search_profiles: 'Searched profiles',
+  add_custom_profiles: 'Added custom profiles',
   describe_connection_types: 'Read connection library',
   apply_connection: 'Applied connections',
   auto_connect: 'Auto-connected',

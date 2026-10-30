@@ -11,7 +11,7 @@ import { shapeOutline } from '../core/library/shapes';
 import { CONNECTIONS, paramSpecs, resolveParams } from '../core/connections/registry';
 import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
-import { assignActiveProfile, removeReference } from './actions';
+import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
 
 export function SidePanel() {
@@ -466,17 +466,18 @@ function LibraryPanel() {
   const drawWith = useStore((s) => s.drawWithProfile);
   const set = useStore((s) => s.set);
   const selCount = useStore((s) => s.selection.members.length);
+  const customCount = useStore((s) => s.project.library.profiles.length);
   const [std, setStd] = useState<Standard>('EN');
   const [family, setFamily] = useState<string>('SHS');
   const [q, setQ] = useState('');
-  const standards = useMemo(() => [...new Set(PROFILES.map((p) => p.standard))], []);
+  const standards = useMemo(() => [...new Set(PROFILES.map((p) => p.standard))], [customCount]);
   const families = useMemo(() => profileFamilies(std), [std]);
   const list = useMemo(() => {
     const k = q.toLowerCase().replace(/\s/g, '');
     return PROFILES.filter(
       (p) => p.standard === std && (k ? p.name.toLowerCase().replace(/\s/g, '').includes(k) : p.family === family),
     );
-  }, [std, family, q]);
+  }, [std, family, q, customCount]);
   return (
     <section className="library">
       <Segmented
@@ -524,6 +525,26 @@ function LibraryPanel() {
       <button className="primary-btn wide" disabled={!selCount} onClick={assignActiveProfile}>
         Assign {active ?? ''} to {selCount} selected line{selCount === 1 ? '' : 's'}
       </button>
+      <h4>Custom and imported profiles</h4>
+      <p className="muted">
+        {customCount} custom profile{customCount === 1 ? '' : 's'} in this project. Import a supplier catalogue as CSV with columns <code>name,family,type,h,b,tw,tf,r,t,d,c,mass</code>{' '}
+        (type: I, U, L, T, RHS, CHS, RD, FL, C, Z).
+      </p>
+      <div className="btn-row">
+        <button className="secondary-btn" onClick={() => void importProfileCsv()}>
+          Import CSV…
+        </button>
+        <button className="secondary-btn" disabled={!customCount} onClick={exportProfileCsv}>
+          Export CSV
+        </button>
+        <button
+          className="link-btn"
+          disabled={!customCount}
+          onClick={() => confirm('Remove all custom profiles from this project?') && useStore.getState().apply('Remove custom profiles', (p) => void (p.library.profiles = []))}
+        >
+          Remove all
+        </button>
+      </div>
     </section>
   );
 }

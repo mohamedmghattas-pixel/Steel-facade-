@@ -194,9 +194,17 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
         ref = w.add('IFCISHAPEPROFILEDEF', [A, str(name), pos2d, real(s.b), real(s.h), real(s.tw), real(s.tf), real(s.r), '$', '$']);
         break;
       case 'U':
+        if (s.ro) {
+          ref = w.add('IFCARBITRARYCLOSEDPROFILEDEF', [A, str(name), polyline(shapeOutline(s).outer)]);
+          break;
+        }
         ref = w.add('IFCUSHAPEPROFILEDEF', [A, str(name), pos2d, real(s.h), real(s.b), real(s.tw), real(s.tf), real(s.r), '$', '$']);
         break;
       case 'L':
+        if (s.ro) {
+          ref = w.add('IFCARBITRARYCLOSEDPROFILEDEF', [A, str(name), polyline(shapeOutline(s).outer)]);
+          break;
+        }
         ref = w.add('IFCLSHAPEPROFILEDEF', [A, str(name), pos2d, real(s.h), real(s.b), real(s.t), real(s.r), '$', '$']);
         break;
       case 'RHS':
@@ -432,7 +440,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
   }
   for (const [name, objs] of byMaterial) {
     const m = getMaterial(name);
-    const mat = w.add('IFCMATERIAL', [str(name), str(m.description), str('Steel')]);
+    const mat = w.add('IFCMATERIAL', [str(name), str(m.description), str(m.category ?? 'Steel')]);
     w.add('IFCRELASSOCIATESMATERIAL', [str(ifcGuid()), '$', '$', '$', list(objs), mat]);
   }
 

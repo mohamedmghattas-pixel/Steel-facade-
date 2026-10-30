@@ -30,6 +30,7 @@ import { allDrawings, drawingToDxf } from '../core/drawings';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
+import { parseProfileCsv, profileDefsToCsv, type ProfileDef } from '../core/library/profiles';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -322,4 +323,24 @@ export async function exportDrawingsPdf(list?: Drawing[]) {
   } catch (e) {
     notify(`PDF export failed: ${(e as Error).message}`, 'error');
   }
+}
+
+// ---------------------------------------------------------------------------
+// Custom profile catalogues
+
+export async function importProfileCsv() {
+  const f = await pickFile('.csv,.txt');
+  if (!f) return;
+  const { defs, errors } = parseProfileCsv(await f.text());
+  if (!defs.length) return notify(`No profiles imported${errors.length ? `: ${errors[0]}` : '.'}`, 'error');
+  st().apply('Import profiles', (p) => {
+    const names = new Set(defs.map((d) => d.name));
+    p.library.profiles = [...p.library.profiles.filter((d) => !names.has(String(d.name))), ...(defs as unknown as Record<string, unknown>[])];
+  });
+  notify(`Imported ${defs.length} profile${defs.length === 1 ? '' : 's'}${errors.length ? ` (${errors.length} row${errors.length === 1 ? '' : 's'} skipped: ${errors[0]})` : ''}. Find them under Library → Custom.`);
+}
+
+export function exportProfileCsv() {
+  const defs = st().project.library.profiles as unknown as ProfileDef[];
+  download(`${fileBase()}-profiles.csv`, profileDefsToCsv(defs), 'text/csv');
 }

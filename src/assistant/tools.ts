@@ -21,7 +21,7 @@ import {
 } from '../core/model/ops';
 import { dist } from '../core/model/geometry';
 import { AUTO_DEFAULTS, CONNECTIONS, applyConnection, autoConnect, paramSpecs } from '../core/connections/registry';
-import { getProfile, searchProfiles } from '../core/library/profiles';
+import { getProfile, profileFromDef, searchProfiles } from '../core/library/profiles';
 import { MATERIALS } from '../core/library/materials';
 import { buildBom } from '../core/reports/bom';
 import { nestBars } from '../core/optimize/barNesting';
@@ -154,6 +154,25 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
     name: 'search_profiles',
     description: 'Search the profile library (EN, BS, AISC and custom). Returns names with mass and section properties.',
     input_schema: { type: 'object', properties: { query: str, standard: str, limit: { type: 'integer' } }, required: ['query'] },
+  },
+  {
+    name: 'add_custom_profiles',
+    description:
+      'Add custom cross-sections to the project library (e.g. a supplier rail or a non-standard tube). Shape types and fields (mm): I/U {h,b,tw,tf,r}, L {h,b,t,r}, T {h,b,tw,tf,r}, RHS {h,b,t,ro}, CHS {d,t}, RD {d}, FL {h,t}, C/Z (lipped cold-formed) {h,b,c,t}. Mass is computed from the shape unless given (kg/m).',
+    input_schema: {
+      type: 'object',
+      properties: {
+        profiles: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: { name: str, family: str, shape: { type: 'object', description: 'e.g. {"type":"RHS","h":120,"b":60,"t":4,"ro":8}' }, mass: num },
+            required: ['name', 'shape'],
+          },
+        },
+      },
+      required: ['profiles'],
+    },
   },
   {
     name: 'describe_connection_types',
@@ -533,6 +552,24 @@ export async function runTool(name: string, input: Json): Promise<string> {
       return out(
         list.map((x) => ({ name: x.name, standard: x.standard, family: x.family, kgPerM: round(x.mass), h: round(x.h), b: round(x.b), Iy_cm4: round(x.Iy / 1e4), Wy_cm3: round(x.Wy / 1e3) })),
       );
+    }
+
+    case 'add_custom_profiles': {
+      const defs: Record<string, unknown>[] = (input.profiles as Record<string, unknown>[]).map((d) => ({ standard: 'Custom', ...d }));
+      const bad: string[] = [];
+      for (const d of defs) {
+        try {
+          profileFromDef(d as never);
+        } catch (e) {
+          bad.push(`${d.name}: ${(e as Error).message}`);
+        }
+      }
+      if (bad.length) throw new Error(`Invalid profile(s): ${bad.join('; ')}`);
+      s.apply('Assistant: custom profiles', (d) => {
+        const names = new Set(defs.map((x) => String(x.name)));
+        d.library.profiles = [...d.library.profiles.filter((x) => !names.has(String(x.name))), ...defs];
+      });
+      return out({ added: defs.map((d) => ({ name: d.name, kgPerM: round(getProfile(String(d.name))?.mass ?? 0) })) });
     }
 
     case 'describe_connection_types':

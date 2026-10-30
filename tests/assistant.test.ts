@@ -4,6 +4,7 @@ import { validate } from '../src/assistant/validate';
 import { AssistantSession } from '../src/assistant/agent';
 import { useStore } from '../src/state/store';
 import { createProject } from '../src/core/model/ops';
+import { getProfile } from '../src/core/library/profiles';
 
 const run = async (name: string, input: Record<string, unknown>) => JSON.parse(await runTool(name, input));
 
@@ -76,6 +77,15 @@ describe('assistant tools', () => {
     const applied = await run('apply_connection', { type: 'custom', filter: { selected: true }, params: { template: tpl.id } });
     expect(applied.created).toBe(1);
     expect(applied.warnings).toEqual([]);
+  });
+
+  it('adds custom profiles that members can use, and undo removes them', async () => {
+    const r = await run('add_custom_profiles', { profiles: [{ name: 'Rail 120x60x4 custom', shape: { type: 'RHS', h: 120, b: 60, t: 4, ro: 8 } }] });
+    expect(r.added[0].kgPerM).toBeGreaterThan(9);
+    const lines = await run('add_lines', { lines: [{ a: [0, 0, 0], b: [2000, 0, 0] }], profile: 'Rail 120x60x4 custom', role: 'rail' });
+    expect(lines.created).toBe(1);
+    await run('history', { action: 'undo', steps: 2 });
+    expect(getProfile('Rail 120x60x4 custom')).toBeUndefined();
   });
 
   it('rejects unknown profiles with a helpful error', async () => {

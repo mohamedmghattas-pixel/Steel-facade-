@@ -29,7 +29,7 @@ import { exportIfc } from '../core/io/ifcExport';
 import { exportDstvAll } from '../core/fabrication/dstv';
 import { buildBom, bomToXlsx, toCsv } from '../core/reports/bom';
 import { zip } from '../core/io/zip';
-import { allDrawings, drawingToDxf } from '../core/drawings';
+import { allDrawings, anchorScheduleCsv, drawingToDxf } from '../core/drawings';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
@@ -320,6 +320,15 @@ export function exportDrawingsDxf(list?: Drawing[]) {
   const ds = list ?? drawingsFor();
   const files = ds.map((d) => ({ name: `${drawingFileName(d)}.dxf`, data: drawingToDxf(d) }));
   download(`${fileBase()}-drawings-dxf.zip`, zip(files), 'application/zip');
+}
+
+/** Anchor schedule (every anchor: bracket, grid / level reference, coordinates, type, size, length) as CSV. */
+export function exportAnchorScheduleCsv() {
+  if (!guardModel()) return;
+  const p = st().project;
+  const dm = derived(p);
+  if (!dm.bolts.some((b) => b.kind === 'anchor')) return notify('There are no anchors in the model.', 'error');
+  download(`${fileBase()}-anchor-schedule.csv`, anchorScheduleCsv(p, dm), 'text/csv');
 }
 
 export async function exportDrawingsPdf(list?: Drawing[]) {

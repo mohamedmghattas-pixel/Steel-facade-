@@ -3,8 +3,12 @@
 FacadeSteel produces a numbered drawing set:
 - a drawing register
 - general arrangement (GA) drawings
+- section and detail sheets cut on the GA
+- erection drawings: bracket setting-out plans, anchor schedules and erection sequences
 - assembly drawings
 - part (fabrication) drawings
+
+Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*).
 
 By default the sheets follow the ISO technical-drawing standards and EN 1090-2 for steel execution. You can switch the set to an **ASME / AISC** profile under *Outputs → Drawings → Drawing settings*.
 
@@ -53,6 +57,13 @@ The table below shows how each standard is applied. The implementation follows t
 - Every assembly with its mark.
 - An assembly schedule (mark → quantity → main part → mass → **assembly drawing number**).
 - The site bolt and anchor schedule.
+- The cutting planes of section cuts and the circles of detail callouts, each with its letter and the number of the sheet that shows it.
+
+### Section and detail sheets
+See *Sections and details* below.
+
+### Erection drawings
+See *Erection drawings* below.
 
 ### Assembly drawings
 - Three views of the whole assembly in the main part's axes: **ELEVATION**, **PLAN** and **SECTION A–A**, arranged per the projection method.
@@ -80,8 +91,72 @@ The table below shows how each standard is applied. The implementation follows t
   - painting
 - A **"Used in" table** linking back to the assembly drawings.
 
+## Sections and details
+
+Section cuts and detail callouts can be placed anywhere on the GA front elevation or plan: in the Drawings tab, on a GA sheet, with the **Section cut** / **Detail** tools (two clicks), or by coordinates in the **Cuts…** list, where they can also be edited and deleted.
+
+| Topic | Standard | How it is applied |
+|---|---|---|
+| Cutting plane | ISO 128-40 (now consolidated in ISO 128-3), ISO 128-2 | Long-dash dotted narrow line, wide at both ends. Arrows at the ends show the viewing direction; the section letter stands beside each arrow. The number of the section sheet is written next to the letter at the end of the line. By default the section looks to the right of the line drawn from the first to the second point; it can be flipped. |
+| Section view | ISO 128-40 | Labelled `SECTION B–B` with its scale. It shows the parts cut by the plane and the parts beyond it, up to the look depth (default 1000 mm), as visible outlines. Parts between the viewer and the plane are left out. The view keeps to the extent of the cut line. Grid lines crossing the plane are drawn as centre lines with bubbles; levels (vertical sections) as level lines with their values. |
+| Hatching | ISO 128-50 | Cut material gets continuous narrow 45° hatching; adjacent cut parts are hatched at another angle or spacing. Thin walls are hatched at the minimum spacing so they read as solid; hole voids stay open. |
+| Detail callout | ISO 128 (elements on a larger scale; now ISO 128-3) | The area is encircled with a continuous narrow line on the GA and identified by a capital letter (I, O and Q are not used) and the detail sheet number. |
+| Detail view | ISO 128-3, ISO 5455 | Labelled `DETAIL C` with its scale (ISO 5455, automatic or chosen). Part outlines, plate holes and bolts/anchors (end-on with centre lines, side-on as the shank) are clipped to the detail circle, which is drawn as the view boundary. Item references (ISO 6433) name the parts inside. |
+| Dimensions | ISO 129-1 | Sections carry the overall dimensions of the cut parts. |
+
+Each cut gets its own sheet (`-SD-NN`), listed in the register after the GA sheets. Adding, moving or deleting a cut changes the GA's content, so the GA is flagged as changed.
+
+## Erection drawings
+
+There is no ISO standard for the content of facade erection drawings. FacadeSteel follows **typical facade-contractor practice** for what is shown, and applies the ISO conventions above for how it is drawn: lines ISO 128-2, lettering ISO 3098, dimensions ISO 129-1, scales ISO 5455, item references ISO 6433, title block ISO 7200. The erection drawings can be left out of the set under *Drawing settings*.
+
+### Bracket setting-out plans (`-E-NN`)
+- One plan per level (the project levels, or the slab-bracket elevations when there are none) and slab edge direction. Long edges are split over several sheets so that the plan stays at 1:20 where possible.
+- The plan is turned so that the slab edge runs along the sheet, slab side up, and shows:
+  - the slab edge (continuous wide line, hatched band on the concrete side) and the facade setting-out line (mullion wire line, long-dash dotted);
+  - the grid lines crossing the edge, with bubbles;
+  - every slab bracket: the mullion cut at bracket height and hatched, the bracket plates, and the anchors — top-mounted anchors as holes with centre lines, edge-mounted anchors as the anchor body inside the slab (hidden lines) with the drilling point on the slab face;
+  - **running dimensions** (ISO 129-1: origin circle on the grid line, values at the arrowheads) from the nearest grid line to every anchor, both sides of the grid line, and the grid spacing below them;
+  - the distance from the facade setting-out line to the slab edge (stand-off) at every bracket, and for top-mounted brackets the edge distance of the anchors;
+  - the bracket marks in balloons (ISO 6433).
+- A bracket table (mark, grid reference, X / Y, anchor level, stand-off, fixing, anchors) and setting-out notes, including the project's tolerances (Project settings → movement and tolerances) and a reference to the anchor schedule.
+- When the project has **site survey** points, each bracket is matched with the nearest surveyed slab-edge point on its level (within the survey match radius). The surveyed position is marked with × and the deviation from the design is written next to it as Δe (along the edge), Δn (into the slab) and Δz (vertical). A survey table checks the deviations against the slab-edge tolerances.
+
+### Anchor schedules (`-AS-NN`)
+- One row per anchor (every bolt of kind *anchor*), ordered by level and along the facade: anchor id, bracket mark, grid reference (nearest grid line and offset), level reference (nearest level and height above or below it), X / Y / Z of the drilling point, fixing (slab top / slab edge), anchor type, size, length and the quantity per bracket.
+- Totals by type, size and length, and installation notes. Long schedules continue on further sheets.
+- The same schedule exports as CSV (*Anchor schedule → CSV* in the Drawings tab).
+
+### Erection sequences (`-ES-NN`)
+- One sheet per erection phase, in the phases' sequence order, showing the GA front elevation with grids and levels: the assemblies of the phase drawn **extra wide** (0.7 mm), those erected in earlier phases narrow, later phases left out. Only the phase's assemblies are marked.
+- A sequence legend (all phases with assembly count, mass and status), a line key and the list of assemblies in the phase with their drawing numbers.
+- Assemblies take the phase of their main member; brackets that of the mullion they support. Assemblies in no phase go on a final sheet *Not assigned to a phase*.
+- Without phases, a **default sequence by floor, bottom-up** is used (each assembly goes to the floor its lowest point lies on), and the sheets say so.
+
+## Editing drawings
+
+Generated items carry stable ids — views (`view:elevation`, `view:front` …), tables and notes blocks (`table:parts-list`), dimensions (`dim:elevation:3`), balloons, weld symbols, cutting planes — so manual edits survive regeneration of the sheet. Edits are stored per drawing in the project and are undoable.
+
+In the Drawings tab (select a sheet, then work on the preview):
+- **Select and drag** a view or table to move it as a whole — its dimensions, balloons and symbols move with it. Drag a dimension to offset its dimension line perpendicular to itself; extension lines follow (ISO 129-1). Moves snap to 1 mm; Esc cancels.
+- **Delete** hides the selected item (a dimension, balloon, symbol, or a whole view). *Show hidden* brings them back; *Reset edits* removes every edit of the sheet.
+- **Note**: free text in ISO 3098 lettering (2.5 mm by default). **Leader note**: click the feature, then where the note goes; the leader line (ISO 128-22) has a short reference line at the note and ends in a closed filled arrowhead on the feature.
+- **Revision cloud**: drag a rectangle around the change; the scalloped cloud carries a revision triangle with the revision index (default: the next one), matching the revision table (ISO 7200).
+
+Edits count as content: an edited sheet gets a new fingerprint and is flagged as changed until it is issued again. Sheets without edits keep exactly their generated content.
+
+## Sheet templates
+
+The title block can follow a company template (*Drawing settings → Sheet template → Design…*). The built-in default is the ISO 7200 title block described above and reproduces it exactly.
+
+- A template is a grid of fields (grid cell size in mm; column 0 at the left, row 0 at the bottom edge). Each field has a label (1.8 mm lettering, top left of the cell) and a value: a project field (name, number, client, designer, legal owner), a drawing field (title, supplementary title, identification number, revision index, date of issue, scale, sheet n/N, document type, document status, created / checked / approved by, drawing standard), the projection symbol with the scale, the logo, or fixed text. Values can use the ISO 3098 heights 1.8 – 7 mm and bold.
+- Cell divisions are drawn 0.35 mm, the outer border 0.7 mm (as the ISO 7200 block). The block sits at the bottom right of the ISO 5457 frame; the revision table above it takes its width, and the sheet layout keeps clear of both.
+- **Logo**: a PNG, JPEG or SVG image embedded in the sheet (SVG and PDF). DXF has no embedded images, so a frame marks where the logo sits.
+- **Fixed notes** are printed after the general notes on every sheet.
+- Templates import and export as JSON. Keep the ISO 7200 identification fields (identification number, revision index, date of issue, title, document status, legal owner) in a company template if the drawings must conform to ISO 7200.
+
 ## Drawing numbers
 
-`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part.
+`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-SD-NN` section / detail sheets (in the order of the GA cuts), `<prefix>-E-NN` bracket setting-out plans, `<prefix>-AS-NN` anchor schedules, `<prefix>-ES-NN` erection sequences, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part.
 
 The prefix defaults to the project number. Exported files are named `<drawing number>_rev<revision>`.

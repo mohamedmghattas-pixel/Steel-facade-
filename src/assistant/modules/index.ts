@@ -6,5 +6,6 @@ import type { ToolModule } from './types';
 import { fabricationModule } from './fabrication';
 import { movementModule } from './movement';
 import { modellingModule } from './modelling';
+import { drawingsModule } from './drawings';
 
-export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule];
+export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule];

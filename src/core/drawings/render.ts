@@ -12,6 +12,7 @@ const STYLE: Record<DLayer, { w: number; dash?: string }> = {
   thin: { w: 0.25 },
   medium: { w: 0.35 },
   border: { w: 0.7 },
+  heavy: { w: 0.7 },
 };
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -22,7 +23,7 @@ export function drawingToSvg(d: Drawing): string {
   const Y = (y: number) => H - y;
   const out: string[] = [];
   out.push(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${d.sheet.w}mm" height="${H}mm" viewBox="0 0 ${d.sheet.w} ${H}" font-family="Arial, Helvetica, sans-serif">`,
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${d.sheet.w}mm" height="${H}mm" viewBox="0 0 ${d.sheet.w} ${H}" font-family="Arial, Helvetica, sans-serif">`,
     `<rect x="0" y="0" width="${d.sheet.w}" height="${H}" fill="#fff"/>`,
   );
   for (const e of d.entities) out.push(svgEnt(e, Y));
@@ -30,27 +31,39 @@ export function drawingToSvg(d: Drawing): string {
   return out.join('\n');
 }
 
-function stroke(l: DLayer, fill?: boolean): string {
-  const st = STYLE[l];
-  return `stroke="#000" stroke-width="${st.w}"${st.dash ? ` stroke-dasharray="${st.dash}"` : ''} fill="${fill ? '#000' : 'none'}" stroke-linecap="round" stroke-linejoin="round"`;
+/** SVG markup of some entities (no root element), e.g. for an editor overlay; `color` replaces black. */
+export function entitiesToSvg(ents: DEnt[], sheetH: number, color = '#000'): string {
+  const Y = (y: number) => sheetH - y;
+  return ents.map((e) => svgEnt(e, Y, color)).join('');
 }
 
-function svgEnt(e: DEnt, Y: (y: number) => number): string {
+function stroke(l: DLayer, fill: boolean | undefined, color: string): string {
+  const st = STYLE[l];
+  return `stroke="${color}" stroke-width="${st.w}"${st.dash ? ` stroke-dasharray="${st.dash}"` : ''} fill="${fill ? color : 'none'}" stroke-linecap="round" stroke-linejoin="round"`;
+}
+
+function svgEnt(e: DEnt, Y: (y: number) => number, color = '#000'): string {
   switch (e.t) {
     case 'line':
-      return `<line x1="${n(e.a.x)}" y1="${n(Y(e.a.y))}" x2="${n(e.b.x)}" y2="${n(Y(e.b.y))}" ${stroke(e.layer)}/>`;
+      return `<line x1="${n(e.a.x)}" y1="${n(Y(e.a.y))}" x2="${n(e.b.x)}" y2="${n(Y(e.b.y))}" ${stroke(e.layer, false, color)}/>`;
     case 'circle':
-      return `<circle cx="${n(e.c.x)}" cy="${n(Y(e.c.y))}" r="${n(e.r)}" ${stroke(e.layer, e.fill)}/>`;
+      return `<circle cx="${n(e.c.x)}" cy="${n(Y(e.c.y))}" r="${n(e.r)}" ${stroke(e.layer, e.fill, color)}/>`;
     case 'poly': {
       const pts = e.pts.map((p) => `${n(p.x)},${n(Y(p.y))}`).join(' ');
-      return `<${e.closed ? 'polygon' : 'polyline'} points="${pts}" ${stroke(e.layer, e.fill)}/>`;
+      return `<${e.closed ? 'polygon' : 'polyline'} points="${pts}" ${stroke(e.layer, e.fill, color)}/>`;
     }
     case 'text': {
       const x = n(e.p.x);
       const y = n(Y(e.p.y));
       const rot = e.rot ? ` transform="rotate(${n(-e.rot)} ${x} ${y})"` : '';
       // ISO 3098 heights are cap heights; Arial cap height ≈ 0.716 of the font size.
-      return `<text x="${x}" y="${y}" font-size="${n(e.h * 1.4)}" text-anchor="${e.anchor ?? 'start'}" fill="#000"${e.bold ? ' font-weight="bold"' : ''}${rot}>${esc(e.text)}</text>`;
+      return `<text x="${x}" y="${y}" font-size="${n(e.h * 1.4)}" text-anchor="${e.anchor ?? 'start'}" fill="${color}"${e.bold ? ' font-weight="bold"' : ''}${rot}>${esc(e.text)}</text>`;
+    }
+    case 'image': {
+      // Only embedded images (data URLs) are drawn: sheets never reference external files.
+      if (!/^data:image\/(png|jpeg|jpg|gif|webp|svg\+xml)[;,]/i.test(e.href)) return '';
+      const href = esc(e.href);
+      return `<image x="${n(e.p.x)}" y="${n(Y(e.p.y + e.h))}" width="${n(e.w)}" height="${n(e.h)}" preserveAspectRatio="xMidYMid meet" href="${href}" xlink:href="${href}"/>`;
     }
   }
 }
@@ -64,6 +77,7 @@ const DXF_LAYERS: Record<DLayer, { name: string; color: number; linetype: 'CONTI
   thin: { name: 'ISO-NARROW-0.25', color: 8, linetype: 'CONTINUOUS' },
   medium: { name: 'ISO-0.35', color: 4, linetype: 'CONTINUOUS' },
   border: { name: 'ISO-FRAME-0.70', color: 7, linetype: 'CONTINUOUS' },
+  heavy: { name: 'ISO-EXTRAWIDE-0.70', color: 6, linetype: 'CONTINUOUS' },
 };
 
 export function drawingToDxf(d: Drawing): string {
@@ -87,6 +101,19 @@ export function drawingToDxf(d: Drawing): string {
           rot: e.rot,
           align: e.anchor === 'middle' ? 'center' : e.anchor === 'end' ? 'right' : 'left',
         });
+        break;
+      case 'image':
+        // DXF has no embedded images: a frame placeholder where the image (logo) sits.
+        w.polyline(
+          [
+            { x: e.p.x, y: e.p.y },
+            { x: e.p.x + e.w, y: e.p.y },
+            { x: e.p.x + e.w, y: e.p.y + e.h },
+            { x: e.p.x, y: e.p.y + e.h },
+          ],
+          true,
+          layer,
+        );
         break;
     }
   }

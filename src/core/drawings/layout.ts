@@ -1,11 +1,12 @@
 /**
  * Sheet furniture and layout:
  * - ISO 5457 frame (20 mm filing margin, 10 mm elsewhere), grid reference border and centring marks
- * - ISO 7200 title block (bottom right, 180 mm wide) with the ISO 5456-2 projection symbol and scale
- * - revision table directly above the title block
+ * - ISO 7200 title block (bottom right, 180 mm wide; or the active company template, see template.ts)
+ *   with the ISO 5456-2 projection symbol and scale
+ * - revision table directly above the title block, as wide as it
  * - text blocks (parts lists, schedules, notes) packed along the bottom of the sheet
  */
-import type { DrawingRevision, Project, SheetSize } from '../model/types';
+import type { DrawingRevision, SheetSize } from '../model/types';
 import { Sheet, drawTable, tableSize, wrap, type TableSpec } from './dims';
 import { SHEETS, TEXT } from './standards';
 
@@ -100,105 +101,22 @@ export function projectionSymbol(s: Sheet, x: number, y: number, method: 'first'
   s.line({ x: x - 1, y: cy }, { x: x + 17, y: cy }, 'center');
 }
 
-export interface TitleData {
-  title: string;
-  subtitle: string;
-  number: string;
-  rev: string;
-  date: string;
-  status: string;
-  docType: string;
-  scale: string;
-  sheetNo: string;
-  createdBy: string;
-  checkedBy: string;
-  approvedBy: string;
-}
-
-/** ISO 7200 title block at the bottom right of the frame. */
-export function drawTitleBlock(s: Sheet, size: SheetSize, p: Project, d: TitleData, projection: 'first' | 'third') {
-  const f = frameRect(size);
-  const x0 = f.x1 - TB_W;
-  const y0 = f.y0;
-  s.rect(x0, y0, TB_W, TB_H, 'border');
-  const hl = (y: number) => s.line({ x: x0, y: y0 + y }, { x: x0 + TB_W, y: y0 + y }, 'medium');
-  const vl = (x: number, ya: number, yb: number) => s.line({ x: x0 + x, y: y0 + ya }, { x: x0 + x, y: y0 + yb }, 'medium');
-  hl(10);
-  hl(24);
-  hl(32);
-  // row 0: legal owner | identification number | rev | date of issue | sheet
-  vl(45, 0, 10);
-  vl(120, 0, 10);
-  vl(136, 0, 10);
-  vl(160, 0, 10);
-  // row 1: projection + scale | title
-  vl(45, 10, 24);
-  // row 2: created | checked | approved | document type | status
-  vl(30, 24, 32);
-  vl(60, 24, 32);
-  vl(90, 24, 32);
-  vl(135, 24, 32);
-  // row 3: project | project no | client
-  vl(95, 32, 40);
-  vl(130, 32, 40);
-
-  const lbl = (x: number, y: number, t: string) => s.text({ x: x0 + x + 0.8, y: y0 + y - 2.4 }, t, TEXT.label, 'start', 'text');
-  const val = (x: number, y: number, t: string, h: number, w: number, bold = false) => {
-    const max = Math.max(3, Math.floor((w - 2) / (h * 0.72)));
-    s.text({ x: x0 + x + 1, y: y0 + y + 1.2 }, t.length > max ? `${t.slice(0, max - 1)}…` : t, h, 'start', 'text', 0, bold);
-  };
-  lbl(0, 10, 'Legal owner');
-  val(0, 0, p.drawings.settings.legalOwner || p.info.client || '—', TEXT.small, 45);
-  lbl(45, 10, 'Identification number');
-  val(45, 0, d.number, TEXT.title, 75, true);
-  lbl(120, 10, 'Rev');
-  val(120, 0, d.rev, TEXT.title, 16, true);
-  lbl(136, 10, 'Date of issue');
-  val(136, 0, d.date, TEXT.small, 24);
-  lbl(160, 10, 'Sheet');
-  val(160, 0, d.sheetNo, TEXT.small, 20);
-
-  projectionSymbol(s, x0 + 3, y0 + 14.5, projection);
-  s.text({ x: x0 + 24, y: y0 + 16 }, `Scale ${d.scale}`, TEXT.small, 'start');
-  s.text({ x: x0 + 24, y: y0 + 12 }, projection === 'first' ? 'ISO-E' : 'ISO-A', TEXT.label, 'start');
-  lbl(45, 24, 'Title');
-  val(45, 16.5, d.title, TEXT.normal, 135, true);
-  val(45, 11.2, d.subtitle, TEXT.small, 135);
-
-  lbl(0, 32, 'Created by');
-  val(0, 24, d.createdBy || '—', TEXT.small, 30);
-  lbl(30, 32, 'Checked by');
-  val(30, 24, d.checkedBy || '—', TEXT.small, 30);
-  lbl(60, 32, 'Approved by');
-  val(60, 24, d.approvedBy || '—', TEXT.small, 30);
-  lbl(90, 32, 'Document type');
-  val(90, 24, d.docType, TEXT.small, 45);
-  lbl(135, 32, 'Document status');
-  val(135, 24, d.status, TEXT.small, 45);
-
-  lbl(0, 40, 'Project');
-  val(0, 32, p.info.name || '—', TEXT.small, 95);
-  lbl(95, 40, 'Project no.');
-  val(95, 32, p.info.number || '—', TEXT.small, 35);
-  lbl(130, 40, 'Client');
-  val(130, 32, p.info.client || '—', TEXT.small, 50);
-}
-
 /** Revision table directly above the title block: header at the bottom, entries upwards (latest 4). */
 export function drawRevisionTable(s: Sheet, size: SheetSize, revisions: DrawingRevision[]) {
   const f = frameRect(size);
-  const x0 = f.x1 - TB_W;
-  const y0 = f.y0 + TB_H;
+  const W = s.tb.w;
+  const x0 = f.x1 - W;
+  const y0 = f.y0 + s.tb.h;
   const cols = [
     { head: 'Rev', w: 12 },
-    { head: 'Description', w: 74 },
+    { head: 'Description', w: Math.max(20, W - 106) },
     { head: 'Date', w: 22 },
     { head: 'Drawn', w: 24 },
     { head: 'Checked', w: 24 },
     { head: 'Approved', w: 24 },
   ];
-  s.rect(x0, y0, TB_W, REV_H, 'medium');
-  for (let r = 1; r <= REV_ROWS; r++) s.line({ x: x0, y: y0 + r * 5 }, { x: x0 + TB_W, y: y0 + r * 5 }, r === 1 ? 'medium' : 'thin');
+  s.rect(x0, y0, W, REV_H, 'medium');
+  for (let r = 1; r <= REV_ROWS; r++) s.line({ x: x0, y: y0 + r * 5 }, { x: x0 + W, y: y0 + r * 5 }, r === 1 ? 'medium' : 'thin');
   let cx = x0;
   for (const c of cols.slice(0, -1)) {
     cx += c.w;
@@ -229,12 +147,20 @@ export interface Block {
   h: number;
   /** Prefer the column above the revision table (notes). */
   right?: boolean;
+  /** Group of the block's entities (movable in the drawing editor), e.g. "table:parts-list". */
+  id?: string;
   draw: (s: Sheet, x: number, yTop: number) => void;
 }
 
+export const slug = (t: string) =>
+  t
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '') || 'block';
+
 export function tableBlock(t: TableSpec, right = false): Block {
   const sz = tableSize(t);
-  return { w: sz.w, h: sz.h, right, draw: (s, x, y) => drawTable(s, x, y, t) };
+  return { w: sz.w, h: sz.h, right, id: `table:${slug(t.title ?? 'table')}`, draw: (s, x, y) => drawTable(s, x, y, t) };
 }
 
 export function notesBlock(title: string, notes: string[], width = TB_W): Block {
@@ -246,6 +172,7 @@ export function notesBlock(title: string, notes: string[], width = TB_W): Block 
     w: width,
     h: 6 + lines.length * lineH,
     right: true,
+    id: `notes:${slug(title)}`,
     draw: (s, x, yTop) => {
       s.text({ x, y: yTop - 3.6 }, title, TEXT.small, 'start', 'text', 0, true);
       lines.forEach((l, i) => {
@@ -268,16 +195,25 @@ export interface PackResult {
  * Packs blocks: the right column above the title block/revision table first
  * (blocks marked `right`), then columns along the bottom band from right to left.
  */
-export function packBlocks(s: Sheet, size: SheetSize, blocks: Block[]): PackResult {
+export function packBlocks(s: Sheet, size: SheetSize, input: Block[]): PackResult {
   const f = frameRect(size);
   const H = f.y1 - f.y0;
   const gap = 4;
   const rightMax = f.y0 + H * 0.66;
-  let rightTop = f.y0 + TB_H + REV_H;
-  const xr = f.x1 - TB_W;
+  let rightTop = f.y0 + s.tb.h + REV_H;
+  const xr = f.x1 - s.tb.w;
+  // Each block is a movable group (unique per sheet).
+  const seen = new Map<string, number>();
+  const blocks = input.map((b) => {
+    if (!b.id) return b;
+    const n = (seen.get(b.id) ?? 0) + 1;
+    seen.set(b.id, n);
+    const group = n > 1 ? `${b.id}-${n}` : b.id;
+    return { ...b, draw: (sh: Sheet, x: number, y: number) => sh.withTag({ group }, () => b.draw(sh, x, y)) };
+  });
   const rest: Block[] = [];
   for (const b of blocks) {
-    if (b.right && b.w <= TB_W && rightTop + gap + b.h <= rightMax) {
+    if (b.right && b.w <= s.tb.w && rightTop + gap + b.h <= rightMax) {
       b.draw(s, xr, rightTop + gap + b.h);
       rightTop += gap + b.h;
     } else rest.push(b);

@@ -62,6 +62,10 @@ export function entsBox(ents: DEnt[], b: BBox = emptyBox()): BBox {
       case 'poly':
         for (const p of e.pts) grow(b, p.x, p.y);
         break;
+      case 'image':
+        grow(b, e.p.x, e.p.y);
+        grow(b, e.p.x + e.w, e.p.y + e.h);
+        break;
       case 'text': {
         const w = textExtent(e.text, e.h, e.bold);
         const k = e.anchor === 'middle' ? 0.5 : e.anchor === 'end' ? 1 : 0;
@@ -101,29 +105,35 @@ export function unionBox(...bs: BBox[]): BBox {
 
 const overlapsY = (a: BBox, b: BBox) => a.y0 < b.y1 && b.y0 < a.y1;
 
-/** Copies the entities of `src` into `dst`, translated by `d`. */
-export function blit(dst: Sheet, src: Sheet, d: Vec2) {
+/** An entity translated by `d` (tags are kept). */
+export function moveEnt(e: DEnt, d: Vec2): DEnt {
   const t = (p: Vec2) => ({ x: p.x + d.x, y: p.y + d.y });
-  for (const e of src.ents) {
-    switch (e.t) {
-      case 'line':
-        dst.ents.push({ ...e, a: t(e.a), b: t(e.b) });
-        break;
-      case 'circle':
-        dst.ents.push({ ...e, c: t(e.c) });
-        break;
-      case 'poly':
-        dst.ents.push({ ...e, pts: e.pts.map(t) });
-        break;
-      case 'text':
-        dst.ents.push({ ...e, p: t(e.p) });
-        break;
-    }
+  switch (e.t) {
+    case 'line':
+      return { ...e, a: t(e.a), b: t(e.b) };
+    case 'circle':
+      return { ...e, c: t(e.c) };
+    case 'poly':
+      return { ...e, pts: e.pts.map(t) };
+    case 'text':
+    case 'image':
+      return { ...e, p: t(e.p) };
   }
 }
 
-/** A scratch sheet for one view. */
-export const viewSheet = () => new Sheet(0, 0);
+/**
+ * Copies the entities of `src` into `dst`, translated by `d`. With `group`,
+ * entities that have no group yet join it (the view's group).
+ */
+export function blit(dst: Sheet, src: Sheet, d: Vec2, group?: string) {
+  for (const e of src.ents) {
+    const m = moveEnt(e, d);
+    dst.ents.push(group && !m.group ? { ...m, group } : m);
+  }
+}
+
+/** A scratch sheet for one view; `name` goes into the generated ids ("dim:elevation:2"). */
+export const viewSheet = (name = 'view') => new Sheet(0, 0, name);
 
 export interface ThreeViews {
   elevation: Sheet;
@@ -181,11 +191,11 @@ export function findPlacement(arr: Arrangement, areas: Rect[], margin = 2): Vec2
   return null;
 }
 
-/** Draws the arranged views into `dst` with the elevation offset `dE`. */
+/** Draws the arranged views into `dst` with the elevation offset `dE`; each view is a movable group. */
 export function placeViews(dst: Sheet, v: ThreeViews, arr: Arrangement, dE: Vec2) {
-  blit(dst, v.elevation, dE);
-  blit(dst, v.plan, { x: dE.x + arr.dPlan.x, y: dE.y + arr.dPlan.y });
-  blit(dst, v.section, { x: dE.x + arr.dSection.x, y: dE.y + arr.dSection.y });
+  blit(dst, v.elevation, dE, 'view:elevation');
+  blit(dst, v.plan, { x: dE.x + arr.dPlan.x, y: dE.y + arr.dPlan.y }, 'view:plan');
+  blit(dst, v.section, { x: dE.x + arr.dSection.x, y: dE.y + arr.dSection.y }, 'view:section');
 }
 
 /** Fallback offset when nothing fits: top-left of the first area. */

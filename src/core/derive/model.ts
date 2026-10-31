@@ -3,7 +3,7 @@
  * marks. Every output (3D, IFC, drawings, reports, NC, nesting) reads from the
  * `DerivedModel` so they always agree with each other.
  */
-import type { Finish, Id, MemberRole, Project, Vec2, Vec3 } from '../model/types';
+import type { Finish, Id, Member, MemberRole, Project, Vec2, Vec3 } from '../model/types';
 import { dot, toLocal, type Frame } from '../model/geometry';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
@@ -57,7 +57,14 @@ export interface Part {
   /** Filled by numbering. */
   mark: string;
   assembly: string;
+  /** Erection phase (Project.phases id), zone and delivery batch — those of the assembly's main member. */
+  phase?: Id;
+  zone?: string;
+  batch?: Id;
 }
+
+/** How an assembly got its mark when marks are locked (see Project.markLocks). */
+export type MarkLockState = 'locked' | 'changed' | 'new' | 'manual';
 
 export interface Assembly {
   id: string;
@@ -66,6 +73,20 @@ export interface Assembly {
   parts: PartRef[];
   mass: number;
   prefix: string;
+  /** Erection phase, zone and delivery batch of the main member. */
+  phase?: Id;
+  zone?: string;
+  batch?: Id;
+  /** Numbering signature: identical assemblies share it. */
+  signature?: string;
+  /**
+   * 'manual' = mark from Member.markOverride. With locked marks: 'locked' = mark
+   * kept from the locks, 'changed' = differs from what was locked (see lockedMark),
+   * 'new' = not in the locks yet.
+   */
+  lock?: MarkLockState;
+  /** For 'changed': the mark this assembly had when the marks were locked. */
+  lockedMark?: string;
 }
 
 export interface BoltItem extends BoltOut {
@@ -243,6 +264,12 @@ export function deriveModel(p: Project): DerivedModel {
   const find = (r: PartRef): PartRef => {
     let x = r;
     while (parent.get(x) && parent.get(x) !== x) x = parent.get(x)!;
+    // Path compression (roots are unchanged, so results are too): keeps long weld chains linear.
+    for (let y = r; y !== x; ) {
+      const next = parent.get(y)!;
+      parent.set(y, x);
+      y = next;
+    }
     return x;
   };
   const union = (a: PartRef, b: PartRef) => {
@@ -342,56 +369,156 @@ function partPrefix(pt: Part, p: Project): string {
   return (p.settings.assemblyPrefix[pt.role as MemberRole] ?? 'a').toLowerCase();
 }
 
+/** Same order as `a.localeCompare(b)` / `a.localeCompare(b, undefined, { numeric: true })`, without building a collator per call. */
+const byText = new Intl.Collator().compare;
+const byNumber = new Intl.Collator(undefined, { numeric: true }).compare;
+
+/**
+ * Keys of Project.markLocks: part and assembly numbering signatures, and the
+ * assembly identity (its main part ref) so a locked assembly that changed can be told apart from a new one.
+ */
+export const lockKey = {
+  part: (signature: string) => `P|${signature}`,
+  assembly: (signature: string) => `A|${signature}`,
+  identity: (mainRef: PartRef) => `I|${mainRef}`,
+};
+
+/** Hands out `<prefix><n>` marks, skipping reserved ones (locked or manual marks). */
+class MarkCounter {
+  private counts = new Map<string, number>();
+  constructor(private reserved: Set<string>) {}
+  next(prefix: string): string {
+    let n = this.counts.get(prefix) ?? 0;
+    let mark = '';
+    do mark = `${prefix}${++n}`;
+    while (this.reserved.has(mark));
+    this.counts.set(prefix, n);
+    this.reserved.add(mark);
+    return mark;
+  }
+}
+
+/** The member whose phase / zone / batch a part follows: its own member, or the connected (secondary) member of its connection. */
+function groupingMember(p: Project, pt: Part): Member | undefined {
+  if (pt.memberId) return p.members[pt.memberId];
+  const c = pt.connectionId ? p.connections[pt.connectionId] : undefined;
+  if (!c) return undefined;
+  return p.members[c.secondary[0]] ?? (c.main ? p.members[c.main] : undefined);
+}
+
+/** Phase, zone and batch of every assembly from its main part's member; the parts follow their assembly. */
+function assignGrouping(dm: DerivedModel, p: Project) {
+  for (const a of dm.assemblies) {
+    const main = dm.partByRef.get(a.main)!;
+    const m = groupingMember(p, main);
+    a.phase = main.phase ?? m?.phase;
+    a.zone = main.zone ?? m?.zone;
+    a.batch = main.batch ?? m?.batch;
+    for (const r of a.parts) {
+      const pt = dm.partByRef.get(r)!;
+      pt.phase = a.phase;
+      pt.zone = a.zone;
+      pt.batch = a.batch;
+    }
+  }
+}
+
+/** Main part mark + secondary marks with their placement relative to the main part. */
+function assemblySignature(dm: DerivedModel, a: Assembly): string {
+  const main = dm.partByRef.get(a.main)!;
+  const ax = (v: Vec3) => `${Math.round(dot(v, main.frame.x) * 100)},${Math.round(dot(v, main.frame.y) * 100)},${Math.round(dot(v, main.frame.z) * 100)}`;
+  const rel = a.parts
+    .filter((r) => r !== a.main)
+    .map((r) => {
+      const pt = dm.partByRef.get(r)!;
+      const o = toLocal(main.frame, pt.frame.origin);
+      return `${pt.mark}@${r1(o.x)},${r1(o.y)},${r1(o.z)}/${ax(pt.frame.x)}/${ax(pt.frame.y)}`;
+    })
+    .sort()
+    .join('|');
+  return `${a.prefix}#${main.mark}#${rel}`;
+}
+
+/** Manual mark of an assembly: the main member's markOverride, else the first one found on its other members. */
+function manualMark(p: Project, dm: DerivedModel, a: Assembly): string | undefined {
+  const main = dm.partByRef.get(a.main)!;
+  const own = main.memberId ? p.members[main.memberId]?.markOverride?.trim() : undefined;
+  if (own) return own;
+  for (const r of [...a.parts].sort()) {
+    const id = dm.partByRef.get(r)!.memberId;
+    const o = id ? p.members[id]?.markOverride?.trim() : undefined;
+    if (o) return o;
+  }
+  return undefined;
+}
+
 function number(dm: DerivedModel, p: Project) {
+  const locks = p.markLocks ?? {};
+  const locked = Object.keys(locks).length > 0;
+  const partReserved = new Set<string>();
+  const asmReserved = new Set<string>();
+  // Locked marks stay reserved even when their part/assembly is gone, so they are never reused for something else.
+  for (const [k, mark] of Object.entries(locks)) (k.startsWith('P|') ? partReserved : asmReserved).add(mark);
+
   // Parts
   const sigToMark = new Map<string, string>();
-  const counters = new Map<string, number>();
-  const ordered = [...dm.parts].sort(
-    (a, b) =>
-      partPrefix(a, p).localeCompare(partPrefix(b, p)) ||
-      a.profile.localeCompare(b.profile, undefined, { numeric: true }) ||
-      b.length - a.length,
-  );
-  for (const pt of ordered) {
+  const partCounter = new MarkCounter(partReserved);
+  const ordered = dm.parts.map((pt) => ({ pt, pre: partPrefix(pt, p) }));
+  ordered.sort((a, b) => byText(a.pre, b.pre) || byNumber(a.pt.profile, b.pt.profile) || b.pt.length - a.pt.length);
+  for (const { pt, pre } of ordered) {
     const sig = partSignature(pt);
     let mark = sigToMark.get(sig);
     if (!mark) {
-      const pre = partPrefix(pt, p);
-      const n = (counters.get(pre) ?? 0) + 1;
-      counters.set(pre, n);
-      mark = `${pre}${n}`;
+      mark = (locked ? locks[lockKey.part(sig)] : undefined) ?? partCounter.next(pre);
       sigToMark.set(sig, mark);
     }
     pt.mark = mark;
   }
-  // Assemblies: main part mark + secondary marks with their placement relative to the main part.
+
+  // Assemblies
+  assignGrouping(dm, p);
+  const manual = new Map<Assembly, string>();
+  for (const a of dm.assemblies) {
+    a.signature = assemblySignature(dm, a);
+    const m = manualMark(p, dm, a);
+    if (m) {
+      manual.set(a, m);
+      asmReserved.add(m);
+    }
+  }
   const asmSig = new Map<string, string>();
-  const asmCounters = new Map<string, number>();
-  const asmOrdered = [...dm.assemblies].sort(
-    (a, b) => a.prefix.localeCompare(b.prefix) || dm.partByRef.get(a.main)!.mark.localeCompare(dm.partByRef.get(b.main)!.mark, undefined, { numeric: true }),
-  );
-  for (const a of asmOrdered) {
-    const main = dm.partByRef.get(a.main)!;
-    const rel = a.parts
-      .filter((r) => r !== a.main)
-      .map((r) => {
-        const pt = dm.partByRef.get(r)!;
-        const o = toLocal(main.frame, pt.frame.origin);
-        const ax = (v: Vec3) => `${Math.round(dot(v, main.frame.x) * 100)},${Math.round(dot(v, main.frame.y) * 100)},${Math.round(dot(v, main.frame.z) * 100)}`;
-        return `${pt.mark}@${r1(o.x)},${r1(o.y)},${r1(o.z)}/${ax(pt.frame.x)}/${ax(pt.frame.y)}`;
-      })
-      .sort()
-      .join('|');
-    const sig = `${a.prefix}#${main.mark}#${rel}`;
-    let mark = asmSig.get(sig);
-    if (!mark) {
-      const n = (asmCounters.get(a.prefix) ?? 0) + 1;
-      asmCounters.set(a.prefix, n);
-      mark = `${a.prefix}${n}`;
+  const asmCounter = new MarkCounter(asmReserved);
+  const asmOrdered = dm.assemblies.map((a) => ({ a, mainMark: dm.partByRef.get(a.main)!.mark }));
+  asmOrdered.sort((x, y) => byText(x.a.prefix, y.a.prefix) || byNumber(x.mainMark, y.mainMark));
+  const sigsByMark = new Map<string, Set<string>>();
+  for (const { a } of asmOrdered) {
+    const sig = a.signature!;
+    let mark = manual.get(a);
+    if (mark) a.lock = 'manual';
+    else {
+      const lockedMark = locked ? locks[lockKey.assembly(sig)] : undefined;
+      mark = asmSig.get(sig) ?? lockedMark ?? asmCounter.next(a.prefix);
       asmSig.set(sig, mark);
+      if (locked) {
+        const was = locks[lockKey.identity(a.main)];
+        if (was && was !== mark) {
+          a.lock = 'changed';
+          a.lockedMark = was;
+          const main = dm.partByRef.get(a.main)!;
+          dm.warnings.push({ memberId: main.memberId, connectionId: main.connectionId, text: `Assembly ${was} changed since the marks were locked — it is now ${mark}.` });
+        } else a.lock = lockedMark ? 'locked' : 'new';
+      }
     }
     a.mark = mark;
     for (const r of a.parts) dm.partByRef.get(r)!.assembly = mark;
+    if (manual.size || locked) {
+      const set = sigsByMark.get(mark) ?? new Set<string>();
+      set.add(sig);
+      sigsByMark.set(mark, set);
+    }
+  }
+  for (const [mark, sigs] of sigsByMark) {
+    if (sigs.size > 1) dm.warnings.push({ text: `Mark ${mark} is used for ${sigs.size} assemblies that are not identical (manual or locked marks).` });
   }
 }
 
@@ -405,7 +532,7 @@ export function uniqueParts(dm: DerivedModel): { part: Part; qty: number; refs: 
       e.refs.push(pt.ref);
     } else map.set(pt.mark, { part: pt, qty: 1, refs: [pt.ref] });
   }
-  return [...map.values()].sort((a, b) => a.part.mark.localeCompare(b.part.mark, undefined, { numeric: true }));
+  return [...map.values()].sort((a, b) => byNumber(a.part.mark, b.part.mark));
 }
 
 /** Unique assemblies with quantities, ordered by mark. */
@@ -416,5 +543,5 @@ export function uniqueAssemblies(dm: DerivedModel): { assembly: Assembly; qty: n
     if (e) e.qty++;
     else map.set(a.mark, { assembly: a, qty: 1 });
   }
-  return [...map.values()].sort((a, b) => a.assembly.mark.localeCompare(b.assembly.mark, undefined, { numeric: true }));
+  return [...map.values()].sort((a, b) => byNumber(a.assembly.mark, b.assembly.mark));
 }

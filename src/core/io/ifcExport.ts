@@ -11,6 +11,7 @@ import { getMaterial } from '../library/materials';
 import { getBolt } from '../library/bolts';
 import type { Hole2D } from '../connections/common';
 import type { DerivedModel, Part } from '../derive/model';
+import { assemblyGuid, ifcGuidFrom, partGuid } from './guid';
 
 export interface IfcExportOptions {
   includeBolts?: boolean;
@@ -52,7 +53,11 @@ const list = (items: (string | number)[]) => `(${items.join(',')})`;
 
 const GUID_CHARS = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$';
 
-/** 22-character IFC GlobalId from 128 random bits. */
+/**
+ * 22-character IFC GlobalId from 128 random bits. Products (project, site,
+ * building, storeys, assemblies, parts) get deterministic ids instead — see
+ * ./guid (`partGuid`, `assemblyGuid`) — so re-exports and BCF topics keep their identity.
+ */
 export function ifcGuid(): string {
   const bytes = new Uint8Array(16);
   globalThis.crypto.getRandomValues(bytes);
@@ -143,7 +148,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
   ]);
 
   const project = w.add('IFCPROJECT', [
-    str(ifcGuid()),
+    str(ifcGuidFrom(`${p.id}|project`)),
     '$',
     str(p.info.name || 'FacadeSteel project'),
     str(p.info.number || null),
@@ -156,16 +161,16 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
 
   // Spatial structure: everything at the world origin, storeys carry elevations only.
   const sitePl = w.add('IFCLOCALPLACEMENT', ['$', identity3]);
-  const site = w.add('IFCSITE', [str(ifcGuid()), '$', str('Site'), '$', '$', sitePl, '$', '$', en('ELEMENT'), '$', '$', '$', '$', '$']);
+  const site = w.add('IFCSITE', [str(ifcGuidFrom(`${p.id}|site`)), '$', str('Site'), '$', '$', sitePl, '$', '$', en('ELEMENT'), '$', '$', '$', '$', '$']);
   const bldgPl = w.add('IFCLOCALPLACEMENT', [sitePl, identity3]);
-  const building = w.add('IFCBUILDING', [str(ifcGuid()), '$', str('Building'), '$', '$', bldgPl, '$', '$', en('ELEMENT'), '$', '$', '$']);
+  const building = w.add('IFCBUILDING', [str(ifcGuidFrom(`${p.id}|building`)), '$', str('Building'), '$', '$', bldgPl, '$', '$', en('ELEMENT'), '$', '$', '$']);
   w.add('IFCRELAGGREGATES', [str(ifcGuid()), '$', '$', '$', project, list([site])]);
   w.add('IFCRELAGGREGATES', [str(ifcGuid()), '$', '$', '$', site, list([building])]);
 
   const levels: Level[] = p.levels.length ? [...p.levels].sort((a, b) => a.z - b.z) : [{ id: 'default', name: 'Level 0', z: 0 }];
   const storeys = levels.map((l) => {
     const pl = w.add('IFCLOCALPLACEMENT', [bldgPl, identity3]);
-    const ref = w.add('IFCBUILDINGSTOREY', [str(ifcGuid()), '$', str(l.name), '$', '$', pl, '$', '$', en('ELEMENT'), real(l.z)]);
+    const ref = w.add('IFCBUILDINGSTOREY', [str(ifcGuidFrom(`${p.id}|storey|${l.id}`)), '$', str(l.name), '$', '$', pl, '$', '$', en('ELEMENT'), real(l.z)]);
     return { level: l, ref, pl, contents: [] as Ref[] };
   });
   w.add('IFCRELAGGREGATES', [str(ifcGuid()), '$', '$', '$', building, list(storeys.map((s) => s.ref))]);
@@ -289,7 +294,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     const st = storeyFor(main.frame.origin.z);
     const pl = w.add('IFCLOCALPLACEMENT', [st.pl, identity3]);
     const ref = w.add('IFCELEMENTASSEMBLY', [
-      str(ifcGuid()),
+      str(assemblyGuid(p.id, a.main)),
       '$',
       str(a.mark),
       str(main.profile),
@@ -323,7 +328,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
         ? w.add('IFCARBITRARYPROFILEDEFWITHVOIDS', [en('AREA'), str(part.profile), outer, list(voids)])
         : w.add('IFCARBITRARYCLOSEDPROFILEDEF', [en('AREA'), str(part.profile), outer]);
       element = w.add('IFCPLATE', [
-        str(ifcGuid()),
+        str(partGuid(p.id, part.ref)),
         '$',
         str(part.mark),
         str(part.name),
@@ -342,7 +347,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
       const predefined = MEMBER_TYPE[role] ?? 'MEMBER';
       const isBeam = part.kind === 'member' && predefined === 'BEAM';
       element = w.add(isBeam ? 'IFCBEAM' : 'IFCMEMBER', [
-        str(ifcGuid()),
+        str(partGuid(p.id, part.ref)),
         '$',
         str(part.mark),
         str(part.name),
@@ -366,6 +371,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
       singleValue('Length', 'IFCLENGTHMEASURE', real(part.length)),
       singleValue('Weight', 'IFCMASSMEASURE', real(part.mass)),
       singleValue('Finish', 'IFCLABEL', str(part.finish)),
+      singleValue('Role', 'IFCLABEL', str(part.role)),
     ]);
   }
 
@@ -410,12 +416,12 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
       const size = getBolt(b.size);
       const circle = w.shared('IFCCIRCLEPROFILEDEF', [en('AREA'), '$', pos2d, real(size.d / 2)]);
       const rep = shapeRep([extrude(circle, b.length + size.head)]);
-      for (const pos of b.positions) {
+      b.positions.forEach((pos, i) => {
         const start = madd(pos, b.dir, -size.head);
         const st = storeyFor(pos.z);
         const pl = w.add('IFCLOCALPLACEMENT', [st.pl, axis3(start, b.dir, perpendicular(b.dir))]);
         const ref = w.add('IFCMECHANICALFASTENER', [
-          str(ifcGuid()),
+          str(ifcGuidFrom(`${p.id}|bolt|${b.connectionId}|${b.key}|${i}`)),
           '$',
           str(`${b.size}x${b.length}`),
           str(`${b.kind === 'anchor' ? 'Anchor' : 'Bolt'} ${b.size} ${b.grade}`),
@@ -428,7 +434,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
           en(b.kind === 'anchor' ? 'ANCHORBOLT' : 'BOLT'),
         ]);
         st.contents.push(ref);
-      }
+      });
     }
   }
 

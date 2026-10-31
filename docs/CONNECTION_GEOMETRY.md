@@ -1,0 +1,1116 @@
+# Connection geometry: how members and connection parts are positioned
+
+Reference for developers and detailing-software specialists who verify or
+extend the placement code. Every statement cites the code as `path:line`
+(repository-relative). Values in §12 are printed by `deriveModel` on a real
+model. Where the code is ambiguous or inconsistent, a **Notes / caveats**
+line says so. §14 lists all of them.
+
+Notation: `N` = node position, `â` = unit vector, `·` = dot product, `×` =
+cross product, `madd(p, d, s) = p + d·s` (`src/core/model/geometry.ts:22`).
+
+---
+
+## 1. Conventions
+
+| Item | Value | Source |
+| --- | --- | --- |
+| Units | millimetres, degrees | `src/core/model/types.ts:5` |
+| World axes | X east, Y north, Z up | `src/core/model/types.ts:5` |
+| Handedness | Every frame is right-handed: `z = x × y` (members, plates), or equivalently `x = y × z` (angles, tees) | `src/core/model/geometry.ts:45`, `src/core/connections/common.ts:138`, `src/core/connections/kit.ts:332,368` |
+| Angles | degrees in the data (`rotation`, saw angles, `Hole2D.angle`), radians only inside functions | `src/core/model/types.ts:66`, `src/core/model/geometry.ts:47`, `src/core/geometry/endPrep.ts:47` |
+| `EPS` | 1e-6 (zero-length normalise, parallel tests) | `src/core/model/geometry.ts:3,19` |
+| `NODE_TOL` | 0.5 mm: node merge, "member passes through node" | `src/core/model/ops.ts:59,168-171,418` |
+| Point equality / segment intersection | 0.5 mm | `src/core/model/geometry.ts:23,252` |
+| Shortest line | lines shorter than 1 mm are not created | `src/core/model/ops.ts:203` |
+| End on node (mitre/fit) | 1 mm | `src/core/geometry/endPrep.ts:138-139` |
+| Vertical (local axes) | `\|x̂·Ẑ\| > 0.9999` | `src/core/model/geometry.ts:42` |
+| Vertical / horizontal (rules) | `\|d̂·Ẑ\| > 0.995` / `< 0.005` | `src/core/model/ops.ts:428-429` |
+| Collinear (rules) | `\|û·v̂\| > 0.999` | `src/core/connections/registry.ts:229` |
+| Through member at node | distance < `NODE_TOL` and `1e-4 < t < 1−1e-4` | `src/core/model/ops.ts:417-418` |
+| Cut angle limit / saw warning | 85° / 60° | `src/core/geometry/endPrep.ts:51,53` |
+
+Section coordinates: a profile outline's `x` is member local `y` (width `b`),
+its `y` is local `z` (height `h`); outlines are centred on their bounding box
+(`src/core/library/shapes.ts:4-7`). `Profile.h` / `Profile.b` are the
+bounding-box height and width (`src/core/library/profiles.ts:36-38,77-78`,
+`src/core/library/shapes.ts:134-146`). Example: `RHS 100x50x4` has `h = 100`,
+`b = 50` (`src/core/library/profiles.ts:135-136`).
+
+**Notes / caveats:** the vertical test for local axes (0.9999, about 0.81°
+from vertical) is stricter than the one the placement rules use (0.995, about
+5.7°). A member between 0.81° and 5.7° from vertical counts as a vertical
+mullion in `autoConnect` / `endsFor`, but its local axes follow the
+non-vertical rule. The section then turns 90° (see §3.1, variant "tilt").
+
+---
+
+## 2. Frames and transforms
+
+```ts
+interface Frame { origin: Vec3; x: Vec3; y: Vec3; z: Vec3 }   // src/core/model/geometry.ts:27-32
+```
+
+- `toWorld(f, lx, ly, lz) = f.origin + f.x·lx + f.y·ly + f.z·lz` (`src/core/model/geometry.ts:68-70`)
+- `toLocal(f, p) = ((p−o)·f.x, (p−o)·f.y, (p−o)·f.z)` (`src/core/model/geometry.ts:73-76`).
+  This is exact only for orthonormal frames. Nothing checks that.
+- Rodrigues rotation `rotateAbout` (`src/core/model/geometry.ts:58-65`).
+
+### 2.1 Plate frames: `plateOn`
+
+Every connection plate is placed with
+`plateOn(P, n_out, X, Y, t)` (`src/core/connections/common.ts:135-141`):
+
+```
+x = X̂,  y = Ŷ,  z = x × y
+origin = P              if z·n_out ≥ 0
+origin = P + n̂_out·t    otherwise
+```
+
+The plate occupies frame `z ∈ [0, t]` (`src/core/connections/common.ts:31`).
+A 2-D outline vertex `(u, v)` at depth `s ∈ [0, t]` is
+`toWorld(frame, u, v, s)`. `P` is the **contact point**: it lies in the
+contact plane and maps to outline `(0, 0)`. The material always lies on the
+`n_out` side of the contact plane. The contact face is at frame `z = 0` when
+`z·n_out ≥ 0`, and at `z = t` otherwise. The kit wrapper `addPlate` takes the
+same arguments (`src/core/connections/kit.ts:184-189`).
+
+```
+   frame.y
+     ^
+     |  (0,H) +--------------------------+ (L,H)      outline: rect(L,H) = (0,0),(L,0),(L,H),(0,H)
+     |        |                          |                     src/core/connections/common.ts:122-129
+     |        |    o  hole (x, y, d)     |
+     |        |   (=slot: centres at     |            thickness: along frame.z, z ∈ [0, t]
+     |        |    ±slot/2 along angle)  |            (out of the page)
+     |  (0,0) +--------------------------+ (L,0)
+     +----------------------------------------> frame.x
+   origin (= P, or P + n_out·t when x × y points away from n_out)
+```
+
+**Notes / caveats:** `plateOn` normalises `X` and `Y` but does not make them
+orthogonal (`src/core/connections/common.ts:136-138`). The caller must pass
+perpendicular in-plane axes. All built-in callers do. Free plates are
+orthogonalised (`src/core/derive/model.ts:384-386`).
+
+### 2.2 Free plates (`Project.plates`)
+
+`frame = { origin, x: x̂A, z: norm(x̂A × yAxis), y: z × x }`
+(`src/core/derive/model.ts:384-386`). The outline is the flat pattern in
+plate x/y, counter-clockwise, and the plate occupies `z ∈ [0, t]`
+(`src/core/model/types.ts:293-298`). `weldedTo: <memberId>` joins the member's
+assembly only when that member has a profile; otherwise a warning is raised
+(`src/core/derive/model.ts:390-391,411`).
+
+### 2.3 Work planes
+
+`planeAxes` (`src/core/model/geometry.ts:103-119`) gives:
+
+- XY: `u = X`, `v = Y`, `n = Z`
+- XZ: `u = X`, `v = Z`, `n = −Y`
+- YZ: `u = Y`, `v = Z`, `n = X`
+- custom: `u = x̂A`, `n = norm(u × yA)`, `v = n × u`, origin shifted by `offset` along `n`.
+
+`planeToWorld` and `worldToPlane` are at `src/core/model/geometry.ts:195-204`.
+For the XZ plane, `n = u × v = −Y`.
+
+---
+
+## 3. Member geometry
+
+A `Member` runs between two nodes: `start` → `end`
+(`src/core/model/types.ts:59-90`). The **wire line** is `a = node(start)` →
+`b = node(end)`. The **section centre line** is the wire line shifted by the
+alignment. The **physical axis** is the centre line between the extended,
+trimmed or cut ends.
+
+### 3.1 Local axes (`axesFor`, `src/core/model/geometry.ts:40-56`)
+
+```
+x̂  = norm(b − a)
+vertical = |x̂_z| > 0.9999
+r  = vertical ? Ŷ : Ẑ
+ŷ0 = norm(r × x̂),   ẑ0 = x̂ × ŷ0
+θ  = rotation (deg):  ŷ = ŷ0 cosθ + ẑ0 sinθ,   ẑ = ẑ0 cosθ − ŷ0 sinθ   (right-handed about x̂)
+```
+
+- Non-vertical: `ŷ0 = (−x̂y, x̂x, 0)/|…|` is horizontal and points to the left
+  of the travel direction seen from above. `ẑ0` has a positive Z component:
+  the section's "up".
+- Vertical: `ẑ0 = +Y` always. `ŷ0 = +X` for a member drawn upwards and `−X`
+  for one drawn downwards (verified: variant "down" in §12.4).
+
+```
+ Vertical member drawn upwards — plan, looking down −Z (x̂ = +Z toward the viewer):
+
+              ẑ = +Y
+                ^
+        +-------|-------+
+        |       |       |
+        |       ⊙-------+-----> ŷ = +X
+        |    x̂ = +Z     |
+        |               |
+        +---------------+          drawn downwards: x̂ = −Z, ŷ = −X, ẑ = +Y
+
+ Horizontal member a → b along +X — elevation, looking north (+Y into the page):
+
+        ẑ = +Z
+          ^
+          |   ŷ = +Y (into the page, ⊗)
+   a o====+==============================> x̂ ======o b
+
+ rotation θ = 90°:  ŷ → ẑ0 = +Z,  ẑ → −ŷ0 = −Y   (verified: variant "rot90", §12.4)
+```
+
+`rotationForDepth(a, b, dir)` returns the `rotation` that turns local `z`
+onto `dir` (`src/core/model/geometry.ts:147-154`). `facadeGrid` uses it with
+`−n` for mullions and `+n` for transoms on custom planes. On XZ / YZ planes it
+uses fixed values: mullion 0 / 90, transom 90 when `transomDepthNormal`
+(`src/core/model/ops.ts:495-496`).
+
+**Notes / caveats:**
+- The comment at `src/core/model/geometry.ts:37` says "local y along global
+  +X" for vertical members. That holds only when `start` is the lower node.
+- Local axes jump at the 0.9999 threshold. A mullion leaning 50 mm over
+  3500 mm gets `ŷ = (0,1,0)`, `ẑ = (−1,0,0.014)`. A plumb one gets `ŷ = +X`,
+  `ẑ = +Y` (§12.4, "tilt").
+- With `facadeGrid` on XZ, mullion local z is `+Y = −n`, while rotated
+  transom local z is `−Y = +n` (`src/core/model/ops.ts:495-496`). "Side ±1"
+  parameters therefore point opposite ways on mullions and transoms.
+
+### 3.2 Alignment and offsets (`sectionShift`, `src/core/model/geometry.ts:89-97`)
+
+```
+shift.x (along ŷ) = −alignY·w/2 + offsetY        w = profile.b
+shift.y (along ẑ) = −alignZ·h/2 + offsetZ        h = profile.h
+```
+
+`Align` is −1 for the line at the section's negative edge, 0 for centre, +1
+for the positive edge (`src/core/model/types.ts:52-53`).
+
+```
+ Section looking at the member end, x̂ toward the viewer: ŷ → right, ẑ ↑.  • = wire line, c = section centre
+
+ alignZ = +1             alignZ = 0              alignZ = −1             alignY = −1, alignZ = 0
+ +----•----+             +---------+             +---------+             +---------+
+ |         |             |         |             |         |             |         |
+ |    c    |             |    •    |             |    c    |             •    c    |
+ |         |             |         |             |         |             |         |
+ +---------+             +---------+             +----•----+             +---------+
+ c = • − ẑ·h/2           c = •                   c = • + ẑ·h/2           c = • + ŷ·w/2
+```
+
+Verified: `alignZ = −1, offsetY = 20` on an upward SHS 100 at x = 500 gives
+`shift = (20, 50)` and frame origin `(520, 50, 0)` (§12.4).
+
+### 3.3 Extensions, trims and the physical ends (`memberGeom`, `src/core/derive/memberGeom.ts:38-80`)
+
+```
+s0     = −startExt + trimStart                                   (:47)
+L      = |b − a| + startExt + endExt − trimStart − trimEnd       (:48)
+O      = a + x̂·s0 + ŷ·shift.x + ẑ·shift.y                        (:49-50)
+frame  = { O, x̂, ŷ, ẑ },   length = max(0, L)                    (:59-60)
+physical start = O,  physical end = O + x̂·length   (on the section centre line)
+```
+
+`trimStart` / `trimEnd` come from the connections' `trims()`. For each member
+end, the **maximum** over all connections is used, not the sum
+(`src/core/derive/model.ts:153-162`). Trims are evaluated on untrimmed
+geometry (pass 1, `src/core/derive/model.ts:143-145`). The parts are then
+built on trimmed geometry (pass 2, `src/core/derive/model.ts:164-187`).
+
+**Notes / caveats:** extensions and trims add up (`memberGeom.ts:47-48`), but
+connection parts are placed from the node, not from the member end (e.g.
+`centreAt`, `src/core/connections/common.ts:144-147`; the base plate centre
+`src/core/connections/basePlate.ts:42`). A non-zero `startExt` / `endExt` at a
+connected end moves the member end relative to the plates: positive values
+overlap them, negative values leave a gap. Variant "ext30/−20" in §12.4
+starts at x = −30.
+
+### 3.4 End preparations (`src/core/geometry/endPrep.ts`)
+
+`resolveEndCuts(p, m, frame, L, shape)` (`src/core/geometry/endPrep.ts:204-253`)
+gives each end an `EndCut { kind, n, x, angleWeb, angleFlange, copes }`
+(`:64-74`):
+
+- `n` is the outward unit normal of the cut plane in member-local
+  coordinates.
+- `x` is where the cut plane crosses the section centre line.
+
+The cut plane at section point `(y, z)` is at
+`x(y,z) = x − (n_y·y + n_z·z)/n_x` (`cutXAt`, `:103-105`).
+
+- **square**: `n = (∓1, 0, 0)` with `−` at the start; `x = 0` or `L` (`:78-80`).
+- **bevel**: `n = norm(s, tan aF, tan aW)` with `s = −1` at the start and `+1`
+  at the end (`:85-88`). At the start this gives `x = x0 + y·tan aF + z·tan aW`.
+  A positive angle makes the +z (web angle) or +y (flange angle) edge shorter
+  at that end (`:9-13`, `src/core/model/types.ts:97-104`). Angles are clamped
+  to ±85° (`:82`).
+- **mitre** (`mitrePlane`, `:149-166`):
+  - `n_w = norm(d_B − d_A)`, where `d_A` and `d_B` are the directions from the
+    shared node into each member's material.
+  - `P` is the midpoint of the closest points of the two centre lines, when
+    their gap is smaller than the largest section dimension. Otherwise `P` is
+    the node projected onto A.
+  - The plane passes through `P − n_w·gap/2`.
+- **fit** (`fitPlane`, `:169-194`):
+  - The candidate faces of B are `±ŷB` at `yPos` / `yNeg` and `±ẑB` at `h/2`.
+  - On the web side, I sections use `tw/2` and U sections use `−w/2 + tw`
+    (`:179-180`).
+  - It picks the face whose outward normal best matches `d_A`, and needs a
+    dot product of at least 0.2 (`:187-189`).
+  - The plane passes through `onB + face·(dist + gap)`, where `onB` is the
+    closest point on B's centre line. Its normal is `n = −face`.
+- Mitre and fit planes are converted into the member frame. The normal
+  becomes `n_l = (n_w·x̂, n_w·ŷ, n_w·ẑ)` and `x = ((P−O)·n_w)/(x̂·n_w)`
+  (`:227-232`). The cut is rejected (end left square) if `s·n_lx < cos 85°`
+  (`:229`).
+- Copes are notches `{side, depth ≤ 0.45h, length, radius}`, on open sections
+  only (`:237-247`).
+
+When an end is prepared, `memberGeom` moves the origin to the start cut's axis
+point and sets `length = end.x − start.x`. The cuts are re-based to
+`start.x = 0` and `end.x = length` (`src/core/derive/memberGeom.ts:64-77`).
+`cutEnvelope` gives `xMin` / `xMax`: the extreme material over the outline
+(`src/core/geometry/endPrep.ts:259-268`). The **Part** (`linearPart`) then
+moves its frame origin to `xMin` and uses
+`Part.length = xMax − xMin` (overall stock length). The cut `x` values are
+shifted by `−xMin` (`src/core/derive/model.ts:351-374`).
+
+**Notes / caveats:** mitre and fit planes use the raw centre lines
+(`centreLine`, `src/core/geometry/endPrep.ts:120-130`). They replace the
+nominal end, so they override extensions **and** connection trims at that end
+(`:200-203`).
+
+---
+
+## 4. Connection placement
+
+### 4.1 The `Connection` record and the build context
+
+```ts
+interface Connection { id; type; node: Id; main: Id | null; secondary: Id[]; params }   // src/core/model/types.ts:162-171
+interface ConnCtx    { p; c; node: Vec3; v: params; geom(id): MemberGeom }               // src/core/connections/common.ts:88-95
+```
+
+- `node` is the joint. `ctx.node` is its position `N`
+  (`src/core/derive/model.ts:147-152`).
+- `main` is the supporting member, or `null` for concrete or reference
+  supports (`src/core/model/types.ts:166-167`).
+- `secondary[0]` is the supported member. Only the slab bracket uses
+  `secondary[1..]` (stack-joint members to cut back,
+  `src/core/connections/slabBracket.ts:80-88`).
+- `v = resolveParams(c)`: the `ParamSpec` defaults overlaid with `c.params`
+  (`src/core/connections/registry.ts:104-108`).
+- `geom(id)` returns raw geometry in `trims()` and trimmed geometry in
+  `build()` (`src/core/derive/model.ts:155,171`).
+
+### 4.2 How connections get their node and members
+
+`applyConnection(p, memberIds, {type, params, replace})`
+(`src/core/connections/registry.ts:249-287`):
+
+- `slabBracket` is delegated to `autoConnect`, with mullion brackets only
+  (`:253-256`).
+- **Types that need a main member** (`needsMain`, or a custom template with
+  `needsMain`, `:259`) are tried at both member ends (`:266`):
+  - `main` is a member at the node that passes **through** it and is not
+    collinear; otherwise any non-collinear member (`:275`).
+  - `COLLINEAR_TYPES` (`splicePlates`, `endPlateSplice`, `sleeveSplice`,
+    `:52`) instead take a collinear member that ends at the node (`:274`).
+  - `ONE_PER_NODE` types (splices, `crossBrace`, `:55`) are skipped when a
+    same-kind connection already sits at the node (`:278-279`).
+- **Types without a main member** use `endsFor(rule)` (`:78-95`) with
+  `rule = APPLY_END[type](params) ?? 'lower'` (`:66-76`):
+  - `lower` / `upper` by Z (`a.z ≤ b.z ⇒ start` is lower, `:81`).
+  - `free`: no other profiled member at the node (`:83`).
+  - `freeOrLower`: free ends; for vertical members, the lower end only if it
+    is free (`:90-91`).
+- Existing connections on the same member end (`node` and `secondary[0]`)
+  are kept unless `replace` is set (`:260,268-269,282`).
+
+`autoConnect(p, options)` (`src/core/connections/registry.ts:139-218`) works
+node by node:
+
+- **Mullion brackets** (`:153-174`):
+  - With a mullion below the node: `slabBracket` with `mount: 'edge'` and
+    `secondary = [below, above?]`.
+  - Otherwise, with a mullion above it: `mount: 'top'`.
+  - Both use `side = slabSide` and `standoff`.
+- **Post bases**: at the bottom end of a vertical `post` (`:177-185`).
+- **Joints** (`:188-215`):
+  - Every non-vertical member that ends at the node gets `o.joint`.
+  - `main` is chosen in this order: a through vertical member, a vertical
+    member continuing upwards, any vertical member, any through member
+    (`:195-199`).
+  - Braces with an FL, L, CHS or RHS section get `braceJoint` (default
+    `gussetPlate`) (`:201-205`).
+  - When `main` ends at the node and the secondary's `ŷ` is near-vertical,
+    `params.side = sign(ŷz)·(main continues up ? 1 : −1)` (`:206-212`).
+
+### 4.3 Joint quantities shared by the builders
+
+| Symbol | Definition | Source |
+| --- | --- | --- |
+| `dIn`, `end` | `inward(sec, N)`: the wire end nearer to `N`. `dIn = +x̂` at the start, `−x̂` at the end (from the node into the member) | `src/core/connections/common.ts:161-166` |
+| `Cs` | `centreAt(sec, N) = O + x̂·((N−O)·x̂)`: `N` projected onto the section centre line | `src/core/connections/common.ts:144-147` |
+| `halfExtent(g, d)` | `\|d·ŷ\|·w/2 + \|d·ẑ\|·h/2`: bounding-box support distance in the section plane | `src/core/connections/common.ts:150-152` |
+| `face` | `faceDistance(main, N, dIn) = (centreAt(main,N) − N)·dIn + halfExtent(main, dIn)`: distance along `dIn` from `N` to the main member's outer face | `src/core/connections/common.ts:155-158` |
+| `F` | Main face point on the secondary axis: `Cs + dIn·face`. The face plane is taken ⟂ `dIn` | e.g. `src/core/connections/memberJoints.ts:131,290`, `src/core/connections/custom.ts:102` |
+| `depth_main` | `2·halfExtent(main, dIn)`: through-bolt depth of the main member | `src/core/connections/memberJoints.ts:231`, `src/core/connections/kit.ts:424` |
+| joint | `jointOf` / `memberOf` bundle these (`Cs` included) | `src/core/connections/kit.ts:401-421` |
+
+The "face the secondary meets" is therefore the **support plane ⟂ `dIn`** of
+the main member's bounding box (`|dIn·ŷm|`, `|dIn·ẑm|` terms). For square
+framing it is the real face. Only `gussetPlate` picks an actual face normal
+among `±ŷm, ±ẑm` (`src/core/connections/bracing.ts:74-77`). `fitPlane` does
+the same for end preparations (`src/core/geometry/endPrep.ts:181-188`).
+`flangeClamp` requires `|dIn·ẑm| ≥ 0.95` (`src/core/connections/steelJoints.ts:85`).
+
+**Notes / caveats:**
+- For a skewed secondary, `face` is the support plane through the box corner,
+  so the clearance varies across the section.
+- `halfExtent` ignores the main member's axial direction and treats round
+  sections as boxes (`common.ts:150-152`).
+
+### 4.4 The joint end frame (U, V, W): custom templates
+
+`customConnection.build` (`src/core/connections/custom.ts:99-102`):
+
+```
+U = dIn  (along the secondary, away from the main face)
+V = ŷ_sec
+W = ẑ_sec
+O = Cs + U·face          (on the main face, on the secondary's section centre line)
+```
+
+Template variables: user parameters, `h_sec`, `b_sec`, `face`, `h_main`,
+`b_main`, `depth_main = 2·halfExtent(main, dIn)`
+(`src/core/connections/custom.ts:50-62`). Formulas use the safe evaluator
+`evalExpr`: no `eval`, functions `max min abs round floor ceil ceilto sqrt`,
+`x/0 = 0` (`src/core/connections/expr.ts:7-17,21,47`).
+
+```
+ plan view of a transom ending on a mullion (template frame)
+
+        main member
+     +-------------+
+     |             |
+     |      N •----|----O=========================> U = dIn
+     |             |    |  secondary (section centre line)
+     +-------------+    |
+         <- face ->     v  (V = ŷ_sec here; W = ẑ_sec out of page)
+```
+
+**Notes / caveats:** `V` and `W` follow the member's local axes, while `U`
+flips with the end. `(U, V, W)` is right-handed at a member's start
+(`U·(V×W) = +1`) and left-handed at its end (`−1`). Template `v` / `w` values
+are therefore member-local, not joint-local. The same template at both ends
+of a transom puts an off-axis plate on the same side of the member
+(verified: the stiffener at both ends lies at world `Y ∈ [−12, −4]`, §12.4).
+Plate frames stay right-handed because `plateOn` recomputes `z`.
+
+---
+
+## 5. Plates
+
+`PlateOut = { key, name, t, outline (frame x/y), holes: Hole2D[], frame, weldedTo?, assemblyMain? }`
+(`src/core/connections/common.ts:27-38`).
+
+### 5.1 Custom template planes (`buildPlate`, `src/core/connections/custom.ts:115-193`)
+
+| `plane` | Contact corner `P` | `n_out` | Plate x / y | Source |
+| --- | --- | --- | --- | --- |
+| `end` | `O + U·u + V·(v − width/2) + W·(w − height/2)` | `U` | `V` (width), `W` (height) | `:136-140` |
+| `side` | `O + U·u + V·v + W·(w − height/2)` | `V·sgn(v)` (`v = 0 ⇒ +V`) | `U` (width), `W` (height) | `:141-145` |
+| `top` | `O + U·u + W·w + V·(v − height/2)` | `W·sgn(w)` | `U` (width), `V` (height) | `:146-151` |
+
+For `end`, the plate is centred on `(v, w)` and its contact plane is at
+`U = u`. For `side` and `top`, `u` is where the plate **starts** along `U`,
+and the plate grows away from the member axis from its contact plane at
+`V = v` (resp. `W = w`).
+
+- **Bolts** (`:157-191`):
+  - Grid `hx = width/2 + (c − (cols−1)/2)·gauge`,
+    `hy = height/2 + (r − (rows−1)/2)·pitch`.
+  - Head `= P + X·hx + Y·hy + n_out·t`, `dir = −n_out`.
+  - With `through: main | secondary`: `grip = t + depth`, where
+    `depth = 2·halfExtent(target, n_out)`. The member hole is at
+    `contact − n_out·depth/2`.
+  - With `through: concrete`: anchor kind, hole `d + 2`, `length = anchorLength`.
+- **Weld**: `weldTo: main | secondary | <plate key> | none`.
+  `assemblyMain = !weldTo` (`:155-156,192`).
+- **Trim**: `face + cut`, applied to the end at the node (`:78-85`).
+
+**Notes / caveats:** a side or top plate cannot be centred on the member axis.
+For `v ≠ 0` it grows away from the axis, and for `v = 0` it grows towards
+`+V`. The starter template "Bolted end plate with stiffener" sets the
+stiffener `v = '-ts/2'` (`src/core/connections/custom.ts:223`). That puts it
+at `V ∈ [−1.5ts, −0.5ts]` (world `Y ∈ [−12, −4]` for `ts = 8`, §12.4), which
+is 8 mm off-centre under the transom. The template looks like it was written
+assuming a centred plate.
+
+### 5.2 Built-in plate placements (examples; full list in §10)
+
+- **Fin plate** (`src/core/connections/memberJoints.ts:113-141`):
+  - `ys = ŷ_sec·side`, `zs = ẑ_sec`.
+  - `contact = w/2` (side) or `−t/2` (knife).
+  - `P = Cs + ys·contact + dIn·face − zs·H/2`, so the plate starts at the
+    main face.
+  - Frame: `plateOn(P, ys, dIn, zs, t)`, outline `L × H` (`H = height || max(60, round(h_sec))`).
+  - Holes at `(L − e, H/2 + o)`, `e = max(2·d0, 25)`.
+  - `weldedTo` the main member.
+
+```
+ Fin plate, section with dIn towards the viewer (drawn for dIn = +x̂, side = +1: ys → right, zs ↑)
+
+   position = side (contact = w/2)            position = knife (contact = −t/2)
+   +--------+##                               +-----##-----+
+   |  sec   |##  plate: ys ∈ [w/2, w/2+t]     |     ##     |  plate: ys ∈ [−t/2, +t/2]
+   |   •    |##  bolt head at ys = w/2+t      |  •  ##     |  bolt head at ys = w/2 (sec face)
+   |        |##  grip = t + w                 |     ##     |  grip = w
+   +--------+##                               +-----##-----+  (member slot NOT modelled)
+            ^ dir = −ys                                     ^ dir = −ys
+```
+
+Elevation along `dIn`: the plate runs from the main face (`U = face`) to
+`face + L`, with the bolt line at `ub = face + L − e`. The secondary is cut
+back to `U = face + gap` (`:104-107`).
+
+- **Slab bracket**: see §5.3.
+- **End plate** (`src/core/connections/memberJoints.ts:285-307`): contact
+  plane at `F = Cs + dIn·face`, `n_out = dIn`, axes `(ŷ_sec, ẑ_sec)`, centred
+  on `F`, `weldedTo` the secondary.
+- **Base plate** (`src/core/connections/basePlate.ts:36-59`): contact plane
+  through `Pc = N + ŷ·shift.x + ẑ·shift.y`, normal to the member axis,
+  `n_out = dIn`, axes `(ŷ, ẑ)`, centred on `Pc`.
+
+### 5.3 Slab bracket (`src/core/connections/slabBracket.ts:90-226`)
+
+Set-up (`:119-136`):
+
+```
+s     = sign(side)                    zN = ẑ·s   (towards the slab)
+up    = x̂·sign(x̂·Ẑ),  upSign = ±1      vWire = −shift.y·s   (wire line along zN, relative to C)
+edge: C = centreAt(g, N + Ẑ·dz)       (dz default −100: world-Z offset, projected on the axis)
+top : C = centreAt(g, N) + up·(backT + finH/2)
+sideFace = C + ŷ·w/2                  yFin = w/2 + finT/2     (the fin is always on the +ŷ face)
+so, sv, sa = surveyOut, surveyVert, surveyAlong
+```
+
+**Fin plate** (`:141-170`):
+
+- Extents along `zN`: `v0 = −finBack`, and
+  - edge: `v1 = vWire + standoff − backT + so`
+  - top: `v1 = vWire + standoff + 20 + backH + so`
+- Extents along `x̂` (`u0..u1`):
+  - top: `[−finH/2 + sv, finH/2]`, mirrored when `upSign < 0`
+  - edge: `[−finH/2 + min(0, sv·upSign), finH/2 + max(0, sv·upSign)]`
+- Frame: `P = sideFace + x̂·u0 + zN·v0`, `plateOn(P, ŷ, x̂, zN, finT)`.
+- Holes at `(u − u0, −v0)` for `u ∈ offsets(nb, pitch)`, slotted
+  `finSlot` along the plate x (= member axis). The bolt line passes through
+  the member centre line.
+
+**Back plate**:
+
+- edge (`:204-209`):
+  - `slab = C + zN·(vWire + standoff + so) + up·sv + ŷ·sa`
+  - `P = slab + ŷ·(yFin − backW/2) − x̂·backH/2`
+  - Frame: `plateOn(P, −zN, ŷ, x̂, backT)`. The plate lies against the slab
+    face and grows towards the mullion.
+  - Anchor holes at `(ea, backH/2)` and `(backW − ea, backH/2)`, slotted
+    along the plate x (= `ŷ`, along the slab edge).
+- top (`:188-193`):
+  - `base = C − up·(backT + finH/2)` (node level)
+  - `P = base + zN·(vWire + standoff + 20 + so) + ŷ·(yFin − backW/2 + sa) + up·sv`
+  - Frame: `plateOn(P, up, ŷ, zN, backT)`. It sits on the slab top, 20 mm
+    behind the slab edge.
+  - Anchor holes slotted along the plate y (`angle 90` = `zN`, out of plane).
+
+**Bolts and anchors**:
+
+- Fin bolts (`:171-184`): head `sideFace + ŷ·finT + x̂·u`, `dir −ŷ`,
+  `grip finT + w`. Member hole at `C + x̂·u`, `dir ŷ`.
+- Anchors (`:194-222`):
+  - edge: head on the back plate's front face `slab-face point − zN·backT`,
+    `dir zN`.
+  - top: head on the base plate's top face, `dir −up`.
+  - Both: `grip backT`, `length anchorLen`.
+- Trims: `secondary[1..]` are cut back at the node by `gap`
+  (`:78-89`, auto value §9).
+- Assembly: back plate `assemblyMain`, fin `weldedTo` the back plate (`:169,193,209`).
+
+```
+ EDGE mount — plan at bracket level (side = +1: zN = ẑ = +Y; ŷ = +X; x̂ = up, out of the page)
+
+  zN ^
+     |  ///////////////////////// concrete slab //////////////////////////
+     |  ===================================================================  slab face: zN = vWire + standoff + so
+     |                 |######### back plate, backW × backH ###########|     grows towards −zN by backT,
+     |                 +------------------+----+-----------------------+     centred on ŷ = yFin
+     |                                    |fin |
+     |                                    |    |  fin top: zN = vWire + standoff − backT + so
+     |                 +------------------+    |
+     |                 |     mullion      |    |
+     |                 |        C - - - - | o -|- -  bolt axis through C, dir −ŷ
+     |                 |                  |    |     (nb bolts repeat along x̂, out of the page)
+     |                 |                  +----+  fin bottom: zN = v0 = −finBack
+     |                 +------------------+
+     +-----------------------------------------------------------> ŷ
+                                          ^ mullion +ŷ face (ŷ = w/2); fin ŷ ∈ [w/2, w/2 + finT]
+
+ TOP mount — elevation looking along −ŷ (zN →, up ↑)
+                                               slab edge: zN = vWire + standoff
+    mullion                                    |
+    +-----+-----------------------------------------------------------+  up = backT + finH
+    |     |  fin on the mullion's +ŷ face                             |
+    |  o  |  bolts at zN = 0 (through C), slots along up              |
+    |  o  |                                                           |
+    +-----+-----------------------------------------------------------+  up = backT (fin sits on the base plate)
+    |     |                                    |    |### base plate ####|  up ∈ [0, backT] (+ sv)
+    +-----+                                    |====+===================+====  slab top = node level
+ ^ fin starts at zN = v0 = −finBack            |<20>|<----- backH ----->|   20 mm hard-coded
+                                               |   concrete slab        |   (slabBracket.ts:142,190)
+```
+
+**Notes / caveats:**
+- The 20 mm set-back of the top-mount base plate is a hard-coded constant
+  (`slabBracket.ts:142,190`). It is not a parameter.
+- The fin is always on the mullion's `+ŷ` face. There is no `finSide`
+  parameter, unlike the library brackets (`kit.ts:456-468`).
+- `dz` is a world-Z offset projected onto the member axis (`slabBracket.ts:130`).
+
+---
+
+## 6. Holes and slots
+
+| Type | Meaning | Source |
+| --- | --- | --- |
+| `Hole2D {x, y, d, slot?, angle?}` | Plate hole in outline coordinates. `slot` is the **extra** length (overall `d + slot`). `angle` is in degrees from plate x towards plate y. The slot end centres are at `±slot/2` along `(cos a, sin a)` | `src/core/connections/common.ts:7-13`, `src/viewer/meshes.ts:65-89` |
+| `WorldHole {pos, dir, d, slot?, slotDir?}` | Hole in world space. `pos` is on the part's mid-plane or axis. `dir` is the drilling direction | `src/core/connections/common.ts:16-22` |
+| `PartHole {x, y, z, face, d, slot?}` | Hole in a linear part frame. `face` is the axis drilled along | `src/core/derive/model.ts:19-28` |
+
+- **World point → plate hole**: `holeAt(pl, p, d, slot, slotDir)`. It takes
+  `(x, y)` of `toLocal(pl.frame, p)` (any point on the hole axis), and
+  `angle = atan2(sd·y, sd·x)` (default `sd = pl.frame.x`)
+  (`src/core/connections/kit.ts:192-202`).
+- **Member holes**: `memberHole` and `profileHole` (`src/core/connections/kit.ts:284-300`).
+  `out.memberHoles` collects holes per member
+  (`src/core/derive/model.ts:182-186`).
+- **World holes → part holes**: `holesToLocal(frame, holes)`
+  (`src/core/derive/model.ts:121-130`).
+  - `l = toLocal(partFrame, pos)`.
+  - `face = 'y'` if `|dir·ŷ| ≥ |dir·ẑ|`, else `'z'`.
+  - Holes with `|dir·x̂| > 0.5` (axial) are skipped.
+  - Holes are sorted by `x`, `z`, `y`.
+  - Member holes use the part frame (shifted to `xMin` for prepared ends,
+    `src/core/derive/model.ts:196,211`).
+  - Profile parts use their own frame (`:269`).
+- Plates keep `Hole2D` as `Part.plateHoles` (`src/core/derive/model.ts:242`).
+
+**Notes / caveats:** `holesToLocal` keeps `slot` but drops `slotDir`
+(`model.ts:127`). Every consumer of `PartHole` assumes slots along the part x:
+
+- DSTV writes the slot along x (`src/core/fabrication/dstv.ts:196-197` → `:81-91`, angle 0).
+- Machining sets angle 0 (`src/core/fabrication/machining.ts:45-46`).
+- IFC openings are round, so the slot is dropped (`src/core/io/ifcExport.ts:452`).
+
+All current member and profile slots run along `x̂`
+(`kit.ts:288,297`; `memberJoints.ts:228` uses `slotDir: dIn = ±x̂`), so the
+outputs are consistent today. A new type with an across-axis slot would be
+rotated without any warning.
+
+---
+
+## 7. Bolts and anchors
+
+`BoltOut = { key, size, grade, kind: 'bolt'|'anchor', length, grip, positions, dir }`
+(`src/core/connections/common.ts:51-61`).
+
+- `positions[i]` is the **head-side face of the grip**, and the shank runs
+  along unit `dir` (`common.ts:58-60`). `addBolts` normalises `dir`
+  (`src/core/connections/kit.ts:269-281`).
+- The grip is the sum of the plies along `dir`, e.g. `t + w` for a fin plate
+  through the secondary (`src/core/connections/memberJoints.ts:142`) or
+  `t + depth_main` for through-bolts in the main member (`:308`).
+- Bolt length: `boltLength(size, grip) = ceil_step(grip + 2·washer + nut + max(3, 0.3d))`,
+  with step 5 when the result is ≤ 50 and 10 otherwise
+  (`src/core/library/bolts.ts:182-186`). Example: M12 (washer 2.5, nut 10.8)
+  with grip 60 gives 79.4 → 80.
+- Anchors take their length from a parameter, or from
+  `anchorLength(type, size, fixture, given, hef) = given || ceil5(h_ef + fixture + washer + nut + 5)`
+  (`src/core/connections/kit.ts:124-130`). Anchor holes are the fixture hole
+  from the fasteners library, otherwise `hole + 2` (`kit.ts:119-121`). The
+  slab bracket always uses `hole + 2` (`slabBracket.ts:187`).
+- Hole-to-bolt matching in code checks (`src/core/codes/checks.ts:181-198`).
+  A hole counts as served by a bolt when its centre is within
+  `d/2 + slot/2 + 1.5` of the bolt axis and its axial position from the head
+  is in `[−5, grip + 5]`. Otherwise the size is "(assumed)" (`:217`).
+- Viewer (`src/viewer/Viewer.ts:520-521`, `src/viewer/meshes.ts:108-118`):
+  - The shank is a unit +Y cylinder mapped onto `dir`, from `pos` to
+    `pos + dir·length`.
+  - The head occupies `[pos − dir·head, pos]`.
+- IFC (`src/core/io/ifcExport.ts:480-483`): the placement is at
+  `pos − dir·head` with `Axis = dir`, extruded `length + head`.
+
+---
+
+## 8. Trims, welds, assemblies
+
+- **Trims**:
+  - `Trim {member, end, amount}`, positive = shorter
+    (`src/core/connections/common.ts:72-76`).
+  - `end` comes from `inward()` (the wire end nearer to `N`).
+  - `amount` is typically `face + gap` (joints), a plate thickness (base and
+    end plates), or half a gap (splices).
+  - The maximum per end is used (`src/core/derive/model.ts:157-160`), then
+    applied in `memberGeom` (§3.3).
+- **Welds**:
+  - `PlateOut.weldedTo` and `ProfilePartOut.weldedTo` are part refs: `m:<memberId>`
+    or `c:<connId>:<key>` (`common.ts:24-25`).
+  - `ConnectionOut.welds` adds `[ref, ref]` pairs (`common.ts:68`).
+  - A union-find over both builds the shop assemblies
+    (`src/core/derive/model.ts:283-311`). Unknown refs are ignored without a
+    warning (`:297`).
+- **Assembly main** (`src/core/derive/model.ts:314-316`):
+  - The first part with `assemblyMain` wins.
+  - Otherwise: the lowest rank (member 0, profile 1, plate 2, `:448-450`),
+    then the largest mass.
+  - Mark prefix: the member's role prefix, `CL` for a profile, or
+    `bracketPrefix` (default `BK`, `src/core/model/ops.ts:84`) for a plate (`:317-322`).
+- **Material and finish** of connection parts come from the main member, or
+  from `secondary[0]` when there is no main member
+  (`src/core/derive/model.ts:223-225`).
+
+---
+
+## 9. Movement and survey adjustments
+
+### 9.1 Slot and gap sizing
+
+Auto slot (`deriveSlot`, `src/core/movement/slots.ts:45-58`). `H` is the
+one-way demand: the tolerance stack `T`, plus movement `M`, plus the survey
+residual `S`.
+
+```
+required  = 2·H + (H > 0.005 ? slotMargin : 0)
+L_req     = ceil_inc(d0 + required)                (inc = slotIncrement, default 5)
+s (extra) = min(L_req − d0, caps),  rounded to 0.1
+caps: code long slot  L_long − d0                  (codeSlotCap, slots.ts:61-65; 2.5 d)
+      edge            2·(e_edge − 1.5·d0)          (edgeSlotCap, slots.ts:72-75)
+```
+
+Tolerance stack (`toleranceStack`, `src/core/movement/tolerance.ts:39-50`):
+
+- Linear sum `Σ|tᵢ|` or RSS `√Σtᵢ²` over the items in that direction.
+- Structure-scope items (inferred from the name, `src/core/movement/settings.ts:44-51`)
+  are left out for `scope: 'steel'` or when surveyed.
+- Survey accuracy is added when surveyed.
+- Thermal movement: `ΔL = α·ΔT·L` (`src/core/movement/thermal.ts:40-47`).
+
+| Provision | `H` | Caps / rule | Source |
+| --- | --- | --- | --- |
+| Slab bracket fin slot (along the member) | `T(axis dir, design stack)` + `M` if the bracket slides. `M` = thermal over the distance to the fixed bracket + slab deflection if `\|Δz\| > 50` | code long slot (unless `slotCap: none`), edge `finH/2 − maxOff` | `src/core/movement/provisions.ts:247-257,195-204` |
+| Slab bracket anchor slot | `T(along)` for edge mount, `T(out)` for top mount; `d0 = anchor.hole + 2` | edge: `anchorEdge` (edge mount), `backH/2` (top mount). Cast-in channel along the edge: 0 | `provisions.ts:304-311` |
+| Stack-joint gap (`secondary[1]`) | `gap = max(minGap, ceil_inc(closing + T_steel,vertical + margin))`, `closing = ΔL⁺_upper(z_fixedU − z_N) + ΔL⁺_lower(z_N − z_fixedL) + δ_slab` (`δ_slab` only if `\|z_fixedU − z_fixedL\| > 50`) | — | `provisions.ts:445-478` |
+| Fin plate / angle cleat thermal slot (movement end only) | `T_steel(dir) + ΔL_max(\|b−a\|)` | code long slot; edge `min(e, L−e)` (fin) or `g − gap` (cleat) | `provisions.ts:534-571`, `src/core/connections/memberJoints.ts:67-78` |
+
+- The fixed bracket of a mullion is the one set `fixed`, otherwise the highest
+  one not set `sliding` (`provisions.ts:175-181`).
+- The movement end of a joint (`isMovementEnd`, `provisions.ts:505-520`) is
+  only considered for non-vertical members with a joint at both ends. When
+  the other end is not slottable, this end slides. When both ends are
+  slottable, the `end` node slides.
+- Slots go into the fin plate holes along the plate x (`memberJoints.ts:138`)
+  or, for angle cleats, into the supported member's holes along `dIn`
+  (`memberJoints.ts:228`).
+
+**Notes / caveats:** `otherEndJoint` only recognises the six original joint
+types (`JOINT_TYPES`, `src/core/movement/provisions.ts:484`). If the other end
+uses a library joint (e.g. `doubleAngle`, `teeCleat`), that end is treated as
+having no joint. The fin plate or cleat is then not slotted
+(`provisions.ts:513-514`).
+
+### 9.2 Survey offsets (slab brackets only)
+
+`surveyOut` (`so`), `surveyVert` (`sv`) and `surveyAlong` (`sa`) move the
+slab bracket's back plate (§5.3):
+
+- `so` shifts the slab-face plane along `zN` and lengthens the fin
+  (`slabBracket.ts:142,190,205`).
+- `sv` shifts the back plate along `up`, and the fin's `u` range follows it
+  (`:147-154,190,205`).
+- `sa` shifts the back plate along `ŷ` only (`:190,205`). A warning is raised
+  if `|sa| > backW/2 − finT` (`:137`).
+
+Matching (`src/core/survey/match.ts`):
+
+1. **Design reference point** (`bracketReference`, `src/core/connections/slabBracket.ts:240-257`):
+   - `P_ref = centreAt(g, N) + zN·(vWire + standoff) + ŷ·(w/2 + finT/2)`
+   - Directions: `out = horiz(zN)`, `vertical = Ẑ`, `along = horiz(ŷ)`.
+2. **Pairing**: nearest-first and one-to-one, within `matchRadius`
+   (`match.ts:66-90`).
+3. **Deviation**: `deviation = (p_meas − p_design)·{out, vertical, along}`
+   (`:56-59`), and `residual = deviation − applied` (`:118`).
+   `along` is only used with `survey.applyAlong` (`:95`).
+4. **Adjustability left**: `available = provided/2 − (tol + move)` (`:132`).
+5. **`applySurvey`** (`:184-211`):
+   - In mode `exceeding`, a direction is written only if `|dev| > 0.5` and
+     `|dev| > max(0, available) + 0.05`.
+   - In mode `all`, every matched direction is written.
+   - The written value is `round(dev/step)·step`, with step
+     `survey.adjustStep` (default 5).
+
+**Notes / caveats:** the survey splits the deviation along horizontal
+projections and world Z (`slabBracket.ts:249-254`). The geometry applies `so`
+along `zN`, `sv` along the member axis `up`, and `sa` along `ŷ`
+(`slabBracket.ts:190,205`). The two agree only for plumb mullions.
+`P_ref` is at node level, while an edge-mounted bracket sits at `N + dz`
+(`slabBracket.ts:130,248`). That is documented as intended
+(`slabBracket.ts:230`).
+
+---
+
+## 10. Per-type placement
+
+Symbols as in §4.3. Bracket family (`bracketFrame`, `src/core/connections/kit.ts:456-468`):
+
+- `C = centreAt(g, N + dIn·along)`, `zN = ẑ·side`, `y = ŷ·finSide`
+- `D = −shift.y·side + standoff` (the concrete face is `C + zN·D`)
+- `up = x̂·sign(x̂·Ẑ)` if `|x̂·Ẑ| > 0.5`, else `dIn`
+
+`throughMember` (`src/core/connections/concreteBrackets.ts:51-63`): heads at
+`C + up·u + zN·zOff + y·(w/2 + plies)`, `dir −y`, `grip plies + w`, member
+holes on the centre line.
+
+Plate notation in the tables below: `[P | n_out | x, y]` means
+`plateOn(P, n_out, x, y, t)` (§2.1).
+
+### 10.1 Original types
+
+| Type | Members | Plates / profiles | Bolts / holes | Trim |
+| --- | --- | --- | --- | --- |
+| `slabBracket` (`slabBracket.ts:30`) | sec[0] mullion; sec[1..] cut back | §5.3 | fin bolts `−ŷ`; anchors `zN` (edge) / `−up` (top) | sec[1..]: `gap` (`:78-89`) |
+| `baseplate` (`basePlate.ts:6`) | sec[0] post | `[Pc − ŷW/2 − ẑL/2 \| dIn \| ŷ, ẑ]`, `Pc = N + ŷ·shift.x + ẑ·shift.y`, `W = width ‖ ceil10(w+2e+40)`, `L = length ‖ ceil10(h+2e+40)`, welded to post (`:36-59`) | 4 anchors at `e` from the corners, head `+dIn·t`, `dir −dIn`, `grip t` (`:45-69`) | `t` (`:21-25`) |
+| `finPlate` (`memberJoints.ts:85`) | main + sec | §5.2 | head `Cs + ys·(w/2 + t)` (side) or `ys·w/2` (knife), `+dIn·ub + zs·o`, `dir −ys`; sec hole `Cs + dIn·ub + zs·o`, `ub = face + L − e` (`:142-155`) | `face + gap` (`:104-107`) |
+| `angleCleat` (`memberJoints.ts:162`) | main + sec | L frame `{K + yp·b/2 + zp·h/2 − xp·Lc/2; xp = dIn×zp, yp = dIn, zp = ŷ·side}`, `K = Cs + zp·w/2 + dIn·face`: b-leg along the sec side, h-leg on the main face (`:200-206`) | sec: head `K + yp·g + xp·o + zp·t`, `dir −zp`, `grip t + w`, sec hole slotted along `dIn` at the movement end; main: head `K + zp·g + xp·o + dIn·t`, `dir −dIn`, `grip t + depth_main` (`:214-248`) | `face + gap` (`:180-183`) |
+| `endPlate` (`memberJoints.ts:256`) | main + sec | `[F − ŷW/2 − ẑH/2 \| dIn \| ŷ, ẑ]`, welded to sec (`:285-307`) | 2 columns at `±(w/2 + edge)`, head `+dIn·t`, `dir −dIn`, `grip t + depth_main`; main holes at `−dIn·depth/2` (`:293-318`) | `face + t` (`:270-273`) |
+| `welded` (`memberJoints.ts:325`) | main + sec | none; `welds: [sec, main]` (`:339`) | — | `face + gap` (`:331-334`) |
+| `splicePlates` (`splice.ts:10`) | main a, sec b collinear | 2× `[C + ŷ·(±w/2) − dB·L/2 − ẑ·H/2 \| ±ŷ \| dB, ẑ]`, `C = centreAt(b, N)`, loose (`splice.ts:58-71`) | `s = ±(gap/2 + e + i·pitch)`, `e = max(2d0, 30)`; head `C + dB·s + ŷ(w/2 + t)`, `dir −ŷ`, `grip 2t + w`; slot on the `s < 0` (member a) plate holes (`:53-86`) | `gap/2` on both (`:26-33`) |
+| `custom` (`custom.ts:66`) | per template | §5.1 | §5.1 | `face + cut` (`:78-85`) |
+
+### 10.2 Steel to concrete (`src/core/connections/concreteBrackets.ts`)
+
+| Type | Placement | Bolts / anchors | Trim |
+| --- | --- | --- | --- |
+| `helpingHand` (`:75`) | Angle heel `C + zN·D + y·w/2 − up·L/2`; `placeAngle(heel, up, L, legB = y, legH = −zN)`: wall leg on the concrete face, projecting leg on the member side (`:115-118`) | member: `throughMember` with `zOff = D − gM`; angle holes slotted along the angle axis when sliding (`:114,123-132`); anchors head `C + up·u + y·(w/2 + gA) + zN·(D − a.t)`, `dir zN` (`:139-152`) | — |
+| `castInChannel` (`:174`) | edge: back `[C + zN·D + y(yc − W/2) − up·H/2 \| −zN \| y, up]`, fin `[C + y·w/2 − zN·finBack − up·finH/2 \| y \| zN, up]` (`:233-262`). top: base `[C − up(backT + finH/2) + y(yc − W/2) + zN(zc − H/2) \| up \| y, zN]`, `zc = D + chanEdge`, fin on the base plate (`:263-296`) | T-bolts (anchor kind) on the channel line `y = yc ± tPitch/2`, head at the plate face, `dir zN` / `−up`; slots: back across the channel (`up` / `zN`), fin `zN` (edge) / `up` (top) (`:246-306`) | — |
+| `embedPlate` (`:319`) | edge: embed `[C + zN·D + y(yc − W/2) − up·H/2 \| +zN (into concrete) \| y, up]`; top: `[C − up·finH/2 + … + zN(D + 50) \| −up \| y, zN]`; fin as castInChannel, shop weld → `weldedTo embed`, else loose `assemblyMain` (`:370-409`) | studs (anchor kind) head on the embed face, `dir` into the concrete, `length studLen + tE` (`:373-397`); fin holes slotted along `up` (`:410`) | — |
+| `soffitHanger` (`:423`) | `up = −dIn`; soffit plate `[Cn − ŷW/2 − ẑLp/2 \| dIn \| ŷ, ẑ]`, `Cn = centreAt(g, N)`; fins `[Cn + dIn·tP ± ŷ·w/2 − ẑ·finW/2 \| ±ŷ \| ẑ, dIn]` (`:476-532`) | anchors head `+dIn·tP`, `dir up`; bolts at `Cn + dIn·(tP + s)`, `s0 = gap + max(eTop, e + 10)`, slotted along `dIn`, `grip n_fins·finT + w` (`:496-543`) | `plateT + gap` (`:449-452`) |
+| `wallAngle` (`:557`) | Wall plane through `N ⟂ dIn`; heel `Cn + ys·w/2 − ẑ·L/2`; `placeAngle(heel, ẑ, L, legB = ys, legH = dIn)` (`:605-606`) | member: head `Cn + dIn·gM + ẑu + ys(w/2 + a.t)`, `dir −ys`, member slot `slotH` along `x̂`, angle slot `slotV` along the angle (`:613-622`); anchors head `+dIn·a.t`, `dir −dIn` (`:631-640`) | `gap` (`:579-582`) |
+| `adjustableBracket` (`:656`) | wall angle heel `C + zN·D + up·heelUp + y·w/2`, `heelUp = −finH/2 − tB − a.t`, along `y`, `legB = up`, `legH = −zN`; slide `[C − up·finH/2 − zN·finBack + y·w/2 \| −up \| zN, y]`; fin `[C + y·w/2 − zN·finBack − up·finH/2 \| y \| zN, up]` (`:709-745`) | slide-to-angle `dir up`, slotted along `zN`; fin slotted along `up`; member `plies finT + tS`; anchors slotted along `y`, `dir zN`; optional serrated plates (`:746-798`) | — |
+| `stiffenedBase` (`:810`) | as baseplate (`:849-860`); gussets for the first 2 or 4 of `±ŷ, ±ẑ`: `[centre + f·half + dIn·t − n̂·tg/2 \| n̂ \| f, dIn]`, `n̂ = norm(f × dIn)`, welded to the plate and the post (`:885-917`) | 4 or 6 anchors, head `+dIn·t`, `dir −dIn` (`:861-883`) | `t` (`:830-833`) |
+| `anchorPlate` (`:930`) | `[Cn − ŷWp/2 − ẑH/2 \| dIn \| ŷ, ẑ]`, anchors at `(±(w/2 + c), ±(h/2 + c))` per pattern; fin variant `[Cn + ŷw/2 + dIn·t − ẑ·finH/2 \| ŷ \| dIn, ẑ]` (`:976-1029`) | anchors head `+dIn·t`, `dir −dIn`; fin bolt at `Cn + dIn·(t + gap + e + slot/2)`, slotted along `dIn` (`:997-1033`) | `t` (`+gap` with fin) (`:952-957`) |
+
+### 10.3 Steel to steel (`src/core/connections/steelJoints.ts`)
+
+| Type | Placement | Bolts / holes | Trim |
+| --- | --- | --- | --- |
+| `flangeClamp` (`:61`) | Main I/U, `\|dIn·ẑm\| ≥ 0.95`. `Fm = centreAt(main,N) + dIn·halfExtent(main,dIn)`, `A = ŷm`, `Lm = x̂m`, `sl = (Cs − Fm)·Lm`. Top `[Fm − A·W/2 + Lm(sl − L/2) \| dIn \| A, Lm]` welded to sec; clamp plates at `Fm − dIn·tf`, `n_out −dIn`; packers `t = tf` (`:85-152`) | bolts outside the flange tips at `Fm ± A·oc + Lm(sl + u)`, `oc = bf/2 + clear + d/2`; head `+dIn·t`, `dir −dIn`; no member holes (`:99,120-162`) | `face + t` (`:77`) |
+| `doubleAngle` (`:172`) | for `s = ±1`: `zp = s·ŷ`, `xs = dIn × zp`, `K = Cs + zp·w/2 + dIn·face`, `placeAngle(K − xs·Lc/2, xs, Lc, legB = dIn, legH = zp)` (`:213-219`) | main per side: head `K + zp·g + xp·o + dIn·a.t`, `dir −dIn`; sec once: head `Cs + dIn(face + g) + xp·o + ŷ(w/2 + a.t)`, `dir −ŷ`, `grip 2a.t + w` (`:221-238`) | `face + gap` (`:187`) |
+| `teeCleat` (`:252`) | `placeTee(faceC, ẑ, out = −dIn, width = ys)`, `faceC = Cs + dIn·face + ys·stemOff − ẑ·Lc/2`, `stemOff = 0` (knife) or `w/2 + tw/2`; the flange outer face lies on the main face (`:291-300`, `kit.ts:365-374`) | flange: `Cs + dIn·face + ys(stemOff ± gf) + ẑo`, head `+dIn·tf`, `dir −dIn`; stem: `Cs + dIn(face + gs) + ẑo`, head `ys·w/2` or `ys(w/2 + tw)`, `dir −ys` (`:305-332`) | `face + tf + gap` (`:268`) |
+| `seatedAngle` (`:353`) | `nb` = most downward of `±ŷ, ±ẑ` (`:342-346`), `across = dIn × nb`; seat (`n = nb`) and optional top cleat (`n = −nb`): `placeAngle(Cs + dIn·face + n·hb − across·Ls/2, across, Ls, legB = dIn, legH = n)` (`:401-405`) | main head `+dIn·a.t`, `dir −dIn`; vertical: head `−nb(hb [+ a.t])`, `dir nb`, `grip 2hb + a.t·n` (`:406-430`) | `face + gap` (`:370`) |
+| `stubBracket` (`:444`) | stub `sectionFrame(Cs + dIn·face, dIn, sec)` length `Ls`, welded to main; plates `[Cs + dIn·u − YW/2 − ZH/2 \| dIn \| Y, Z]` at `u = face + Ls` (welded to stub) and `face + Ls + t` (welded to sec) (`:483-506`, `kit.ts:377-383`) | head `Cs + Y·by + Z·bz + dIn(face + Ls + 2t)`, `dir −dIn`, `grip 2t` (`:507`) | `face + Ls + 2t` (`:459`) |
+| `saddleBracket` (`:520`) | `A = norm(dIn × x̂m)`, `M = norm(A × dIn)`, `uFar = (centreAt(main,N) − Cs)·dIn − halfExtent(main,dIn)`; back `[Cs + dIn·uFar − A(Hin + t) − M·Hs/2 \| −dIn \| A, M]`; sides `[Cs + s·A·Hin + dIn·uFar − M·Hs/2 \| s·A \| dIn, M]` (`:548-594`) | at `Cs + dIn·(face + gap + e + i·p)`, head `+A(Hin + t)`, `dir −A`, `grip 2t + 2Hin`; optional main bolt at `Cs + dIn·cM` (`:564-601`) | `face + gap` (`:536`) |
+| `shearBlock` (`:613`) | RHS sec only; `[Cs + ŷ·y0 + dIn·face − ẑ·hi \| ŷ \| dIn, ẑ]`, block `y0 = −tb/2`, twin `y0 ∈ {wi − tp, −wi}`, welded to main (`:657-681`) | head `+ŷ·w/2`, `dir −ŷ`, `grip w`; sec holes slotted along `x̂` (`:682-683`) | `face + gap` (`:630`) |
+| `endCap` (`:691`) | `[Cn − ŷW/2 − ẑ(H or W)/2 \| dIn \| ŷ, ẑ]`, `W = w + 2ov`; circle for CHS; vent hole at `Cn` (`:717-734`) | — | `t` (`:702-705`) |
+
+### 10.4 Splices, bracing, hangers
+
+| Type | Placement | Bolts / holes | Trim |
+| --- | --- | --- | --- |
+| `endPlateSplice` (`spliceJoints.ts:50`) | `C = centreAt(b,N)`; plates `[C + dB·u − YW/2 − ZH/2 \| dB \| Y, Z]`: `u = pack/2` (welded to b), `−pack/2 − t` (welded to a), pack at `−pack/2` (`:90-108`) | head `+dB(pack/2 + t)`, `dir −dB`, `grip 2t + pack` (`:109-116`) | `t + pack/2` on both (`:65`) |
+| `sleeveSplice` (`spliceJoints.ts:158`) | sleeve `sectionFrame(C − dB·Ls/2, dB, b)`, length `Ls`, centred on `N` (`:212-214`) | at `C + d·u`, `u = gap/2 + e + i·p` per side; head `+Y·max(w)/2`, `dir −Y`; sleeve holes slotted on the sliding side (the upper member if vertical, `:206-207,216-233`) | `gap/2` on both (`:174`) |
+| `gussetPlate` (`bracing.ts:132`) | `nG = norm(x̂m × dIn)` (towards `ŷs`); `n` = main face normal; `O` on the main face (`:65-77`); gusset `[O + nG((Cs−O)·nG + contact) \| side·nG \| x̂m, n]`, outline = hull of the weld base and bolt capsule (`:164-175`); tubes: knife `[Cs + dIn·tip − wdir·kW/2 − nG·tk/2 \| nG \| dIn, wdir]` (`:184-199`) | holes slotted along `dIn`; head `p + nG(contact + side·t − (p−Cs)·nG)`, `dir −side·nG`, `grip t + tPart` (`:177,204-214`) | flat/angle `clearAt(halfW)`, tube: last bolt + edge + 5 (`:89-111`) |
+| `crossBrace` (`bracing.ts:292`) | `nG = norm(x̂a × x̂b)`; in-plane members at the node joined; plate `[N + nG·side·contact \| side·nG \| ax, nG × ax]`, `contact = max halfExtent(m, nG)` (`:233-238,321-348`) | through member: `±p/2` around `N`; split members after the trim; head `p + nG(side(contact + t) − (p−N)·nG)`, `dir −side·nG`, `grip t + 2contact` (`:265-283,349-361`) | split members: `(tHalf + gap + half·\|wdir·nt\|)/sinθ` (`:274-281`) |
+| `hangerRod`, `tieBack` (`hangers.ts:179,214`) | `nL = norm(dIn × x̂m)`, `wL = norm(nL × dIn)`, `at(u,y,w) = Cs + dIn(face + u) + nL·y + wL·w`; lug `[at(0, yL − tl/2, −Wl/2) \| nL \| dIn, wL]` welded to main; fork boss/cap ⟂ `dIn` at `uEnd` + cheeks at `±nL·yc`; tab/tongue at `nL·(−tp/2)` with the lug offset `yL = −(tp + tl)/2` (`:48-157`) | pin hole `P0 = at(uPin, 0, 0)` slotted along `dIn`; head `P0 + nL·headY`, `dir −nL`, `grip 2(tp + 1.5) + tl` (fork) or `tp + tl` (`:103-169`) | `face + trim` (`:83-86`, `trim` `:67-78`) |
+
+**Notes / caveats:**
+- The knife fin plate (`memberJoints.ts:129-131`) and the tee or knife inserts
+  pass through the secondary's walls. The receiving slot is not modelled as a
+  cut (`docs/CONNECTIONS.md`, "Limits").
+- `side` / `finSide` / custom `v` are member-local, so mirrored joints at the
+  two ends of a member are not mirror images in the joint view.
+
+---
+
+## 11. Consumers of the frames
+
+| Consumer | Mapping | Source |
+| --- | --- | --- |
+| Three.js linear part | `linearMatrix`: basis columns `[ŷ, ẑ, x̂·length]`, translation `origin`. The section outline (x → ŷ, y → ẑ) is extruded along +Z with depth 1. Prepared members use `length = 1` with exact cut geometry | `src/viewer/meshes.ts:38-56,323-330` |
+| Three.js plate | `plateMatrix`: columns `[x, y, z]`, `origin`. The outline is extruded along +Z by `t`, and holes are cut as `slotOutline` | `src/viewer/meshes.ts:58-63,95-105` |
+| IFC linear part | `IfcLocalPlacement(IfcAxis2Placement3D(origin, Axis = x̂, RefDirection = ŷ))`, so IFC local `(X, Y, Z) = (ŷ, ẑ, x̂)`. Parameterised profile extruded `length` along Z; prepared ends use boolean clipping | `src/core/io/ifcExport.ts:404-406` |
+| IFC plate | `IfcAxis2Placement3D(origin, Axis = z, RefDirection = x)`, so `(X, Y, Z) = (x, y, z)`. Arbitrary profile with voids, extruded `t` | `src/core/io/ifcExport.ts:385-390,329-335` |
+| IFC holes in linear parts | Placed in the host placement. face y: at `(−(w/2 + 5), z, x)`, axis host X (= ŷ), depth `w + 10`. face z: at `(y, −(H/2 + 5), x)`, axis host Y (= ẑ). Round only | `src/core/io/ifcExport.ts:439-466` |
+| IFC spatial chain | site → building → storey all identity, so placements are world coordinates. Storeys carry the elevation only; elements are grouped by the storey of their origin Z | `src/core/io/ifcExport.ts:172-191,300-320` |
+| DSTV linear | x from the part frame origin (the physical or extreme start). face y → `v` with `y_v = z + h/2`; face z → `o` with `y_o = y + b/2`. Saw angles web start/end and flange start/end in the ST header. Coped contours on `v`, `o`, `u` | `src/core/fabrication/dstv.ts:155-157,180-199` |
+| DSTV plate | Profile code `B`. `AK` contour and `BO` holes on face `v`, relative to the outline bounding-box minimum. Slots `l` along x, along y (angle ±90), or at an angle | `src/core/fabrication/dstv.ts:119-127,163-172,81-91` |
+| Hole table / machining | Same faces and origins as DSTV. `slotLength = slot + d` | `src/core/fabrication/machining.ts:33-52` |
+| Drawings | Part elevation is local x–z, looking along local +y (the −y side faces the viewer). Plan is local x–y from above. Plates are drawn in outline coordinates with the bounding-box datum. Prepared ends via `sideProfile` / `flangeProfile` | `src/core/drawings/partDrawing.ts:4-7`, `src/core/drawings/views.ts:61-65,283-314` |
+
+**Notes / caveats:** DSTV writes each through hole once, on `v` or `o`, even
+for hollow sections where it passes through two walls (`dstv.ts:195-198`).
+IFC openings for face-y holes always cross the full bounding-box width, and
+ignore the hole's own `y` position (`ifcExport.ts:443-449`).
+
+---
+
+## 12. Worked example (real output)
+
+Model, built in a temporary Vitest file with `createProject`, `addLine`,
+`addConnection` and `deriveModel`. Defaults apply unless listed.
+
+- Mullion `SHS 100x100x5`, role `mullion`: (0,0,0) → (0,0,3500).
+- Transom `RHS 100x50x4`, role `transom`, `rotation 0`: (0,0,1500) →
+  (1500,0,1500). Its start node lies on the mullion, so the mullion is
+  `through` that node.
+- `slabBracket` at the bottom node: `{mount: 'top', side: 1, standoff: 150}`.
+  These are the parameters `autoConnect` gives a bottom node
+  (`registry.ts:165-172`). `applyConnection('slabBracket')` would also add an
+  edge-mount bracket at the top node.
+- `finPlate` at the transom start, `main` = mullion.
+
+No warnings were produced (`dm.warnings = []`).
+
+### 12.1 Members
+
+| | Mullion | Transom |
+| --- | --- | --- |
+| `a`, `b` | (0,0,0), (0,0,3500) | (0,0,1500), (1500,0,1500) |
+| `x̂, ŷ, ẑ` | (0,0,1), (1,0,0), (0,1,0) — vertical rule | (1,0,0), (0,1,0), (0,0,1) |
+| `h`, `w`, `shift` | 100, 100, (0,0) | 100, 50, (0,0) |
+| trims | 0 / 0 | **60** / 0 |
+| frame origin | (0,0,0) | **(60,0,1500)** |
+| physical end / cut length | (0,0,3500) / 3500 | (1500,0,1500) / **1440** |
+| part holes | x = 50 and 120, y = z = 0, face y, d 13 | x = 64, z = −25 and +25, face y, d 13 |
+| DSTV `BO` | `v 50 s 50 13`, `v 120 s 50 13` | `v 64 s 25 13`, `v 64 s 75 13` |
+
+Transom trim:
+
+- `face = (centreAt(mullion,N) − N)·dIn + |dIn·ŷm|·50 + |dIn·ẑm|·50 = 0 + 50 + 0 = 50`.
+- `trim = face + gap = 60` (§4.3, `memberJoints.ts:104-107`).
+- So `O = a + x̂·60` and `L = 1500 − 60` (§3.3).
+
+DSTV `y_v = z + h/2` gives 25 and 75 for the transom, and 0 + 50 = 50 for
+the mullion (§11).
+
+### 12.2 Slab bracket (top mount)
+
+Set-up (§5.3):
+
+- `zN = (0,1,0)`, `up = x̂`.
+- `C = (0,0,0) + up·(10 + 75) = (0,0,85)`.
+- `vWire = 0`, `sideFace = (50,0,85)`, `yFin = 55`.
+
+Fin plate:
+
+- `v0 = −40`, `v1 = 150 + 20 + 150 = 320`, so the fin is 360 along `zN`.
+- `u ∈ [−75, 75]`, so it is 150 along `x̂`.
+- `P = sideFace + x̂·(−75) + zN·(−40) = (50, −40, 10)`.
+
+| Part | frame origin | x / y / z | outline | world extents |
+| --- | --- | --- | --- | --- |
+| fin (t 10, welded to back) | **(60,−40,10)** | (0,0,1) / (0,1,0) / (−1,0,0) | 150 × 360 | X 50…60, Y −40…320, Z 10…160 |
+| back (t 10, `assemblyMain`) | (−25,170,0) | (1,0,0) / (0,1,0) / (0,0,1) | 160 × 150 | X −25…135, Y 170…320, Z 0…10 |
+
+- Fin: `plateOn(P, ŷ, x̂, zN)` gives `z = x̂ × zN = (−1,0,0)`. That points
+  away from `n_out = ŷ = +X`, so the origin moves `+ŷ·10` to (60,−40,10). The
+  contact face X = 50 (the mullion's +y face) is at frame `z = t` (§2.1).
+- Back plate: `base = C − up·85 = (0,0,0)`. The origin is
+  `base + zN·(150 + 20) + ŷ·(55 − 80) = (−25,170,0)`. Its `z = +Z` points
+  along `n_out = up`, so the origin is unchanged.
+
+Holes and bolts:
+
+- Fin holes: `(40, 40)` and `(110, 40)`, `d 13`, `slot 17`, `angle 0` (along `up`).
+  Their mid-thickness centres are (55,0,50) and (55,0,120).
+- Back plate holes: `(35, 75)` and `(125, 75)`, `d 15` (`13 + 2`), `slot 55`,
+  `angle 90` (along `zN`). In world coordinates: (10,245) and (100,245).
+- Fin bolts: M12 at (60,0,50) and (60,0,120), `dir (−1,0,0)`,
+  `grip 10 + 100 = 110`, length `ceil10(110 + 5 + 10.8 + 3.6) = 130`.
+- Mullion holes: (0,0,50) and (0,0,120), `dir (1,0,0)`.
+- Anchors: M12 at (10,245,10) and (100,245,10), `dir (0,0,−1)`, grip 10,
+  length 110.
+
+Auto slots (§9.1, default tolerances `src/core/model/ops.ts:99-115`):
+
+- **Fin slot**: `T_vertical = 20` (slab level). The bracket is the fixed
+  bracket, so `M = 0`.
+  - `required = 40`, `L_req = ceil5(13 + 40) = 55`, so the uncapped extra is 42.
+  - Caps: code long slot `2.5·12 − 13 = 17`; edge `2(75 − 35 − 19.5) = 41`.
+  - Result: **17**.
+- **Anchor slot** (top mount, `out`): `T = √(25² + 5²) = 25.50`.
+  - `L_req = ceil5(15 + 51.0) = 70`, so the extra is **55**.
+  - Edge cap: `2(75 − 22.5) = 105`, so it does not apply.
+
+### 12.3 Fin plate
+
+Set-up (§5.2):
+
+- `Cs = (0,0,1500)`, `dIn = (1,0,0)`, `face = 50`.
+- `ys = (0,1,0)`, `zs = (0,0,1)`.
+- `H = max(60, 100) = 100`, `e = max(26, 25) = 26`.
+- `ub = 50 + 100 − 26 = 124`, offsets ±25.
+
+Frame:
+
+- `P = Cs + ys·25 + dIn·50 − zs·50 = (50,25,1450)`.
+- `z = dIn × zs = (0,−1,0)` points away from `n_out = ys`, so
+  `origin = P + ys·10` = **(50,35,1450)**.
+- Axes `x (1,0,0)`, `y (0,0,1)`, `z (0,−1,0)`.
+- Corners at `z = 0`: (50,35,1450), (150,35,1450), (150,35,1550), (50,35,1550).
+- Corners at `z = t`: the same at Y = 25 (on the transom's +y face).
+
+Holes and bolts:
+
+- Plate holes: `(74, 25)` and `(74, 75)`, `d 13`, `slot 0`. The transom has
+  no joint at its far end, so this is not a movement end
+  (`provisions.ts:513-514`).
+- Hole centres: (124,30,1475) and (124,30,1525).
+- Bolts: at (124,35,1475) and (124,35,1525), `dir (0,−1,0)`, `grip 10 + 50 = 60`,
+  length `ceil10(79.4) = 80`.
+- Transom holes: (124,0,1475) and (124,0,1525), `dir (0,1,0)`.
+- DSTV plate: `AK` (0,0)…(100,100); `BO v 74 s 25 13` and `v 74 s 75 13`.
+
+Assemblies: `M1 = {mullion, fin plate}`: welded, and the main is the member
+(rank 0). `T1 = {transom}`. `BK1 = {back, fin}`: the main is the back plate
+(`assemblyMain`).
+
+### 12.4 Variants (same code, printed)
+
+| Case | Result |
+| --- | --- |
+| Mullion drawn downwards (0,0,3500) → (0,0,0) | origin (0,0,3500), x (0,0,−1), **y (−1,0,0)**, z (0,1,0) |
+| `alignZ −1, offsetY 20` at x = 500 | shift (20, 50), origin (520,50,0) |
+| Transom `rotation 90` | y (0,0,1), z (0,−1,0) |
+| Mullion leaning 50 mm over 3500 mm ("tilt") | x (0.014,0,1), **y (0,1,0), z (−1,0,0.014)** (non-vertical rule, §3.1) |
+| `startExt 30, endExt −20`, 1000 mm line | origin x = −30, length 1010 |
+| Edge-mount bracket at a stack joint (0…3500, 3500…7000) | upper member trim 25 (stack gap: `ceil5(1.89 + 20) = 25`); fin origin (60,−40,3325), 150 × 180; back plate origin (−25,150,3325), z (0,−1,0), so Y 140…150 (against the slab face Y = 150); anchor slot 25 along +X (edge cap `2(35 − 22.5)`); anchors at Y = 140, `dir (0,1,0)` |
+| Fin plate `knife` | origin (50,5,1450), plate Y −5…5; bolt heads at Y = 25, grip 50, length 70 |
+| Custom "end plate + stiffener" at both ends of a 1000 mm transom | trims 62 / 62 (`face 50 + tp 12`); end plates X 50…62 and 938…950; bolts at x = 62 `dir −X` and x = 938 `dir +X`, grip 112, length 140; stiffener Y −12…−4 at both ends (§5.1 caveat) |
+
+---
+
+## 13. Adding a connection type: checklist
+
+1. **Type name**: add it to the `ConnectionType` union
+   (`src/core/model/types.ts:122-157`).
+2. **`ConnectionDef`** (`src/core/connections/common.ts:97-108`):
+   - `type`, `label`, `description`, `needsMain`.
+   - `params: ParamSpec[]` (`:78-86`), with kinds `number`, `select`, `bool`,
+     `profile`, `bolt`, `text`, `template`. Use the `P.*` builders
+     (`src/core/connections/kit.ts:145-154`).
+   - Optional `paramsFor(c, p)` (per-connection specs, as in `custom.ts:72-77`).
+3. **`trims(ctx)`**: it runs on **untrimmed** geometry, and the result is
+   combined by maximum per member end (`src/core/derive/model.ts:153-162`).
+   Return `{member, end: inward(g, N).end, amount}`.
+4. **`build(ctx)`**: it returns a `ConnectionOut` (`common.ts:63-70`) built
+   from trimmed geometry.
+   - Get the joint with `jointOf`, `memberOf` or `bracketFrame`
+     (`kit.ts:401-468`).
+   - Plates: `addPlate({at, outward, x, y, outline})`, with orthogonal `x`, `y`.
+   - Plate holes: `holeAt` from world points on the hole axis.
+   - Member holes: `memberHole`. Profile parts: `placeAngle`, `placeTee`,
+     `sectionFrame` + `profileHole`.
+   - Bolts: `addBolts({heads, dir, grip})`.
+   - Welds: `weldedTo` / `out.welds` with refs `m:<id>` / `c:<cid>:<key>`.
+   - Defaults: `edgeDist`, `pitchFor`, `longSlot`, `shortSlot` (`kit.ts:53-87`).
+   - Report a misfit as a plain string in `out.warnings` (exceptions are also
+     caught, `model.ts:174-178`).
+5. **Register** it in `CONNECTIONS` (`src/core/connections/registry.ts:17-49`).
+   Add it to `COLLINEAR_TYPES`, `ONE_PER_NODE` or `APPLY_END` if needed
+   (`:52-76`).
+6. **Catalogue**: add a `CATALOG` entry (`src/core/connections/catalog.ts:72`).
+   Its keys must equal `CONNECTIONS` (`tests/connectionLibrary.test.ts:262-263`).
+   Give a `joint` kind from `preview.ts:64-131` (or add one there), plus
+   `previewProfiles` and `expectedWarnings`.
+7. **Movement**: if the type should take thermal slots, extend
+   `SLOTTABLE_JOINTS` / `JOINT_TYPES` (`src/core/movement/provisions.ts:483-484`)
+   and the report (`src/core/movement/report.ts:85-99`).
+8. **Tests**: `npx vitest run tests/connectionLibrary.test.ts`.
+   - It derives every type on its preview joint and expects no warnings and
+     at least one part, bolt or weld (`:33-36`).
+   - `runCodeChecks` (`src/core/codes/checks.ts:76`) must give no errors and
+     no unexpected warnings for EC3 and AISC360, and no "assumed" bolts
+     (`:37-47`).
+   - Every preview profile (`:50-57`) and every select / bool variant
+     (`:59-68`) must derive.
+   - `applyConnection` must place the type (`:82-`).
+
+Invariants to respect:
+
+- **Holes and bolts**: every hole lies on a bolt axis within
+  `d/2 + slot/2 + 1.5`, inside `[−5, grip + 5]` from the head
+  (`checks.ts:181-198`).
+  - `positions` are the head-side face of the grip, and `dir` points into the
+    joint.
+  - Linear-part holes must not be axial (`model.ts:126`).
+  - Member slots must run along `x̂` (§6 caveat).
+- **Part refs**: keep `PlateOut.key` / `ProfilePartOut.key` unique within a
+  connection, because they form the part refs `c:<cid>:<key>`
+  (`model.ts:229,256`).
+  - Give one `assemblyMain` per loose assembly.
+  - A weld to a missing ref is silently dropped (`model.ts:297`).
+- **Purity**: do not mutate `ctx.p`. `build` must be deterministic, because
+  marks are numbered from geometry signatures (`model.ts:457-465,528-541`).
+- **Placement**: place from `N` / `Cs` / `face`, not from the physical member
+  end (§3.3 caveat). Use `inward()` for direction and end.
+
+---
+
+## 14. Summary of caveats and inconsistencies
+
+1. **Vertical thresholds disagree**: local axes use 0.9999
+   (`src/core/model/geometry.ts:42`), the rules use 0.995
+   (`src/core/model/ops.ts:428`). Near-plumb mullions (0.81°–5.7°) are
+   treated as mullions but their section turns 90°, with local `z` along ∓X
+   instead of +Y (§12.4 "tilt").
+2. **Comment vs code**: `geometry.ts:37` says vertical local `y = +X`. It is
+   `−X` for members drawn downwards (§12.4).
+3. **Extensions vs connections**: `startExt` / `endExt` are added after the
+   connection trims, while the parts stay node-based
+   (`memberGeom.ts:47-48`, `common.ts:144-147`, `basePlate.ts:42`,
+   `concreteBrackets.ts:849`).
+4. **Custom side/top planes** always grow away from `V = 0` / `W = 0`
+   (`custom.ts:143,148`). The starter template's stiffener (`custom.ts:223`)
+   ends up 8 mm off-centre (Y −12…−4).
+5. **Custom end frame handedness**: `(U, V, W)` is left-handed at member end
+   nodes (`custom.ts:99-101`). Template offsets are member-local.
+6. **Slot directions are lost** for linear parts: `holesToLocal` drops
+   `slotDir` (`model.ts:121-130`). DSTV and machining assume x
+   (`dstv.ts:196-197`, `machining.ts:45-46`), and IFC openings drop slots
+   (`ifcExport.ts:452`).
+7. **Survey directions**: horizontal projections and world Z for the
+   deviation, member-local axes for the applied offsets
+   (`slabBracket.ts:190,205` vs `:249-254`). They agree only for plumb
+   mullions.
+8. **Hard-coded 20 mm** set-back of the top-mount base plate
+   (`slabBracket.ts:142,190`). The slab-bracket fin has no `finSide`
+   (`:135`).
+9. **Movement-end detection** ignores the newer library joints
+   (`provisions.ts:484`).
+10. **Face is a support plane** of the bounding box perpendicular to `dIn`,
+    not the true face, for skewed or round mains (`common.ts:150-158`).
+11. **`plateOn` does not orthogonalise** its in-plane axes
+    (`common.ts:135-141`). `toLocal` assumes orthonormal frames
+    (`geometry.ts:73-76`).
+12. **Knife / tongue / tee-stem slots** in the receiving member are not
+    modelled as cuts (`memberJoints.ts:129-131`, `docs/CONNECTIONS.md`
+    "Limits").
+13. **Trim combination** takes the maximum per end, not the sum
+    (`model.ts:159`). Two connections on one end do not stack their
+    cut-backs.
+14. **IFC face-y openings** cross the full bounding-box width regardless of
+    the hole's `y`. DSTV writes through-holes of hollow sections once
+    (`ifcExport.ts:443-449`, `dstv.ts:195-198`).

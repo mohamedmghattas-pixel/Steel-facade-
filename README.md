@@ -117,12 +117,16 @@ The project file is plain JSON:
 
 Every output is computed from this model by `deriveModel()`, so the 3D view, IFC, drawings, lists and NC files always agree.
 
+Technical documentation:
+- [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
+- Feature references: [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+
 ## Notes and limits
 
 - Rolled-section masses come from catalogue values. All other section properties are computed from the drawn cross-section (including corner radii), which lands within about 1–2 % of supplier tables. Check critical values against the mill or supplier.
 - Connection geometry is for detailing. Have a structural engineer check member sizes, bolts and anchors.
 - DSTV slotted-hole syntax varies between machines. Verify NC files with your post-processor before cutting.
-- DXF import reads LINE, LWPOLYLINE and POLYLINE. Arcs, blocks and text are ignored. DWG is not supported yet: save as DXF first.
+- DXF import reads LINE, LWPOLYLINE and POLYLINE. Arcs, blocks and text are ignored. DWG files are recognised but must be saved as DXF first (see docs/MODEL_MANAGEMENT.md).
 
 ## Roadmap
 

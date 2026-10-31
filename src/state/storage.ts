@@ -27,7 +27,13 @@ export function saveAutosave(p: Project) {
 export function migrateProject(p: Project | null): Project | null {
   if (!p || typeof p !== 'object' || !p.nodes || !p.members) return null;
   const d = defaultSettings();
-  p.settings = { ...d, ...(p.settings ?? {}), assemblyPrefix: { ...d.assemblyPrefix, ...(p.settings?.assemblyPrefix ?? {}) } };
+  p.settings = {
+    ...d,
+    ...(p.settings ?? {}),
+    assemblyPrefix: { ...d.assemblyPrefix, ...(p.settings?.assemblyPrefix ?? {}) },
+    movement: { ...d.movement, ...(p.settings?.movement ?? {}) },
+    galvBath: { ...d.galvBath, ...(p.settings?.galvBath ?? {}) },
+  };
   p.connections ??= {};
   p.grids ??= [];
   p.levels ??= [];
@@ -35,8 +41,24 @@ export function migrateProject(p: Project | null): Project | null {
   p.underlays ??= [];
   p.info ??= { name: 'Project', number: '', client: '', designer: '' };
   const dd = defaultDrawingSet();
-  p.drawings = { settings: { ...dd.settings, ...(p.drawings?.settings ?? {}) }, revisions: p.drawings?.revisions ?? {} };
+  p.drawings = {
+    ...dd,
+    ...(p.drawings ?? {}),
+    settings: { ...dd.settings, ...(p.drawings?.settings ?? {}) },
+    revisions: p.drawings?.revisions ?? {},
+  };
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [] };
+  p.workPlanes ??= [];
+  p.plates ??= {};
+  p.survey ??= { points: [], matchRadius: 300 };
+  p.survey.points ??= [];
+  p.survey.matchRadius ??= 300;
+  p.phases ??= [];
+  p.batches ??= [];
+  p.markLocks ??= {};
+  p.clashes ??= { clearance: 10, issues: [] };
+  p.clashes.issues ??= [];
+  p.clashes.clearance ??= 10;
   return p;
 }
 

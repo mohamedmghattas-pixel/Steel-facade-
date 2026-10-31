@@ -38,6 +38,7 @@ import {
   saveProjectFile,
 } from '../ui/actions';
 import { codeChecks } from './checks';
+import { TOOL_MODULES } from './modules';
 
 type Json = Record<string, unknown>;
 
@@ -58,7 +59,7 @@ const memberFilter = {
 } as const;
 const CONN_TYPES = Object.keys(CONNECTIONS) as ConnectionType[];
 
-export const TOOLS: Anthropic.Beta.BetaTool[] = [
+const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'get_model_summary',
     description:
@@ -354,6 +355,9 @@ export const TOOLS: Anthropic.Beta.BetaTool[] = [
     input_schema: { type: 'object', properties: { action: { type: 'string', enum: ['undo', 'redo', 'load_sample'] }, steps: { type: 'integer' } }, required: ['action'] },
   },
 ];
+
+/** Every tool: the core set plus the feature modules (see ./modules). */
+export const TOOLS: Anthropic.Beta.BetaTool[] = [...BASE_TOOLS, ...TOOL_MODULES.flatMap((m) => m.tools)];
 
 // ---------------------------------------------------------------------------
 
@@ -746,6 +750,10 @@ export async function runTool(name: string, input: Json): Promise<string> {
       for (let i = 0; i < n; i++) (input.action === 'undo' ? st().undo : st().redo)();
       return out({ [String(input.action)]: n });
     }
+  }
+  for (const m of TOOL_MODULES) {
+    const handler = m.run[name];
+    if (handler) return out(await handler(input));
   }
   throw new Error(`Unknown tool ${name}`);
 }

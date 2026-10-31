@@ -15,6 +15,7 @@ import type {
   ParamValue,
   Project,
   ProjectSettings,
+  MovementSettings,
   DrawingSet,
   Vec3,
   WorkPlane,
@@ -69,6 +70,28 @@ export function defaultSettings(): ProjectSettings {
     ],
     gridStep: 50,
     designCode: 'auto',
+    movement: defaultMovement(),
+    galvBath: { length: 7000, width: 1500, depth: 2500 },
+    stock: [],
+  };
+}
+
+/** Typical facade movement and tolerance assumptions — to be replaced by the project specification. */
+export function defaultMovement(): MovementSettings {
+  return {
+    tempInstall: 15,
+    tempMin: -20,
+    tempMax: 60,
+    slabDeflection: 20,
+    storeyDrift: 10,
+    combine: 'rss',
+    tolerances: [
+      { id: 'tol-slab-out', name: 'Slab edge position, out of plane', value: 25, direction: 'out', source: 'EN 13670 / ACI 117 (typical)' },
+      { id: 'tol-slab-level', name: 'Slab edge level', value: 20, direction: 'vertical', source: 'EN 13670 / ACI 117 (typical)' },
+      { id: 'tol-anchor', name: 'Anchor setting-out along the edge', value: 10, direction: 'along', source: 'Project specification' },
+      { id: 'tol-fab', name: 'Steel fabrication', value: 2, direction: 'along', source: 'EN 1090-2 / AISC 303' },
+      { id: 'tol-erect', name: 'Steel erection', value: 5, direction: 'out', source: 'EN 1090-2 / AISC 303' },
+    ],
   };
 }
 
@@ -89,6 +112,9 @@ export function defaultDrawingSet(): DrawingSet {
       extraNotes: [],
     },
     revisions: {},
+    edits: {},
+    cuts: [],
+    templates: [],
   };
 }
 
@@ -107,6 +133,13 @@ export function createProject(name = 'New facade project'): Project {
     settings: defaultSettings(),
     drawings: defaultDrawingSet(),
     library: { presets: [], templates: [], profiles: [] },
+    workPlanes: [],
+    plates: {},
+    survey: { points: [], matchRadius: 300 },
+    phases: [],
+    batches: [],
+    markLocks: {},
+    clashes: { clearance: 10, issues: [] },
   };
 }
 

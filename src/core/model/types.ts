@@ -78,6 +78,40 @@ export interface Member {
   /** Optional source layer (DXF import) or user tag. */
   layer?: string;
   name?: string;
+  /** End preparations (cuts, mitres, copes, fitting). Absent = square cut. */
+  startPrep?: EndPrep;
+  endPrep?: EndPrep;
+  /** Erection phase (Project.phases id), zone tag and delivery batch (Project.batches id). */
+  phase?: Id;
+  zone?: string;
+  batch?: Id;
+  /** Manual assembly mark; overrides automatic numbering for this member's assembly. */
+  markOverride?: string;
+}
+
+// ---------------------------------------------------------------------------
+// End preparations (modelling)
+
+export type EndPrepKind = 'square' | 'bevel' | 'mitre' | 'cope' | 'fit';
+
+/**
+ * How a member end is prepared. Angles are saw angles from square, degrees:
+ * `angleWeb` rotates the cut about local z (seen in the web / side view),
+ * `angleFlange` about local y (seen from above).
+ */
+export interface EndPrep {
+  kind: EndPrepKind;
+  angleWeb?: number;
+  angleFlange?: number;
+  /** Member the end is mitred against or fitted to. */
+  to?: Id;
+  /** Cope (notch) size for 'cope': depth into the section and length along the member, mm. */
+  copeDepth?: number;
+  copeLength?: number;
+  /** Which flange is coped: +z (top) / -z (bottom) / both. */
+  copeSide?: 'top' | 'bottom' | 'both';
+  /** Gap left at the end, mm (fit / mitre). */
+  gap?: number;
 }
 
 export type ConnectionType =
@@ -191,6 +225,134 @@ export interface WorkPlane {
   offset: number;
 }
 
+/** A user work plane: origin and in-plane axes (unit vectors, x ⟂ y). Normal = x × y. */
+export interface NamedWorkPlane {
+  id: Id;
+  name: string;
+  origin: Vec3;
+  xAxis: Vec3;
+  yAxis: Vec3;
+}
+
+// ---------------------------------------------------------------------------
+// Free plates, bent plates and stiffeners (first-class parts)
+
+export interface PlateBend {
+  /** Bend line in outline coordinates (from a to b). */
+  a: Vec2;
+  b: Vec2;
+  /** Bend angle in degrees (positive folds towards +z of the plate), inner radius mm. */
+  angle: number;
+  radius: number;
+}
+
+export interface FreePlate {
+  id: Id;
+  name: string;
+  kind: 'plate' | 'bent' | 'stiffener';
+  /** Plate coordinate system in world space; the plate occupies local z ∈ [0, t]. */
+  origin: Vec3;
+  xAxis: Vec3;
+  yAxis: Vec3;
+  /** Flat (unfolded) outline, counter-clockwise, in plate x/y. */
+  outline: Vec2[];
+  t: number;
+  material: string;
+  finish: Finish;
+  holes: { x: number; y: number; d: number; slot?: number; angle?: number }[];
+  bends: PlateBend[];
+  /** Member this plate is shop-welded to (makes it part of that member's assembly). */
+  weldedTo?: Id;
+  phase?: Id;
+  batch?: Id;
+}
+
+// ---------------------------------------------------------------------------
+// Movement, tolerances and site survey
+
+export interface ToleranceItem {
+  id: Id;
+  name: string;
+  /** ± deviation, mm. */
+  value: number;
+  /** Direction it acts in, relative to the facade: along it, vertical, or out of plane. */
+  direction: 'along' | 'vertical' | 'out';
+  /** Where the value comes from (standard clause, spec). */
+  source?: string;
+}
+
+export interface MovementSettings {
+  /** Steel temperature at installation and design extremes, °C. */
+  tempInstall: number;
+  tempMin: number;
+  tempMax: number;
+  /** Vertical slab-edge deflection the brackets must accommodate (live load + creep), mm. */
+  slabDeflection: number;
+  /** In-plane inter-storey drift, mm. */
+  storeyDrift: number;
+  /** Combine tolerances by straight sum or root-sum-square. */
+  combine: 'linear' | 'rss';
+  tolerances: ToleranceItem[];
+}
+
+/** A surveyed point on the as-built structure (e.g. slab edge), with an optional design position. */
+export interface SurveyPoint {
+  id: Id;
+  name: string;
+  p: Vec3;
+  design?: Vec3;
+}
+
+export interface SurveySet {
+  points: SurveyPoint[];
+  /** Brackets are matched to the nearest survey point within this distance, mm. */
+  matchRadius: number;
+  source?: string;
+  importedAt?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Phases, delivery batches, mark locking, clashes
+
+export interface Phase {
+  id: Id;
+  name: string;
+  /** Erection order (1 = first). */
+  sequence: number;
+  color?: string;
+}
+
+export interface DeliveryBatch {
+  id: Id;
+  name: string;
+  date?: string;
+  phase?: Id;
+  notes?: string;
+}
+
+export interface ClashIssue {
+  id: Id;
+  /** BCF topic GUID. */
+  guid: string;
+  title: string;
+  kind: 'hard' | 'clearance';
+  status: 'open' | 'resolved' | 'ignored';
+  /** Part refs / reference element ids involved. */
+  a: string;
+  b: string;
+  pos: Vec3;
+  /** Penetration depth (hard) or gap (clearance), mm. */
+  distance: number;
+  created: string;
+  comment?: string;
+}
+
+export interface ClashSettings {
+  /** Required clearance to reference elements, mm. */
+  clearance: number;
+  issues: ClashIssue[];
+}
+
 /** An imported reference model (concrete, primary steel). Bytes live in IndexedDB. */
 export interface ReferenceModel {
   id: Id;
@@ -250,6 +412,18 @@ export interface ProjectSettings {
   gridStep: number;
   /** Code used for detailing checks and defaults; 'auto' follows the profile library in use. */
   designCode: 'auto' | 'AISC360' | 'EC3';
+  movement: MovementSettings;
+  /** Galvanizing bath inside dimensions, mm (dip size checks). */
+  galvBath: { length: number; width: number; depth: number };
+  /** Stock on hand for nesting; qty -1 = unlimited. Empty = use stockLengths. */
+  stock: StockItem[];
+}
+
+export interface StockItem {
+  profile: string;
+  length: number;
+  qty: number;
+  material?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -298,6 +472,51 @@ export interface DrawingSet {
   settings: DrawingSettings;
   /** Revision history keyed by drawing id (e.g. "asm-M1", "part-m1", "ga-front"). */
   revisions: Record<string, DrawingRevision[]>;
+  /** Manual edits per drawing id, applied on top of the generated sheet. */
+  edits: Record<string, DrawingEdits>;
+  /** User section cuts and detail callouts in the GA. */
+  cuts: GaCut[];
+  /** Company sheet templates; the active one is used for every sheet. */
+  templates: SheetTemplate[];
+  activeTemplate?: Id;
+}
+
+/** Manual drawing edits. Keys are stable ids of generated views / dimensions. */
+export interface DrawingEdits {
+  /** View offsets on the sheet, mm. */
+  views: Record<string, Vec2>;
+  /** Dimension line offsets (perpendicular shift), mm. */
+  dims: Record<string, number>;
+  /** Generated items the user removed. */
+  hidden: string[];
+  notes: { id: Id; p: Vec2; text: string; h?: number; leader?: Vec2 }[];
+  clouds: { id: Id; pts: Vec2[]; rev: string }[];
+}
+
+/** A section cut or detail callout placed on the GA. */
+export interface GaCut {
+  id: Id;
+  name: string;
+  kind: 'section' | 'detail';
+  /** Section: cut line in world space (a → b) and look depth; detail: centre and radius. */
+  a: Vec3;
+  b: Vec3;
+  depth: number;
+  scale: number;
+}
+
+/** A company sheet template: title block layout, logo and fixed notes. */
+export interface SheetTemplate {
+  id: Id;
+  name: string;
+  /** Title block fields: label and value source (project field or fixed text), in grid cells. */
+  fields: { label: string; source: string; col: number; row: number; w: number; h: number }[];
+  /** Title block width / height, mm. */
+  width: number;
+  height: number;
+  /** Logo as data URL (PNG/SVG), placed in the title block. */
+  logo?: string;
+  notes: string[];
 }
 
 export interface ProjectInfo {
@@ -321,4 +540,12 @@ export interface Project {
   settings: ProjectSettings;
   drawings: DrawingSet;
   library: ProjectLibrary;
+  workPlanes: NamedWorkPlane[];
+  plates: Record<Id, FreePlate>;
+  survey: SurveySet;
+  phases: Phase[];
+  batches: DeliveryBatch[];
+  /** Locked marks: assembly/part signature → mark, kept stable through renumbering. */
+  markLocks: Record<string, string>;
+  clashes: ClashSettings;
 }

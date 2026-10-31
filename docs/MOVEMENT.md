@@ -126,7 +126,9 @@ from the slab above → 1.89 + 20 = 21.9 → **25 mm**.
 ### Transoms and rails (fin plate, angle cleat)
 
 A member jointed at both ends gets **one slotted end** (*Movement end: auto*): the joint at the
-member's end node, or the only slottable end if the other joint is an end plate / welded. The slot
+member's end node, or the only slottable end (fin plate, angle cleat) if the other joint is not
+slottable. Any connection with a main member counts as a joint there — end plate, welded, the
+library joints (double angle, tee cleat, …) — as do custom templates. The slot
 is sized for ± (ΔL_max + T_steel) along the member axis. The fin plate gets the slot in the plate;
 the angle cleat gets it in the **supported member's** holes (the slot must run along the member
 axis; the cleat holes stay round). Sample: 1.5 m bay → 2·(2 + 0.81) = 5.6 → 13 + 5.6 → 20 mm
@@ -170,7 +172,11 @@ take ±25.5 mm out of plane — which is exactly what the survey workflow addres
    level, on the fin line — is paired one-to-one, nearest first, with a survey point within
    `matchRadius` (300 mm). A point's design position is used for matching and as the reference
    when given; otherwise the bracket's reference point is.
-3. **Decompose** the deviation (surveyed − design) into out (towards the slab), vertical and along.
+3. **Decompose** the deviation (surveyed − design) into out (towards the slab), vertical and along,
+   on the bracket's own axes — the mullion's local z towards the slab, its axis pointing up and its
+   local +y — the axes the adjustments move the bracket along, so applied adjustments reproduce the
+   deviation on leaning mullions too (for a plumb mullion: horizontal normal, world Z, horizontal
+   facade direction).
    *Along* is ignored unless enabled: it only means something when the points mark anchor /
    channel positions rather than any point on the slab edge.
 4. **Adjustability left** per direction = provision/2 − (T_residual + M), where T_residual is the

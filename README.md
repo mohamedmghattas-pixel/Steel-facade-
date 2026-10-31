@@ -11,7 +11,12 @@ Everything runs in the browser. There is no server: projects autosave to the bro
 
 ## Run it
 
-**On your own computer (all features).** Install [Node.js](https://nodejs.org) 22 or newer, then:
+**One file, no installation.** `npm run build:offline` produces `dist-offline/FacadeSteel.html` (about 10 MB). Everything is embedded in it: the code, the IFC engine (WebAssembly) and the PDF reader. Copy the file anywhere and double-click it to open it in Chrome or Edge.
+- It works offline.
+- Projects autosave in that browser; use File → Save project to keep a `.json` copy.
+- The chat assistant needs an internet connection and an Anthropic API key.
+
+**From source (for development).** Install [Node.js](https://nodejs.org) 22 or newer, then:
 
 ```bash
 git clone https://github.com/mohamedmghattas-pixel/Steel-facade-.git

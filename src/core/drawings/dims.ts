@@ -5,7 +5,7 @@
  * bottom-left.
  */
 import type { Vec2 } from '../model/types';
-import type { DEnt, DLayer } from './types';
+import type { DEnt, DLayer, EntTag } from './types';
 import { TEXT } from './standards';
 
 /** Approximate advance width of ISO 3098 type B lettering. */
@@ -17,13 +17,49 @@ const ARROW_W = 0.45;
 
 export class Sheet {
   ents: DEnt[] = [];
+  /** Edit tags stamped on every entity added (see EntTag). */
+  tag: EntTag = {};
+  /** Title block size of the sheet template (layout keeps clear of it). */
+  tb = { w: 180, h: 40 };
+  private seq = new Map<string, number>();
   constructor(
     public w: number,
     public h: number,
+    /** Name used in generated ids ("dim:<name>:3"). */
+    public name = 'sheet',
   ) {}
 
+  /** Runs `fn` with extra tags on everything it draws. */
+  withTag<T>(tag: EntTag, fn: () => T): T {
+    const prev = this.tag;
+    this.tag = { ...prev, ...tag };
+    try {
+      return fn();
+    } finally {
+      this.tag = prev;
+    }
+  }
+
+  /** Next id in a per-sheet sequence: "dim:elevation:1", "dim:elevation:2" … */
+  nextId(kind: string): string {
+    const n = (this.seq.get(kind) ?? 0) + 1;
+    this.seq.set(kind, n);
+    return `${kind}:${this.name}:${n}`;
+  }
+
+  /** Adds an entity with the current tags. */
+  push(e: DEnt) {
+    const t = this.tag;
+    this.ents.push(t.id || t.group || t.shift || t.stretch ? { ...e, ...t } : e);
+  }
+
   line(a: Vec2, b: Vec2, layer: DLayer = 'visible') {
-    this.ents.push({ t: 'line', a: { ...a }, b: { ...b }, layer });
+    this.push({ t: 'line', a: { ...a }, b: { ...b }, layer });
+  }
+
+  /** Extension line of a dimension: `b` is the end at the dimension line. */
+  extLine(a: Vec2, b: Vec2) {
+    this.withTag({ stretch: true }, () => this.line(a, b, 'dim'));
   }
 
   rect(x: number, y: number, w: number, h: number, layer: DLayer = 'visible') {
@@ -41,16 +77,21 @@ export class Sheet {
 
   poly(pts: Vec2[], closed: boolean, layer: DLayer = 'visible', fill = false) {
     if (pts.length < 2) return;
-    this.ents.push({ t: 'poly', pts: pts.map((p) => ({ ...p })), closed, layer, fill: fill || undefined });
+    this.push({ t: 'poly', pts: pts.map((p) => ({ ...p })), closed, layer, fill: fill || undefined });
   }
 
   circle(c: Vec2, r: number, layer: DLayer = 'visible', fill = false) {
-    this.ents.push({ t: 'circle', c: { ...c }, r, layer, fill: fill || undefined });
+    this.push({ t: 'circle', c: { ...c }, r, layer, fill: fill || undefined });
   }
 
   text(p: Vec2, text: string, h: number = TEXT.small, anchor: 'start' | 'middle' | 'end' = 'start', layer: DLayer = 'text', rot = 0, bold = false) {
     if (!text) return;
-    this.ents.push({ t: 'text', p: { ...p }, text, h, anchor, rot: rot || undefined, layer, bold: bold || undefined });
+    this.push({ t: 'text', p: { ...p }, text, h, anchor, rot: rot || undefined, layer, bold: bold || undefined });
+  }
+
+  image(p: Vec2, w: number, h: number, href: string, layer: DLayer = 'thin') {
+    if (!href || w <= 0 || h <= 0) return;
+    this.push({ t: 'image', p: { ...p }, w, h, href, layer });
   }
 
   /** Hole or obround slot outline (`len` = extra length along `angle`), with centre lines. */
@@ -130,14 +171,27 @@ export function dimLinear(
   dir: 'h' | 'v',
   at: number,
   value: number,
-  opts: { textH?: number; label?: string; shift?: number } = {},
+  opts: { textH?: number; label?: string; shift?: number; id?: string } = {},
 ) {
+  asDim(s, dir, opts.id, () => drawLinear(s, a, b, dir, at, value, opts));
+}
+
+/**
+ * Runs the drawing of one dimension with its stable id (unless it is part of a
+ * chain that already has one) and the axis its dimension line can be offset along.
+ */
+export function asDim(s: Sheet, dir: 'h' | 'v', id: string | undefined, fn: () => void) {
+  if (s.tag.shift) return fn();
+  s.withTag({ id: id ?? s.nextId('dim'), shift: dir === 'h' ? 'y' : 'x' }, fn);
+}
+
+function drawLinear(s: Sheet, a: Vec2, b: Vec2, dir: 'h' | 'v', at: number, value: number, opts: { textH?: number; label?: string; shift?: number }) {
   const th = opts.textH ?? TEXT.small;
   const label = opts.label ?? fmtLen(value);
   if (dir === 'h') {
     for (const p of [a, b]) {
       const sg = Math.sign(at - p.y) || 1;
-      s.line({ x: p.x, y: p.y + sg * 1 }, { x: p.x, y: at + sg * 2 }, 'dim');
+      s.extLine({ x: p.x, y: p.y + sg * 1 }, { x: p.x, y: at + sg * 2 });
     }
     const [l, r] = a.x <= b.x ? [a.x, b.x] : [b.x, a.x];
     const span = r - l;
@@ -156,7 +210,7 @@ export function dimLinear(
   } else {
     for (const p of [a, b]) {
       const sg = Math.sign(at - p.x) || 1;
-      s.line({ x: p.x + sg * 1, y: p.y }, { x: at + sg * 2, y: p.y }, 'dim');
+      s.extLine({ x: p.x + sg * 1, y: p.y }, { x: at + sg * 2, y: p.y });
     }
     const [lo, hi] = a.y <= b.y ? [a.y, b.y] : [b.y, a.y];
     const span = hi - lo;
@@ -177,54 +231,61 @@ export function dimLinear(
 }
 
 /** Chain of consecutive dimensions through sorted paper points. */
-export function dimChain(s: Sheet, pts: Vec2[], values: number[], dir: 'h' | 'v', at: number, textH: number = TEXT.small) {
-  for (let i = 0; i < pts.length - 1; i++) {
-    const span = dir === 'h' ? Math.abs(pts[i + 1].x - pts[i].x) : Math.abs(pts[i + 1].y - pts[i].y);
-    if (span < 0.2) continue;
-    dimLinear(s, pts[i], pts[i + 1], dir, at, values[i], { textH });
-  }
+export function dimChain(s: Sheet, pts: Vec2[], values: number[], dir: 'h' | 'v', at: number, textH: number = TEXT.small, id?: string) {
+  asDim(s, dir, id, () => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      const span = dir === 'h' ? Math.abs(pts[i + 1].x - pts[i].x) : Math.abs(pts[i + 1].y - pts[i].y);
+      if (span < 0.2) continue;
+      dimLinear(s, pts[i], pts[i + 1], dir, at, values[i], { textH });
+    }
+  });
 }
 
 /**
  * ISO 129-1 running dimensions: common origin marked with a small circle,
  * single dimension line, values at the arrow ends.
  */
-export function dimRunning(s: Sheet, pts: Vec2[], values: number[], dir: 'h' | 'v', at: number, textH: number = TEXT.small) {
+export function dimRunning(s: Sheet, pts: Vec2[], values: number[], dir: 'h' | 'v', at: number, textH: number = TEXT.small, id?: string) {
   if (pts.length < 2) return;
-  const first = pts[0];
-  const last = pts[pts.length - 1];
-  if (dir === 'h') s.line({ x: first.x, y: at }, { x: last.x, y: at }, 'dim');
-  else s.line({ x: at, y: first.y }, { x: at, y: last.y }, 'dim');
-  pts.forEach((p, i) => {
-    if (dir === 'h') {
-      const sg = Math.sign(at - p.y) || 1;
-      s.line({ x: p.x, y: p.y + sg }, { x: p.x, y: at + sg * 2 }, 'dim');
-      if (i === 0) s.circle({ x: p.x, y: at }, 0.8, 'dim');
-      else {
-        s.arrow({ x: p.x, y: at }, { x: 1, y: 0 });
-        s.text({ x: p.x - 0.8, y: at + sg * 1.2 }, fmtLen(values[i]), textH, sg > 0 ? 'start' : 'end', 'dim', 90);
+  asDim(s, dir, id, () => {
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    if (dir === 'h') s.line({ x: first.x, y: at }, { x: last.x, y: at }, 'dim');
+    else s.line({ x: at, y: first.y }, { x: at, y: last.y }, 'dim');
+    pts.forEach((p, i) => {
+      if (dir === 'h') {
+        const sg = Math.sign(at - p.y) || 1;
+        s.extLine({ x: p.x, y: p.y + sg }, { x: p.x, y: at + sg * 2 });
+        if (i === 0) s.circle({ x: p.x, y: at }, 0.8, 'dim');
+        else {
+          // Arrowheads point away from the origin (both directions are allowed).
+          s.arrow({ x: p.x, y: at }, { x: p.x < first.x ? -1 : 1, y: 0 });
+          s.text({ x: p.x - 0.8, y: at + sg * 1.2 }, fmtLen(values[i]), textH, sg > 0 ? 'start' : 'end', 'dim', 90);
+        }
+      } else {
+        const sg = Math.sign(at - p.x) || 1;
+        s.extLine({ x: p.x + sg, y: p.y }, { x: at + sg * 2, y: p.y });
+        if (i === 0) s.circle({ x: at, y: p.y }, 0.8, 'dim');
+        else {
+          s.arrow({ x: at, y: p.y }, { x: 0, y: p.y < first.y ? -1 : 1 });
+          s.text({ x: at - 1.2, y: p.y + 0.8 }, fmtLen(values[i]), textH, 'end', 'dim');
+        }
       }
-    } else {
-      const sg = Math.sign(at - p.x) || 1;
-      s.line({ x: p.x + sg, y: p.y }, { x: at + sg * 2, y: p.y }, 'dim');
-      if (i === 0) s.circle({ x: at, y: p.y }, 0.8, 'dim');
-      else {
-        s.arrow({ x: at, y: p.y }, { x: 0, y: 1 });
-        s.text({ x: at - 1.2, y: p.y + 0.8 }, fmtLen(values[i]), textH, 'end', 'dim');
-      }
-    }
+    });
   });
 }
 
 /** ISO 6433 item reference: balloon with the mark, leader ending in a dot on the part. */
-export function balloon(s: Sheet, on: Vec2, at: Vec2, label: string, h: number = TEXT.normal) {
+export function balloon(s: Sheet, on: Vec2, at: Vec2, label: string, h: number = TEXT.normal, id?: string) {
   const r = Math.max(h * 1.15, (textWidth(label, h) + 2) / 2);
   const d = Math.hypot(on.x - at.x, on.y - at.y) || 1;
   const edge = { x: at.x + ((on.x - at.x) / d) * r, y: at.y + ((on.y - at.y) / d) * r };
-  s.circle(on, 0.6, 'dim', true);
-  s.line(on, edge, 'dim');
-  s.circle(at, r, 'dim');
-  s.text({ x: at.x, y: at.y - h / 2 }, label, h, 'middle', 'text');
+  s.withTag({ id: id ?? `balloon:${s.name}:${label}` }, () => {
+    s.circle(on, 0.6, 'dim', true);
+    s.line(on, edge, 'dim');
+    s.circle(at, r, 'dim');
+    s.text({ x: at.x, y: at.y - h / 2 }, label, h, 'middle', 'text');
+  });
   return r;
 }
 
@@ -250,6 +311,10 @@ export function weldSymbol(
   elbow: Vec2,
   o: { system: 'ISO2553-A' | 'AWS'; size: number; allRound: boolean; process: string },
 ) {
+  s.withTag({ id: s.nextId('weld') }, () => drawWeldSymbol(s, joint, elbow, o));
+}
+
+function drawWeldSymbol(s: Sheet, joint: Vec2, elbow: Vec2, o: { system: 'ISO2553-A' | 'AWS'; size: number; allRound: boolean; process: string }) {
   const right = elbow.x >= joint.x;
   const L = 16;
   const end = { x: elbow.x + (right ? L : -L), y: elbow.y };

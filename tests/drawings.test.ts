@@ -30,6 +30,8 @@ function points(e: DEnt) {
       return e.pts;
     case 'text':
       return [e.p];
+    case 'image':
+      return [e.p, { x: e.p.x + e.w, y: e.p.y + e.h }];
   }
 }
 
@@ -119,7 +121,9 @@ describe('drawings', () => {
 
   it('renders SVG and DXF', () => {
     const drawings = allDrawings(p, dm);
-    expect(drawings.length).toBe(1 + 2 + uniqueAssemblies(dm).length + uniqueParts(dm).length);
+    // Register, GA and one sheet per unique assembly and part (erection sheets are tested in drawings-erection).
+    const core = drawings.filter((d) => ['register', 'ga', 'assembly', 'part'].includes(d.kind));
+    expect(core.length).toBe(1 + 2 + uniqueAssemblies(dm).length + uniqueParts(dm).length);
     for (const d of drawings) {
       expectOnSheet(d);
       const svg = drawingToSvg(d);

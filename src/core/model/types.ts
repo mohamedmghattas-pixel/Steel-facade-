@@ -454,6 +454,8 @@ export interface DrawingSettings {
   revisionScheme: 'alpha' | 'numeric';
   /** Extra general notes printed on every drawing. */
   extraNotes: string[];
+  /** Include erection drawings (setting-out plans, anchor schedules, erection sequences) in the set. Default on. */
+  erection?: boolean;
 }
 
 export interface DrawingRevision {
@@ -498,22 +500,37 @@ export interface GaCut {
   id: Id;
   name: string;
   kind: 'section' | 'detail';
-  /** Section: cut line in world space (a → b) and look depth; detail: centre and radius. */
+  /**
+   * Section: cut line in world space (a → b) and look depth; detail: centre and radius.
+   * For details `a` is the centre and `depth` the radius (model mm); `b` is not used.
+   */
   a: Vec3;
   b: Vec3;
   depth: number;
+  /** View scale denominator (ISO 5455), 0 = automatic. */
   scale: number;
+  /** GA view the cut is drawn on (default the front elevation). */
+  view?: 'front' | 'plan' | 'side';
+  /** Section: look the other way (arrows reversed). */
+  flip?: boolean;
 }
 
 /** A company sheet template: title block layout, logo and fixed notes. */
 export interface SheetTemplate {
   id: Id;
   name: string;
-  /** Title block fields: label and value source (project field or fixed text), in grid cells. */
-  fields: { label: string; source: string; col: number; row: number; w: number; h: number }[];
+  /**
+   * Title block fields: label and value source (project field or fixed text), in grid cells
+   * (`grid` mm each; column 0 at the left edge, row 0 at the bottom edge). Source is one of
+   * the field sources in core/drawings/template.ts, or "text:<fixed text>". Optional value
+   * style: lettering height (ISO 3098), bold, baseline above the cell bottom (mm).
+   */
+  fields: { label: string; source: string; col: number; row: number; w: number; h: number; textH?: number; bold?: boolean; dy?: number }[];
   /** Title block width / height, mm. */
   width: number;
   height: number;
+  /** Grid cell size, mm (default 1). */
+  grid?: number;
   /** Logo as data URL (PNG/SVG), placed in the title block. */
   logo?: string;
   notes: string[];

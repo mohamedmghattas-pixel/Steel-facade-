@@ -1,10 +1,12 @@
-import type { Project, SheetSize } from '../model/types';
+import type { Project, SheetSize, SheetTemplate } from '../model/types';
 import type { DerivedModel, Part } from '../derive/model';
 import { Sheet } from './dims';
-import { drawFrame, drawRevisionTable, drawTitleBlock } from './layout';
+import { drawFrame, drawRevisionTable } from './layout';
 import { drawingNumber, fingerprint, partUsage, revisionState, type UsedIn } from './register';
 import { SHEETS, STANDARDS, type StdProfile } from './standards';
-import type { Drawing, DrawingKind } from './types';
+import { activeTemplate, drawTemplateTitleBlock } from './template';
+import { applyEdits, hasEdits } from './edits';
+import type { Drawing, DrawingKind, Viewport } from './types';
 
 export interface DrawCtx {
   p: Project;
@@ -13,6 +15,8 @@ export interface DrawCtx {
   usage: Map<string, UsedIn[]>;
   /** Assembly mark → GA drawing numbers that show it. */
   gaNumbers: string[];
+  /** Sheet template (title block, logo, fixed notes) used for every sheet. */
+  template: SheetTemplate;
 }
 
 export function makeCtx(p: Project, dm: DerivedModel): DrawCtx {
@@ -22,12 +26,16 @@ export function makeCtx(p: Project, dm: DerivedModel): DrawCtx {
     std: STANDARDS[p.drawings.settings.standard] ?? STANDARDS.ISO,
     usage: partUsage(dm),
     gaNumbers: ['front', 'plan'].map((v) => drawingNumber(p, `ga-${v}`)),
+    template: activeTemplate(p),
   };
 }
 
-export function newSheet(size: SheetSize): Sheet {
+/** A blank sheet; with a context its layout keeps clear of the template's title block. */
+export function newSheet(size: SheetSize, ctx?: DrawCtx): Sheet {
   const s = SHEETS[size];
-  return new Sheet(s.w, s.h);
+  const sh = new Sheet(s.w, s.h);
+  if (ctx) sh.tb = { w: ctx.template.width, h: ctx.template.height };
+  return sh;
 }
 
 export const DOC_TYPE: Record<DrawingKind, string> = {
@@ -35,28 +43,51 @@ export const DOC_TYPE: Record<DrawingKind, string> = {
   ga: 'General arrangement',
   assembly: 'Assembly drawing',
   part: 'Part drawing',
+  section: 'Section / detail',
+  setout: 'Setting-out plan',
+  anchors: 'Anchor schedule',
+  sequence: 'Erection sequence',
 };
 
 /**
- * Completes a sheet: fingerprints the content, then adds the ISO 5457 frame,
- * the revision table and the ISO 7200 title block.
+ * Completes a sheet: applies the manual edits (moved views and dimensions,
+ * hidden items, notes, revision clouds), fingerprints the content, then adds the
+ * ISO 5457 frame, the revision table and the title block of the sheet template
+ * (ISO 7200 by default).
  */
 export function finalize(
   ctx: DrawCtx,
   s: Sheet,
   size: SheetSize,
-  o: { id: string; kind: DrawingKind; mark: string; title: string; subtitle: string; scale: string; sheetNo?: string; fingerprint?: string },
+  o: {
+    id: string;
+    kind: DrawingKind;
+    mark: string;
+    title: string;
+    subtitle: string;
+    scale: string;
+    sheetNo?: string;
+    fingerprint?: string;
+    /** Identification number, when it is not derivable from the id (numbered series). */
+    number?: string;
+    viewports?: Viewport[];
+  },
 ): Drawing {
-  const fp = o.fingerprint ?? fingerprint(s.ents);
+  const edits = ctx.p.drawings.edits?.[o.id];
+  const edited = hasEdits(edits);
+  if (edited) s.ents = applyEdits(s.ents, edits);
+  // Edits count as content: a fixed fingerprint (the register) is combined with the edited content.
+  const fp = o.fingerprint ? (edited ? fingerprint([{ t: 'text', p: { x: 0, y: 0 }, text: o.fingerprint, h: 1, layer: 'text' }, ...s.ents]) : o.fingerprint) : fingerprint(s.ents);
   const rs = revisionState(ctx.p, o.id, fp);
-  const number = drawingNumber(ctx.p, o.id);
+  const number = o.number ?? drawingNumber(ctx.p, o.id);
   const last = rs.revisions[rs.revisions.length - 1];
   const set = ctx.p.drawings.settings;
   drawRevisionTable(s, size, rs.revisions);
-  drawTitleBlock(
+  drawTemplateTitleBlock(
     s,
     size,
     ctx.p,
+    ctx.template,
     {
       title: o.title,
       subtitle: o.subtitle,
@@ -74,6 +105,11 @@ export function finalize(
     ctx.std.projection,
   );
   drawFrame(s, size);
+  const views = edits?.views ?? {};
+  const viewports = o.viewports?.map((v) => {
+    const d = views[v.group];
+    return d ? { ...v, origin: { x: v.origin.x + d.x, y: v.origin.y + d.y } } : v;
+  });
   return {
     id: o.id,
     kind: o.kind,
@@ -88,6 +124,8 @@ export function finalize(
     revisions: rs.revisions,
     fingerprint: fp,
     changed: rs.changed,
+    edited: edited || undefined,
+    viewports,
     entities: s.ents,
   };
 }

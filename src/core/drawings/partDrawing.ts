@@ -33,7 +33,7 @@ import { chooseLayout, entsBox, placeViews, sectionScaleOptions, viewSheet } fro
 export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
   const { p } = ctx;
   const size = p.drawings.settings.sheet;
-  const s = newSheet(size);
+  const s = newSheet(size, ctx);
   const holes = holeRows(part);
   const closed = closedByWelding(ctx, part);
 
@@ -49,6 +49,7 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
         plates: part.kind === 'plate',
         bolts: false,
       }),
+      s.tb.w,
     ),
     tableBlock({
       title: 'Parts list',
@@ -206,7 +207,7 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
     const xMid = (X(0) + X(L)) / 2;
 
     // ELEVATION: local x → paper x, local z → paper y (centre line at 0).
-    const E = viewSheet();
+    const E = viewSheet('elevation');
     const hp = H / den / 2;
     const ZF = (z: number) => z / den;
     drawBand(
@@ -247,7 +248,7 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
     labelBelow(E, xMid, 'ELEVATION');
 
     // PLAN (view from above): local x → paper x, local y → paper y.
-    const P = viewSheet();
+    const P = viewSheet('plan');
     const wp = W / den / 2;
     const YT = (y: number) => y / den;
     drawBand(
@@ -285,7 +286,7 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
     labelBelow(P, xMid, 'PLAN');
 
     // SECTION A–A at its own scale, centred on the elevation's centre line.
-    const S = viewSheet();
+    const S = viewSheet('section');
     const view = sectionAxes(first);
     const cut = cutPrism(prism, view, first ? cutX : -cutX, 2 * ds);
     const M = (v: Vec2) => ({ x: v.x / ds, y: v.y / ds });
@@ -364,7 +365,7 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     const Hp = H / den;
 
     // ELEVATION: the plate face, datum at the bottom-left corner.
-    const E = viewSheet();
+    const E = viewSheet('elevation');
     E.poly(
       outline.map((v) => ({ x: X(v.x), y: Y(v.y) })),
       true,
@@ -388,7 +389,7 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     labelBelow(E, Wp / 2, 'ELEVATION');
 
     // PLAN: the edge seen from above; the face towards the elevation's viewer at the bottom.
-    const P = viewSheet();
+    const P = viewSheet('plan');
     const tp = Math.max(t / den, 0.7);
     const Z = (z: number) => (-z / t) * tp;
     P.rect(0, -tp, Wp, tp, 'visible');
@@ -409,7 +410,7 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     labelBelow(P, Wp / 2, 'PLAN');
 
     // SECTION A–A through the hole column, same scale, aligned with the elevation.
-    const S = viewSheet();
+    const S = viewSheet('section');
     const view: ViewAxes = first
       ? { R: { x: 0, y: 0, z: 1 }, U: { x: 0, y: 1, z: 0 }, D: { x: 1, y: 0, z: 0 } }
       : { R: { x: 0, y: 0, z: -1 }, U: { x: 0, y: 1, z: 0 }, D: { x: -1, y: 0, z: 0 } };

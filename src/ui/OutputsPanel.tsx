@@ -210,7 +210,7 @@ function NestingView() {
   );
 }
 
-const KIND_LABEL: Record<Drawing['kind'], string> = { register: 'REG', ga: 'GA', assembly: 'ASM', part: 'PART' };
+const KIND_LABEL: Record<Drawing['kind'], string> = { register: 'REG', ga: 'GA', assembly: 'ASM', part: 'PART', section: 'SEC', setout: 'SET', anchors: 'ANC', sequence: 'SEQ' };
 
 function DrawingsView() {
   const project = useStore((s) => s.project);

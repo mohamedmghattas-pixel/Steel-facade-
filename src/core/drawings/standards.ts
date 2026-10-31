@@ -99,7 +99,10 @@ export function generalNotes(p: Project, ctx: NoteContext): string[] {
     if (ctx.paint) n.push('Shop paint per project specification.');
     if (ctx.bolts) n.push('Bolts ASTM F3125 Gr A325 with A563 nuts and F436 washers unless noted.');
   }
-  return [...n, ...s.extraNotes.filter(Boolean)];
+  // Fixed notes of the active company sheet template (see template.ts).
+  const tpl = p.drawings.activeTemplate ? (p.drawings.templates ?? []).find((t) => t.id === p.drawings.activeTemplate) : undefined;
+  const fixed = Array.isArray(tpl?.notes) ? tpl.notes.filter((x) => typeof x === 'string' && x.trim()) : [];
+  return [...n, ...s.extraNotes.filter(Boolean), ...fixed];
 }
 
 export const FINISH_LABEL: Record<string, string> = { none: 'Black', hdg: 'HDG', paint: 'Painted', 'hdg+paint': 'HDG + paint' };

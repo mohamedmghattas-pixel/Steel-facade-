@@ -13,13 +13,30 @@ export function numberPrefix(p: Project): string {
 
 export const GA_VIEWS = ['front', 'plan', 'side'] as const;
 
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/**
+ * ISO 7200 identification number of a sheet. Sheets numbered by their place in
+ * a generated series (setting-out plans, erection sequences) get their number
+ * from the generator; this covers the ones derivable from the id.
+ */
 export function drawingNumber(p: Project, id: string): string {
   const pre = numberPrefix(p);
   if (id.startsWith('register-')) return `${pre}-DR-${id.slice(9).padStart(2, '0')}`;
   if (id.startsWith('ga-')) return `${pre}-GA-${String(GA_VIEWS.indexOf(id.slice(3) as (typeof GA_VIEWS)[number]) + 1).padStart(2, '0')}`;
   if (id.startsWith('asm-')) return `${pre}-A-${id.slice(4)}`;
   if (id.startsWith('part-')) return `${pre}-P-${id.slice(5)}`;
+  if (id.startsWith('anchors-')) return `${pre}-AS-${pad2(Number(id.slice(8)) || 1)}`;
+  if (id.startsWith('cut-')) {
+    const i = (p.drawings.cuts ?? []).findIndex((c) => c.id === id.slice(4));
+    return `${pre}-SD-${pad2(i + 1)}`;
+  }
   return `${pre}-${id}`;
+}
+
+/** Series numbers: "<prefix>-E-01", "<prefix>-ES-03" … */
+export function seriesNumber(p: Project, code: string, n: number): string {
+  return `${numberPrefix(p)}-${code}-${pad2(n)}`;
 }
 
 export interface UsedIn {
@@ -69,6 +86,9 @@ export function fingerprint(ents: DEnt[]): string {
         break;
       case 'text':
         feed(`t${r(e.p.x)},${r(e.p.y)}${e.text}`);
+        break;
+      case 'image':
+        feed(`i${r(e.p.x)},${r(e.p.y)},${r(e.w)},${r(e.h)},${e.href.length}${e.href.slice(-64)}`);
         break;
     }
   }

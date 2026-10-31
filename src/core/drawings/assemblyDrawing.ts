@@ -39,7 +39,7 @@ import { chooseLayout, entsBox, placeViews, sectionScaleOptions, viewSheet } fro
 
 export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty: number, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
   const size = p.drawings.settings.sheet;
-  const s = newSheet(size);
+  const s = newSheet(size, ctx);
   const main = dm.partByRef.get(asm.main)!;
   const parts = asm.parts.map((r) => dm.partByRef.get(r)!).filter(Boolean);
   const welded = parts.filter((pt) => pt !== main && pt.weldedTo);
@@ -68,6 +68,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
         plates: parts.some((pt) => pt.kind === 'plate'),
         bolts: false,
       }),
+      s.tb.w,
     ),
     tableBlock({
       title: `Parts list – assembly ${asm.mark}`,
@@ -432,7 +433,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
     })();
 
     // ELEVATION
-    const E = viewSheet();
+    const E = viewSheet('elevation');
     drawBand(
       E,
       axis,
@@ -477,7 +478,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
     ];
 
     // PLAN
-    const P = viewSheet();
+    const P = viewSheet('plan');
     drawBand(
       P,
       axis,
@@ -527,7 +528,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
     labelBelow(P, xMid, 'PLAN');
 
     // SECTION A–A
-    const S = viewSheet();
+    const S = viewSheet('section');
     const M = (v: Vec2) => ({ x: v.x / ds, y: v.y / ds });
     const drawn = drawSection(S, sItems, main, VS, at, M, 2 * ds);
     if (symmetric) {
@@ -596,7 +597,7 @@ function drawPlateAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], we
     const M = (v: Vec2) => ({ x: v.x / den, y: v.y / den });
 
     // ELEVATION (plate face)
-    const E = viewSheet();
+    const E = viewSheet('elevation');
     E.poly(mainPr.outer.map(M), true, 'visible');
     for (const h of main.plateHoles ?? []) E.hole(M(h), Math.max(1, h.d / den), (h.slot ?? 0) / den, h.angle ?? 0);
     for (const pt of parts) if (pt !== main) for (const poly of projE.get(pt.ref)!.polys) E.poly(poly.map(M), true, 'visible');
@@ -606,12 +607,12 @@ function drawPlateAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], we
     dimLinear(E, { x: fb.minX / den, y: fb.minY / den }, { x: fb.minX / den, y: fb.maxY / den }, 'v', fb.minX / den - 8, fb.maxY - fb.minY);
 
     // PLAN (from above)
-    const P = viewSheet();
+    const P = viewSheet('plan');
     for (const pt of parts) for (const poly of projP.get(pt.ref)!.polys) P.poly(poly.map(M), true, 'visible');
     dimLinear(P, { x: pb.minX / den, y: pb.minY / den }, { x: pb.minX / den, y: pb.maxY / den }, 'v', pb.minX / den - 8, pb.maxY - pb.minY);
 
     // SECTION A–A (side), weld symbols at the joints.
-    const S = viewSheet();
+    const S = viewSheet('section');
     const drawn = drawSection(S, sItems, main, VS, at, M, 2 * den);
     const sPolys = new Map(parts.map((pt) => [pt.ref, projS.get(pt.ref)!.polys[0].map(M)]));
     weldSymbols(

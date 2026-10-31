@@ -449,7 +449,11 @@ function evenOddSign(regions: Poly[], r: Poly): number {
  * wide at both ends (ISO 128-2 type 04.2), arrows pointing in the viewing
  * direction `look` and the section letter beside each arrow.
  */
-export function cuttingPlane(s: Sheet, a: Vec2, b: Vec2, look: Vec2, letter = SECTION_LETTER) {
+export function cuttingPlane(s: Sheet, a: Vec2, b: Vec2, look: Vec2, letter = SECTION_LETTER, id?: string) {
+  s.withTag({ id: id ?? `cut:${s.name}:${letter}` }, () => drawCuttingPlane(s, a, b, look, letter));
+}
+
+function drawCuttingPlane(s: Sheet, a: Vec2, b: Vec2, look: Vec2, letter: string) {
   const L = Math.hypot(b.x - a.x, b.y - a.y) || 1;
   const t = { x: (b.x - a.x) / L, y: (b.y - a.y) / L };
   s.line(a, b, 'center');
@@ -480,6 +484,10 @@ export function cuttingPlane(s: Sheet, a: Vec2, b: Vec2, look: Vec2, letter = SE
  * side of one split point so that they never run into each other.
  */
 export function viewLabel(s: Sheet, cx: number, y: number, label: string, scale?: string) {
+  s.withTag({ id: s.tag.id ?? `label:${s.name}` }, () => drawViewLabel(s, cx, y, label, scale));
+}
+
+function drawViewLabel(s: Sheet, cx: number, y: number, label: string, scale?: string) {
   const h = TEXT.normal;
   if (!scale) {
     s.text({ x: cx, y }, label, h, 'middle', 'text', 0, true);

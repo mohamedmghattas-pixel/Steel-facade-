@@ -79,6 +79,21 @@ Keys:
 - `Del` delete, `Esc` cancel
 - `Ctrl+Z` / `Ctrl+Y` undo / redo
 
+## DXF import
+
+Import → **DXF / DWG → wireframe or reference…** reads ASCII DXF (R12 to 2018) into wireframe lines or snappable reference linework.
+
+- **What is read:** LINE, LWPOLYLINE, 2D and 3D POLYLINE, ARC, ELLIPSE and polyline bulges, and block INSERTs. Optional: CIRCLE, SPLINE, and mesh edges (3DFACE, polyface / polygon mesh, MESH). Shared mesh edges are imported once.
+- **What is skipped:** text, dimensions, hatches, points, ACIS solids and surfaces (3DSOLID, REGION, SURFACE), XREFs and paper-space entities. The dialog lists every entity type it read or skipped, and why.
+- **3D mode:** a drawing with any Z extent or a tilted entity is detected as 3D and keeps its X/Y/Z (with an X/Y/Z shift). 2D drawings are placed on the XZ, YZ or XY work plane as before. The mode can be switched in the dialog.
+- **Blocks:** INSERTs are expanded recursively, including nested blocks, base point, X/Y/Z scale (mirrored too), rotation, the insert's extrusion and MINSERT arrays. Entities on layer 0 inside a block take the insert's layer.
+- **OCS:** LWPOLYLINE, 2D POLYLINE, ARC, CIRCLE and INSERT coordinates are converted from their Object Coordinate System (DXF arbitrary-axis algorithm, elevation along the extrusion direction). An elevation drawn in a rotated UCS therefore lands in the right plane.
+- **Curves:** arcs become straight chords no more than the *arc chord deviation* (default 2 mm) from the curve. Splines follow the NURBS from their control points, or a cubic through the fit points.
+- **Join tolerance (default 2 mm):** endpoints closer than this become one node, including existing model nodes. Exact duplicates and overlapping collinear lines are merged. *Split* breaks lines where they really cross in 3D or where another line ends on them; skew lines that only cross in a projection stay whole.
+- **Units:** taken from `$INSUNITS` (in, ft, yd, mm, cm, dm, m), else from `$MEASUREMENT`, and can be overridden. *Move drawing to origin* helps with drawings in site coordinates.
+
+Importing 20 000 segments, with joining and splitting, takes well under a second.
+
 ## Development
 
 ```bash
@@ -126,7 +141,7 @@ Technical documentation:
 - Rolled-section masses come from catalogue values. All other section properties are computed from the drawn cross-section (including corner radii), which lands within about 1–2 % of supplier tables. Check critical values against the mill or supplier.
 - Connection geometry is for detailing. Have a structural engineer check member sizes, bolts and anchors.
 - DSTV slotted-hole syntax varies between machines. Verify NC files with your post-processor before cutting.
-- DXF import reads LINE, LWPOLYLINE and POLYLINE. Arcs, blocks and text are ignored. DWG files are recognised but must be saved as DXF first (see docs/MODEL_MANAGEMENT.md).
+- DXF import reads lines, polylines, arcs, blocks and (optionally) circles, splines and mesh edges in 2D or 3D; see *DXF import* above. ACIS solids, text, dimensions and XREFs are not read, and binary DXF must be saved as ASCII. DWG files are recognised but must be saved as DXF first (see docs/MODEL_MANAGEMENT.md).
 
 ## Roadmap
 

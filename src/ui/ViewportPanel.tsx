@@ -202,7 +202,7 @@ function useReferenceRuntime(viewerRef: React.RefObject<Viewer | null>) {
           if (!bytes) throw new Error('File not found in browser storage — import it again.');
           if (r.kind === 'dxf') {
             const segs = JSON.parse(new TextDecoder().decode(bytes)) as { a: Vec3; b: Vec3 }[];
-            const { object, points } = dxfReferenceObject(segs, r.plane ?? { kind: 'XZ', offset: 0 }, r.scale ?? 1, { x: 0, y: 0 });
+            const { object, points } = dxfReferenceObject(segs, r.plane, r.scale ?? 1, { x: 0, y: 0 });
             object.userData = { reference: r.id, snapPoints: points };
             object.position.set(r.offset.x, r.offset.y, r.offset.z);
             v.refGroup.add(object);

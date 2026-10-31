@@ -4,7 +4,7 @@ import { Field, Modal, NumberInput, ProfilePicker, Segmented, Select, TextInput,
 import { copyMembers, facadeGrid, newId, ROLE_LABEL } from '../../core/model/ops';
 import { AUTO_DEFAULTS, runAutoConnectOptions } from './autoConnectOptions';
 import { runAutoConnect } from '../actions';
-import { dxfUnitScale, importDxfWireframe, parseDxf } from '../../core/io/dxfImport';
+import { DXF_JOIN_TOLERANCE, dxfWorldSegments, explodeDxf, importDxfWireframe, previewDxfImport, readDxf, UNIT_NAMES, type DxfImportOptions } from '../../core/io/dxfImport';
 import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/types';
 import { putBlob } from '../../state/storage';
 import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
@@ -286,71 +286,137 @@ function ArrayDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Reading options the dialog exposes (see DxfReadOptions). */
+interface DxfDialogRead {
+  arcs: boolean;
+  circles: boolean;
+  meshEdges: boolean;
+  splines: boolean;
+  arcTolerance: number;
+}
+
+const DXF_READ_DEFAULTS: DxfDialogRead = { arcs: true, circles: false, meshEdges: false, splines: false, arcTolerance: 2 };
+const MESH_TYPES = ['3DFACE', 'POLYFACE MESH', 'POLYGON MESH', 'MESH'];
+const DXF_PREVIEW_LIMIT = 150_000;
+
+const UNIT_OPTIONS = [
+  { value: '1', label: 'Millimetres (×1)' },
+  { value: '10', label: 'Centimetres (×10)' },
+  { value: '100', label: 'Decimetres (×100)' },
+  { value: '1000', label: 'Metres (×1000)' },
+  { value: '25.4', label: 'Inches (×25.4)' },
+  { value: '304.8', label: 'Feet (×304.8)' },
+  { value: '914.4', label: 'Yards (×914.4)' },
+];
+
+const fmtMm = (n: number) => Math.round(n).toLocaleString();
+
 function DxfImportDialog({ onClose }: { onClose: () => void }) {
   const pending = useStore((s) => s.pendingDxf);
   const wp = useStore((s) => s.workPlane);
   const apply = useStore((s) => s.apply);
-  const parsed = useMemo(() => {
+  const doc = useMemo(() => {
     try {
-      return pending ? parseDxf(pending.text) : null;
+      return pending ? readDxf(pending.text) : null;
     } catch (e) {
       return { error: (e as Error).message } as const;
     }
   }, [pending]);
+  const ok = !!doc && !('error' in doc);
+  // First read with the defaults; a drawing made only of faces / splines / circles turns those on.
+  const init = useMemo(() => {
+    if (!doc || 'error' in doc) return null;
+    const first = explodeDxf(doc);
+    if (first.segments.length) return { read: DXF_READ_DEFAULTS, parsed: first };
+    const skipped = (t: string) => (first.entities[t]?.skipped ?? 0) > 0;
+    const read = { ...DXF_READ_DEFAULTS, meshEdges: MESH_TYPES.some(skipped), splines: skipped('SPLINE'), circles: skipped('CIRCLE') || skipped('ELLIPSE') };
+    return { read, parsed: explodeDxf(doc, read) };
+  }, [doc]);
+  const [read, setRead] = useState<DxfDialogRead>(() => init?.read ?? DXF_READ_DEFAULTS);
+  const [scale, setScale] = useState(() => init?.parsed.unitScale ?? 1);
+  const parsed = useMemo(() => (doc && !('error' in doc) ? explodeDxf(doc, { ...read, unitScale: scale }) : null), [doc, read, scale]);
   const [mode, setMode] = useState<'wire' | 'reference'>('wire');
+  const [use3d, setUse3d] = useState(() => init?.parsed.is3d ?? false);
   const [plane, setPlane] = useState<PlaneKind>(wp.kind === 'custom' ? 'XZ' : wp.kind);
   const [offset, setOffset] = useState(wp.offset);
-  const ok = parsed && !('error' in parsed);
-  const [scale, setScale] = useState(() => (ok ? dxfUnitScale(parsed.insunits) : 1));
   const [ox, setOx] = useState(0);
   const [oy, setOy] = useState(0);
-  const [use3d, setUse3d] = useState(false);
+  const [oz, setOz] = useState(0);
   const [split, setSplit] = useState(true);
-  const [layers, setLayers] = useState<Record<string, { on: boolean; profile: string | null; role: MemberRole }>>(() =>
-    ok ? Object.fromEntries(parsed.layers.map((l) => [l, { on: true, profile: null, role: guessRole(l) }])) : {},
+  const [joinTol, setJoinTol] = useState(DXF_JOIN_TOLERANCE);
+  const [layers, setLayers] = useState<Record<string, { on: boolean; profile: string | null; role: MemberRole }>>({});
+  const layerOf = (l: string) => layers[l] ?? { on: !(parsed?.layerStates[l]?.frozen || parsed?.layerStates[l]?.off), profile: null, role: guessRole(l) };
+  const setLayer = (l: string, patch: Partial<{ on: boolean; profile: string | null; role: MemberRole }>) => setLayers({ ...layers, [l]: { ...layerOf(l), ...patch } });
+  const on = parsed ? parsed.layers.filter((l) => layerOf(l).on) : [];
+  const onKey = on.join('\u0000');
+  const importOpts: DxfImportOptions = {
+    plane: { kind: plane, offset },
+    scale,
+    offset: use3d ? { x: ox, y: oy, z: oz } : { x: ox, y: oy },
+    layers: on,
+    layerRules: Object.fromEntries(on.filter((l) => layerOf(l).profile).map((l) => [l, { profile: layerOf(l).profile, role: layerOf(l).role }])),
+    splitIntersections: split,
+    use3d,
+    joinTolerance: joinTol,
+  };
+  // Live join / split preview; skipped for very large drawings to keep the dialog responsive.
+  const preview = useMemo(
+    () => (parsed && mode === 'wire' && parsed.segments.length <= DXF_PREVIEW_LIMIT ? previewDxfImport(parsed, importOpts) : null),
+    [parsed, mode, plane, offset, scale, ox, oy, oz, onKey, split, use3d, joinTol],
   );
 
   if (!pending) return null;
-  if (!ok) {
+  if (!ok || !parsed) {
     return (
       <Modal title="Import DXF" onClose={onClose}>
-        <p className="warning">Could not read {pending.name}: {parsed && 'error' in parsed ? parsed.error : 'unknown error'}</p>
+        <p className="warning">Could not read {pending.name}: {doc && 'error' in doc ? doc.error : 'unknown error'}</p>
       </Modal>
     );
   }
   const counts = parsed.segments.reduce<Record<string, number>>((a, s) => ((a[s.layer] = (a[s.layer] ?? 0) + 1), a), {});
-  const on = Object.entries(layers).filter(([, v]) => v.on).map(([k]) => k);
-  const size = { x: (parsed.bounds.max.x - parsed.bounds.min.x) * scale, y: (parsed.bounds.max.y - parsed.bounds.min.y) * scale };
+  const selected = on.reduce((n, l) => n + (counts[l] ?? 0), 0);
+  const b = parsed.bounds;
+  const size = { x: (b.max.x - b.min.x) * scale, y: (b.max.y - b.min.y) * scale, z: (b.max.z - b.min.z) * scale };
+  const types = Object.entries(parsed.entities).sort((x, y) => y[1].read + y[1].skipped - (x[1].read + x[1].skipped));
+  const readTypes = types.filter(([, c]) => c.read);
+  const skippedTypes = types.filter(([, c]) => c.skipped);
+  const topReason = (r: Record<string, number>) => Object.entries(r).sort((x, y) => y[1] - x[1])[0]?.[0] ?? '';
+  const unitHint =
+    parsed.unitSource === 'insunits'
+      ? `$INSUNITS = ${parsed.insunits} (${UNIT_NAMES[parsed.insunits!] ?? '?'})`
+      : parsed.unitSource === 'measurement'
+        ? `no $INSUNITS; $MEASUREMENT = ${parsed.measurement} (${parsed.measurement ? 'metric' : 'imperial'})`
+        : 'no units in file';
+  const unitOptions = UNIT_OPTIONS.some((u) => Number(u.value) === scale) ? UNIT_OPTIONS : [...UNIT_OPTIONS, { value: String(scale), label: `Custom (×${scale})` }];
+  const toOrigin = () => {
+    setOx(-b.min.x * scale);
+    setOy(-b.min.y * scale);
+    if (use3d) setOz(-b.min.z * scale);
+  };
 
   const run = () => {
     if (mode === 'wire') {
       let ids: string[] = [];
       apply('Import DXF', (p) => {
-        ids = importDxfWireframe(p, parsed, {
-          plane: { kind: plane, offset },
-          scale,
-          offset: { x: ox, y: oy },
-          layers: on,
-          layerRules: Object.fromEntries(Object.entries(layers).filter(([, v]) => v.on && v.profile).map(([k, v]) => [k, { profile: v.profile, role: v.role }])),
-          splitIntersections: split,
-          use3d,
-        });
+        ids = importDxfWireframe(p, parsed, importOpts);
       });
       useStore.getState().select({ members: ids });
-      useStore.getState().notify(`Imported ${ids.length} lines from ${pending.name}.`);
+      const st = preview?.stats;
+      const extra = st ? [st.duplicates + st.overlaps ? `${st.duplicates + st.overlaps} duplicate / overlapping merged` : '', st.splits ? `${st.splits} split points` : ''].filter(Boolean).join(', ') : '';
+      useStore.getState().notify(`Imported ${ids.length} lines from ${pending.name}${use3d ? ' (3D)' : ''}${extra ? ` — ${extra}` : ''}.`);
     } else {
       const id = newId('ref');
-      // Bake units and shift into the stored 2D linework.
-      const segs = parsed.segments
-        .filter((s) => on.includes(s.layer))
-        .map((s) => ({ a: { x: s.a.x * scale + ox, y: s.a.y * scale + oy, z: 0 }, b: { x: s.b.x * scale + ox, y: s.b.y * scale + oy, z: 0 } }));
+      // Bake units and shift into the stored linework: world X/Y/Z in 3D mode, plane u/v otherwise.
+      const segs = use3d
+        ? dxfWorldSegments(parsed, importOpts).map((s) => ({ a: s.a, b: s.b }))
+        : parsed.segments.filter((s) => on.includes(s.layer)).map((s) => ({ a: { x: s.a.x * scale + ox, y: s.a.y * scale + oy, z: 0 }, b: { x: s.b.x * scale + ox, y: s.b.y * scale + oy, z: 0 } }));
       const bytes = new TextEncoder().encode(JSON.stringify(segs));
       void putBlob(id, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer).then(() =>
         apply('DXF reference', (p) => {
-          p.references.push({ id, name: pending.name, kind: 'dxf', visible: true, opacity: 0.8, offset: { x: 0, y: 0, z: 0 }, plane: { kind: plane, offset }, scale: 1 });
+          p.references.push({ id, name: pending.name, kind: 'dxf', visible: true, opacity: 0.8, offset: { x: 0, y: 0, z: 0 }, ...(use3d ? {} : { plane: { kind: plane, offset } }), scale: 1 });
         }),
       );
-      useStore.getState().notify('DXF linework added as a snappable reference.');
+      useStore.getState().notify(`DXF linework added as a snappable ${use3d ? '3D ' : ''}reference.`);
     }
     useStore.getState().set({ pendingDxf: null, zoomRequest: Date.now() });
     onClose();
@@ -367,14 +433,21 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span className="muted">
-            {parsed.segments.filter((s) => on.includes(s.layer)).length} lines · {Math.round(size.x)} × {Math.round(size.y)} mm
+            {selected.toLocaleString()} segments
+            {preview ? ` → ${preview.stats.edges.toLocaleString()} lines, ${preview.stats.nodes.toLocaleString()} nodes after joining` : ''} ·{' '}
+            {use3d ? `${fmtMm(size.x)} × ${fmtMm(size.y)} × ${fmtMm(size.z)} mm` : `${fmtMm(size.x)} × ${fmtMm(size.y)} mm`}
           </span>
-          <button className="primary-btn" onClick={run} disabled={!on.length}>
+          <button className="primary-btn" onClick={run} disabled={!selected}>
             Import
           </button>
         </>
       }
     >
+      {parsed.is3d && (
+        <p className="ok" data-testid="dxf-3d-detected">
+          3D drawing detected — Z range {fmtMm(b.min.z * scale)} … {fmtMm(b.max.z * scale)} mm.{use3d ? ' Imported with its X/Y/Z coordinates.' : ''}
+        </p>
+      )}
       <div className="row2">
         <Field label="Import as">
           <Segmented
@@ -386,70 +459,123 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
             onChange={setMode}
           />
         </Field>
-        <Field label="Units → mm" hint={parsed.insunits ? `$INSUNITS = ${parsed.insunits}` : 'no units in file'}>
-          <Select
-            value={String(scale)}
-            options={[
-              { value: '1', label: 'Millimetres (×1)' },
-              { value: '10', label: 'Centimetres (×10)' },
-              { value: '1000', label: 'Metres (×1000)' },
-              { value: '25.4', label: 'Inches (×25.4)' },
-              { value: '304.8', label: 'Feet (×304.8)' },
-            ]}
-            onChange={(v) => setScale(Number(v))}
-          />
+        <Field label="Units → mm" hint={unitHint}>
+          <Select value={String(scale)} options={unitOptions} onChange={(v) => setScale(Number(v))} />
         </Field>
       </div>
-      <div className="row3">
-        <Field label="Place on plane">
-          <Segmented
-            value={plane}
-            options={[
-              { value: 'XZ', label: 'XZ' },
-              { value: 'YZ', label: 'YZ' },
-              { value: 'XY', label: 'XY' },
-            ]}
-            onChange={setPlane}
-          />
-        </Field>
-        <Field label="Plane offset">
-          <NumberInput value={offset} unit="mm" onChange={setOffset} />
-        </Field>
-        <Field label="Shift u / v">
-          <span className="row-inline">
+      <Field label="Coordinates" hint={use3d ? 'DXF X/Y/Z → world X/Y/Z' : 'DXF X → plane u, DXF Y → plane v; Z is dropped'}>
+        <Segmented
+          value={use3d ? '3d' : 'plane'}
+          options={[
+            { value: '3d', label: '3D — keep X / Y / Z' },
+            { value: 'plane', label: '2D — place on a work plane' },
+          ]}
+          onChange={(v) => setUse3d(v === '3d')}
+        />
+      </Field>
+      {use3d ? (
+        <div className="row3">
+          <Field label="Shift X">
             <NumberInput value={ox} unit="mm" onChange={setOx} />
+          </Field>
+          <Field label="Shift Y">
             <NumberInput value={oy} unit="mm" onChange={setOy} />
-          </span>
+          </Field>
+          <Field label="Shift Z">
+            <NumberInput value={oz} unit="mm" onChange={setOz} />
+          </Field>
+        </div>
+      ) : (
+        <div className="row3">
+          <Field label="Place on plane">
+            <Segmented
+              value={plane}
+              options={[
+                { value: 'XZ', label: 'XZ' },
+                { value: 'YZ', label: 'YZ' },
+                { value: 'XY', label: 'XY' },
+              ]}
+              onChange={setPlane}
+            />
+          </Field>
+          <Field label="Plane offset">
+            <NumberInput value={offset} unit="mm" onChange={setOffset} />
+          </Field>
+          <Field label="Shift u / v">
+            <span className="row-inline">
+              <NumberInput value={ox} unit="mm" onChange={setOx} />
+              <NumberInput value={oy} unit="mm" onChange={setOy} />
+            </span>
+          </Field>
+        </div>
+      )}
+      <button className="link-btn" onClick={toOrigin} title="Shift so the drawing's lowest corner lands on the origin (useful for drawings in site coordinates)">
+        Move drawing to origin
+      </button>
+      <div className="row3">
+        {mode === 'wire' && (
+          <Field label="Join tolerance" hint="Ends closer than this become one node">
+            <NumberInput value={joinTol} unit="mm" min={0} onChange={setJoinTol} />
+          </Field>
+        )}
+        <Field label="Arc chord deviation" hint="Arcs become straight segments">
+          <NumberInput value={read.arcTolerance} unit="mm" min={0.01} onChange={(v) => setRead({ ...read, arcTolerance: v })} />
         </Field>
       </div>
-      <label className="check">
-        <input type="checkbox" checked={use3d} onChange={(e) => setUse3d(e.target.checked)} /> Use the DXF's 3D coordinates as world X/Y/Z (3D wireframes)
-      </label>
       {mode === 'wire' && (
         <label className="check">
-          <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} /> Split imported lines where they cross
+          <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} /> Split imported lines where they cross or meet (true 3D crossings only)
         </label>
       )}
+      <div className="row-inline" style={{ flexWrap: 'wrap', gap: '0 16px' }}>
+        <label className="check">
+          <input type="checkbox" checked={read.arcs} onChange={(e) => setRead({ ...read, arcs: e.target.checked })} /> Arcs
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={read.circles} onChange={(e) => setRead({ ...read, circles: e.target.checked })} /> Circles
+        </label>
+        <label className="check" title="Edges of 3DFACE, polyface / polygon meshes and MESH entities (SketchUp, Revit, Rhino exports)">
+          <input type="checkbox" checked={read.meshEdges} onChange={(e) => setRead({ ...read, meshEdges: e.target.checked })} /> Mesh edges
+        </label>
+        <label className="check">
+          <input type="checkbox" checked={read.splines} onChange={(e) => setRead({ ...read, splines: e.target.checked })} /> Splines
+        </label>
+      </div>
+      <div className="muted" style={{ fontSize: 12, margin: '4px 0 8px' }} data-testid="dxf-entity-summary">
+        <div>
+          <strong>Read:</strong> {readTypes.length ? readTypes.map(([t, c]) => `${t} ${c.read.toLocaleString()}`).join(' · ') : 'nothing'}
+        </div>
+        {!!skippedTypes.length && (
+          <div>
+            <strong>Skipped:</strong> {skippedTypes.map(([t, c]) => `${t} ${c.skipped.toLocaleString()} (${topReason(c.reasons)})`).join(' · ')}
+          </div>
+        )}
+      </div>
+      {parsed.notes.map((n) => (
+        <p className="warning" key={n}>
+          {n}
+        </p>
+      ))}
+      {!parsed.segments.length && <p className="warning">No lines found. Check the skipped entities above — tick the matching option, or export the model as lines from your CAD program.</p>}
       <h4>Layers</h4>
       <div className="layer-table">
-        {parsed.layers.map((l) => (
-          <div className="layer-row" key={l}>
-            <label className="check">
-              <input type="checkbox" checked={layers[l]?.on ?? false} onChange={(e) => setLayers({ ...layers, [l]: { ...layers[l], on: e.target.checked } })} />
-              <strong>{l}</strong> <span className="muted">{counts[l] ?? 0}</span>
-            </label>
-            {mode === 'wire' && (
-              <>
-                <ProfilePicker allowNone value={layers[l]?.profile ?? null} onChange={(v) => setLayers({ ...layers, [l]: { ...layers[l], profile: v } })} />
-                <Select<MemberRole>
-                  value={layers[l]?.role ?? 'other'}
-                  options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
-                  onChange={(v) => setLayers({ ...layers, [l]: { ...layers[l], role: v } })}
-                />
-              </>
-            )}
-          </div>
-        ))}
+        {parsed.layers.map((l) => {
+          const s = parsed.layerStates[l];
+          return (
+            <div className="layer-row" key={l}>
+              <label className="check">
+                <input type="checkbox" checked={layerOf(l).on} onChange={(e) => setLayer(l, { on: e.target.checked })} />
+                <strong>{l}</strong> <span className="muted">{counts[l] ?? 0}{s?.frozen ? ' · frozen' : s?.off ? ' · off' : ''}</span>
+              </label>
+              {mode === 'wire' && (
+                <>
+                  <ProfilePicker allowNone value={layerOf(l).profile} onChange={(v) => setLayer(l, { profile: v })} />
+                  <Select<MemberRole> value={layerOf(l).role} options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} onChange={(v) => setLayer(l, { role: v })} />
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
     </Modal>
   );

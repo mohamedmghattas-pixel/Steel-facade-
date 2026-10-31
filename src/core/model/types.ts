@@ -429,7 +429,7 @@ export interface ReferenceModel {
   opacity: number;
   /** Translation applied to the reference geometry, mm. */
   offset: Vec3;
-  /** For DXF linework: which plane the 2D drawing is placed on. */
+  /** For DXF linework: which plane the 2D drawing is placed on (absent: 3D linework in world coordinates). */
   plane?: WorkPlane;
   scale?: number;
 }

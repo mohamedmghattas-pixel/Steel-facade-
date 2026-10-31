@@ -102,25 +102,31 @@ export function setGroupOpacity(group: THREE.Object3D, opacity: number) {
   });
 }
 
-/** DXF linework placed on a work plane as reference lines. */
+/**
+ * DXF linework as reference lines. With a work plane the stored segments are
+ * 2D (x → plane u, y → plane v); without one they are 3D world coordinates
+ * (3D DXF imports keep their X/Y/Z).
+ */
 export function dxfReferenceObject(
   segments: { a: Vec3; b: Vec3 }[],
-  plane: WorkPlane,
+  plane: WorkPlane | undefined,
   scale: number,
   offset: Vec2,
 ): { object: THREE.LineSegments; points: Vec3[] } {
-  const pts: THREE.Vector3[] = [];
+  const pos = new Float32Array(segments.length * 6);
   const snap: Vec3[] = [];
-  for (const s of segments) {
-    const a = planeToWorld(plane, s.a.x * scale + offset.x, s.a.y * scale + offset.y);
-    const b = planeToWorld(plane, s.b.x * scale + offset.x, s.b.y * scale + offset.y);
-    pts.push(v(a), v(b));
+  const place = (q: Vec3): Vec3 =>
+    plane ? planeToWorld(plane, q.x * scale + offset.x, q.y * scale + offset.y) : { x: q.x * scale + offset.x, y: q.y * scale + offset.y, z: (q.z ?? 0) * scale };
+  segments.forEach((s, i) => {
+    const a = place(s.a);
+    const b = place(s.b);
+    pos.set([a.x, a.y, a.z, b.x, b.y, b.z], i * 6);
     snap.push(a, b);
-  }
-  const object = new THREE.LineSegments(
-    new THREE.BufferGeometry().setFromPoints(pts),
-    new THREE.LineBasicMaterial({ color: 0xc07a3a, transparent: true, opacity: 0.8 }),
-  );
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geometry.computeBoundingSphere();
+  const object = new THREE.LineSegments(geometry, new THREE.LineBasicMaterial({ color: 0xc07a3a, transparent: true, opacity: 0.8 }));
   return { object, points: snap };
 }
 

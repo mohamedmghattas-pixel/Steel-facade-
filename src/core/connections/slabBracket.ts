@@ -1,5 +1,7 @@
 import { getBolt, boltLength } from '../library/bolts';
-import { add, dot, madd, scale, sub, toLocal, toWorld } from '../model/geometry';
+import { add, dot, madd, normalize, scale, sub, toLocal, toWorld } from '../model/geometry';
+import type { Vec3 } from '../model/types';
+import { slabBracketMovement } from '../movement/provisions';
 import {
   centreAt,
   emptyOut,
@@ -7,6 +9,7 @@ import {
   plateOn,
   rect,
   str,
+  type ConnCtx,
   type ConnectionDef,
   type Hole2D,
 } from './common';
@@ -17,6 +20,12 @@ import {
  * ("top" mount). Fin holes are slotted vertically and anchor holes laterally so
  * the bracket can absorb site tolerances. Additional secondary members (the
  * next mullion at a stack joint) are cut back to leave a movement gap.
+ *
+ * With `autoSlots` the fin slot, anchor slot and stack-joint gap are derived
+ * from the project's tolerance stack and movement demand (core/movement,
+ * docs/MOVEMENT.md); otherwise the manual values apply. `surveyOut / Vert /
+ * Along` move the back plate to the surveyed slab edge (made-to-measure
+ * bracket): out = towards the slab, vert = up, along = the mullion's local +y.
  */
 export const slabBracket: ConnectionDef = {
   type: 'slabBracket',
@@ -38,29 +47,55 @@ export const slabBracket: ConnectionDef = {
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts in fin', kind: 'number', default: 2 },
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 70, unit: 'mm' },
-    { key: 'slot', label: 'Fin slot (extra length; long slot ≤ 2.5d overall)', kind: 'number', default: 17, unit: 'mm' },
+    {
+      key: 'autoSlots',
+      label: 'Auto slots and gap (from tolerances + movement)',
+      kind: 'bool',
+      default: true,
+      help: 'Derive the fin slot, anchor slot and stack-joint gap from Project → Movement & tolerances. Off: the manual values below apply.',
+    },
+    {
+      key: 'support',
+      label: 'Support',
+      kind: 'select',
+      default: 'auto',
+      options: ['auto', 'fixed (dead load)', 'sliding'],
+      help: 'Auto: the highest bracket on a mullion carries the dead load, the others slide (vertical slots take thermal movement and slab deflection).',
+    },
+    { key: 'slotCap', label: 'Auto fin slot limit', kind: 'select', default: 'code max', options: ['code max', 'none (special slot)'], help: 'Code max: long slot ≤ 2.5 d (EN 1090-2 Table 11 / AISC 360 Table J3.3).' },
+    { key: 'slot', label: 'Fin slot, manual (extra length; long slot ≤ 2.5d overall)', kind: 'number', default: 17, unit: 'mm' },
     { key: 'anchor', label: 'Anchor', kind: 'bolt', default: 'M12' },
     { key: 'anchorType', label: 'Anchor type', kind: 'select', default: 'expansion', options: ['expansion', 'bonded (chemical)', 'concrete screw', 'cast-in channel', 'undercut'] },
     { key: 'anchorLen', label: 'Anchor length', kind: 'number', default: 110, unit: 'mm' },
     { key: 'anchorEdge', label: 'Anchor edge distance', kind: 'number', default: 35, unit: 'mm' },
-    { key: 'anchorSlot', label: 'Anchor slot length', kind: 'number', default: 20, unit: 'mm' },
-    { key: 'gap', label: 'Stack joint gap', kind: 'number', default: 20, unit: 'mm' },
+    { key: 'anchorSlot', label: 'Anchor slot length, manual (extra)', kind: 'number', default: 20, unit: 'mm' },
+    { key: 'packMax', label: 'Max packing behind back plate', kind: 'number', default: 20, unit: 'mm', help: 'Out-of-plane adjustment range of an edge-mounted bracket (shims). Typical practice.' },
+    { key: 'gap', label: 'Stack joint gap, manual', kind: 'number', default: 20, unit: 'mm' },
+    { key: 'surveyOut', label: 'Survey adjustment, out of plane (+ towards slab)', kind: 'number', default: 0, unit: 'mm' },
+    { key: 'surveyVert', label: 'Survey adjustment, vertical (+ up)', kind: 'number', default: 0, unit: 'mm' },
+    { key: 'surveyAlong', label: 'Survey adjustment, along facade (+ local y)', kind: 'number', default: 0, unit: 'mm' },
   ],
-  trims({ c, v, node, geom }) {
-    return c.secondary.slice(1).flatMap((id) => {
+  trims(ctx) {
+    const { c, node, geom } = ctx;
+    const extra = c.secondary.slice(1);
+    if (!extra.length) return [];
+    const gap = slabBracketMovement(ctx)?.gapValue ?? num(ctx.v.gap, 20);
+    return extra.flatMap((id) => {
       const g = geom(id);
       if (!g) return [];
       const end = dot(sub(node, g.a), sub(node, g.a)) <= dot(sub(node, g.b), sub(node, g.b)) ? 'start' : 'end';
-      return [{ member: id, end, amount: num(v.gap, 20) }];
+      return [{ member: id, end, amount: gap }];
     });
   },
-  build({ c, v, node, geom }) {
+  build(ctx) {
+    const { c, v, node, geom } = ctx;
     const out = emptyOut();
     const g = geom(c.secondary[0]);
     if (!g || !g.profile) {
       out.warnings.push('Slab bracket needs a mullion with a profile.');
       return out;
     }
+    const mv = slabBracketMovement(ctx);
     const mount = str(v.mount, 'edge');
     const s = num(v.side, 1) >= 0 ? 1 : -1;
     const finT = num(v.finT, 10);
@@ -75,14 +110,21 @@ export const slabBracket: ConnectionDef = {
     const nb = Math.max(1, Math.min(4, Math.round(num(v.bolts, 2))));
     const pitch = num(v.pitch, 70);
     const ea = num(v.anchorEdge, 35);
+    const finSlot = mv?.finSlot ?? num(v.slot, 17);
+    const anchorSlot = mv?.anchorSlot ?? num(v.anchorSlot, 20);
+    // Survey (made-to-measure) offsets of the back plate.
+    const so = num(v.surveyOut);
+    const sv = num(v.surveyVert);
+    const sa = num(v.surveyAlong);
     const { x, y, z } = g.frame;
     const zN = scale(z, s); // towards the slab
+    const up = dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
+    const upSign = dot(up, x) >= 0 ? 1 : -1;
 
     // Centre-line point at the middle of the fin.
     let C;
     if (mount === 'top') {
       const base = centreAt(g, node);
-      const up = dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
       C = madd(base, up, backT + finH / 2);
     } else {
       C = centreAt(g, add(node, { x: 0, y: 0, z: num(v.dz, -100) }));
@@ -92,20 +134,36 @@ export const slabBracket: ConnectionDef = {
     const vWire = -g.shift.y * s; // wire line position along zN, relative to C
     const sideFace = madd(C, y, g.w / 2);
     const yFin = g.w / 2 + finT / 2; // fin mid-plane, relative to C along y
+    if (Math.abs(sa) > backW / 2 - finT) out.warnings.push(`Along-facade survey adjustment ${Math.round(sa)} mm moves the back plate off the fin.`);
 
-    // Fin plate: u along member axis, v towards the slab.
+    // Fin plate: u along member axis, v towards the slab. Its extent along u
+    // follows the back plate when the survey moves it vertically.
     const v0 = -finBack;
-    const v1 = mount === 'top' ? vWire + standoff + 20 + backH : vWire + standoff - backT;
+    const v1 = (mount === 'top' ? vWire + standoff + 20 + backH : vWire + standoff - backT) + so;
     if (v1 - v0 < 2 * finBack) out.warnings.push('Stand-off too small for the fin plate.');
-    const finOrigin = madd(madd(sideFace, x, -finH / 2), zN, v0);
-    const finFrame = plateOn(finOrigin, y, x, zN, finT);
+    let u0: number;
+    let u1: number;
+    if (mount === 'top') {
+      // Bottom edge (towards −up) sits on the base plate, which moves by sv.
+      const lowU = -finH / 2 + sv;
+      const highU = finH / 2;
+      [u0, u1] = upSign > 0 ? [lowU, highU] : [-highU, -lowU];
+    } else {
+      const svx = sv * upSign;
+      [u0, u1] = [-finH / 2 + Math.min(0, svx), finH / 2 + Math.max(0, svx)];
+    }
+    const finLen = u1 - u0;
     const offsets = nb === 1 ? [0] : Array.from({ length: nb }, (_, i) => (i - (nb - 1) / 2) * pitch);
-    const finHoles: Hole2D[] = offsets.map((u) => ({ x: finH / 2 + u, y: -v0, d: bolt.hole, slot: num(v.slot, 17), angle: 0 }));
+    const edgeU = Math.min(...offsets.map((u) => Math.min(u - u0, u1 - u)));
+    if (sv && edgeU < bolt.hole) out.warnings.push(`Vertical survey adjustment ${Math.round(sv)} mm leaves the fin bolts too close to the fin edge.`);
+    const finOrigin = madd(madd(sideFace, x, u0), zN, v0);
+    const finFrame = plateOn(finOrigin, y, x, zN, finT);
+    const finHoles: Hole2D[] = offsets.map((u) => ({ x: u - u0, y: -v0, d: bolt.hole, slot: finSlot, angle: 0 }));
     out.plates.push({
       key: 'fin',
       name: 'Fin plate',
       t: finT,
-      outline: rect(finH, v1 - v0),
+      outline: rect(finLen, v1 - v0),
       holes: finHoles,
       frame: finFrame,
       weldedTo: `c:${c.id}:back`,
@@ -128,11 +186,10 @@ export const slabBracket: ConnectionDef = {
     // Back plate.
     const anchorHoleD = anchor.hole + 2;
     if (mount === 'top') {
-      const up = dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
       const base = madd(C, up, -(backT + finH / 2));
-      const origin = madd(madd(base, zN, vWire + standoff + 20), y, yFin - backW / 2);
+      const origin = madd(madd(madd(base, zN, vWire + standoff + 20 + so), y, yFin - backW / 2 + sa), up, sv);
       const frame = plateOn(origin, up, y, zN, backT);
-      const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: num(v.anchorSlot, 20), angle: 90 }));
+      const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: anchorSlot, angle: 90 }));
       out.plates.push({ key: 'back', name: 'Base plate', t: backT, outline: rect(backW, backH), holes, frame, assemblyMain: true });
       out.bolts.push({
         key: 'anchors',
@@ -145,10 +202,10 @@ export const slabBracket: ConnectionDef = {
         positions: holes.map((h) => toWorld(frame, h.x, h.y, 0)).map((pt) => madd(pt, up, dot(frame.z, up) >= 0 ? backT : 0)),
       });
     } else {
-      const slabPoint = madd(C, zN, vWire + standoff);
+      const slabPoint = madd(madd(madd(C, zN, vWire + standoff + so), up, sv), y, sa);
       const origin = madd(madd(slabPoint, y, yFin - backW / 2), x, -backH / 2);
       const frame = plateOn(origin, scale(zN, -1), y, x, backT);
-      const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: num(v.anchorSlot, 20), angle: 0 }));
+      const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: anchorSlot, angle: 0 }));
       out.plates.push({ key: 'back', name: 'Back plate', t: backT, outline: rect(backW, backH), holes, frame, assemblyMain: true });
       out.bolts.push({
         key: 'anchors',
@@ -167,3 +224,34 @@ export const slabBracket: ConnectionDef = {
     return out;
   },
 };
+
+/** Where a slab bracket meets the slab, and the facade directions there (for survey matching). */
+export interface BracketReference {
+  /** Design slab-edge point at the bracket: on the slab face / edge, at the node level, on the fin line. */
+  point: Vec3;
+  /** Unit directions: out of plane (towards the slab), vertical (up), along the facade (mullion local +y). */
+  out: Vec3;
+  vertical: Vec3;
+  along: Vec3;
+  mount: 'edge' | 'top';
+}
+
+/** Design reference point of a slab bracket (survey offsets ignored). */
+export function bracketReference(ctx: Pick<ConnCtx, 'c' | 'v' | 'node' | 'geom'>): BracketReference | null {
+  const g = ctx.geom(ctx.c.secondary[0]);
+  if (!g || !g.profile) return null;
+  const { v, node } = ctx;
+  const s = num(v.side, 1) >= 0 ? 1 : -1;
+  const zN = scale(g.frame.z, s);
+  const vWire = -g.shift.y * s;
+  const finT = num(v.finT, 10);
+  const point = madd(madd(centreAt(g, node), zN, vWire + num(v.standoff, 150)), g.frame.y, g.w / 2 + finT / 2);
+  const horiz = (d: Vec3) => normalize({ x: d.x, y: d.y, z: 0 });
+  return {
+    point,
+    out: horiz(zN),
+    vertical: { x: 0, y: 0, z: 1 },
+    along: horiz(g.frame.y),
+    mount: str(v.mount, 'edge') === 'top' ? 'top' : 'edge',
+  };
+}

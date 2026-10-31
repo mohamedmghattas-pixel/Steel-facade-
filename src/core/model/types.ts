@@ -279,6 +279,12 @@ export interface ToleranceItem {
   direction: 'along' | 'vertical' | 'out';
   /** Where the value comes from (standard clause, spec). */
   source?: string;
+  /**
+   * What the tolerance belongs to: the supporting structure (slab, anchors — absorbed by
+   * the slab brackets and replaced by the survey where one is matched) or the steel
+   * (fabrication / erection — applies at every joint). Absent: inferred from the name.
+   */
+  scope?: 'structure' | 'steel';
 }
 
 export interface MovementSettings {
@@ -293,6 +299,14 @@ export interface MovementSettings {
   /** Combine tolerances by straight sum or root-sum-square. */
   combine: 'linear' | 'rss';
   tolerances: ToleranceItem[];
+  /** Auto slot lengths are rounded up to this increment, mm (default 5). */
+  slotIncrement?: number;
+  /** Extra clearance added to every derived slot / gap, mm (default 0). */
+  slotMargin?: number;
+  /** Smallest auto stack-joint gap, mm (default 10). */
+  minGap?: number;
+  /** ± accuracy of the site survey; replaces the structure tolerances where a bracket is matched, mm (default 3). */
+  surveyAccuracy?: number;
 }
 
 /** A surveyed point on the as-built structure (e.g. slab edge), with an optional design position. */
@@ -309,6 +323,13 @@ export interface SurveySet {
   matchRadius: number;
   source?: string;
   importedAt?: string;
+  /**
+   * Use the along-facade deviation too (only meaningful when the points mark anchor /
+   * channel positions rather than any point on the slab edge). Default false.
+   */
+  applyAlong?: boolean;
+  /** Made-to-measure adjustments are rounded to this step, mm (default 5). */
+  adjustStep?: number;
 }
 
 // ---------------------------------------------------------------------------

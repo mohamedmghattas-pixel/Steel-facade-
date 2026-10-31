@@ -6,6 +6,7 @@ import { boltLength, getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
 import { cross, madd, scale } from '../model/geometry';
 import type { MemberGeom } from '../derive/memberGeom';
+import { jointMovement } from '../movement/provisions';
 import {
   centreAt,
   emptyOut,
@@ -42,6 +43,40 @@ function joint(ctx: ConnCtx, out?: ConnectionOut): Joint | null {
   return { main, sec, dIn: dir, end, face: faceDistance(main, ctx.node, dir) };
 }
 
+/**
+ * Movement slots: with autoSlots the member's movement end gets a slot sized
+ * from the thermal ΔL and the steel tolerance stack (core/movement); the other
+ * end stays round (fixed point).
+ */
+const MOVEMENT_PARAMS: ConnectionDef['params'] = [
+  {
+    key: 'autoSlots',
+    label: 'Auto thermal slot (one end of the member)',
+    kind: 'bool',
+    default: true,
+    help: 'Slot the movement end of the supported member for ΔL = α·ΔT·L plus the steel tolerances (Project → Movement & tolerances). Off: the manual slot applies.',
+  },
+  { key: 'slotted', label: 'Movement end', kind: 'select', default: 'auto', options: ['auto', 'yes (slotted)', 'no (fixed)'] },
+];
+
+/**
+ * The hole that carries a joint's movement slot: bolt, hole width and the
+ * distance from its centre to the nearest edge along the slot axis (fin plate:
+ * plate end; angle cleat: end of the supported member).
+ */
+export function jointSlotHole(type: string, v: ConnCtx['v']): { bolt: string; d0: number; edge: number; part: string } {
+  const bolt = getBolt(str(v.bolt, 'M12'));
+  if (type === 'angleCleat') {
+    const prof = getProfile(str(v.profile, 'L 60x60x6'));
+    const sh = prof?.shape.type === 'L' ? prof.shape : { h: 60, b: 60, t: 6 };
+    const g = num(v.gauge) || Math.max(sh.t + bolt.hole, Math.round((Math.min(sh.h, sh.b) * 0.55) / 5) * 5);
+    return { bolt: bolt.name, d0: bolt.hole, edge: g - num(v.gap, 10), part: 'supported member end' };
+  }
+  const e = Math.max(2 * bolt.hole, 25);
+  const L = num(v.length, 100);
+  return { bolt: bolt.name, d0: bolt.hole, edge: Math.min(e, L - e), part: 'fin plate' };
+}
+
 const boltOffsets = (n: number, pitch: number) =>
   n <= 1 ? [0] : Array.from({ length: n }, (_, i) => (i - (n - 1) / 2) * pitch);
 
@@ -63,7 +98,8 @@ export const finPlate: ConnectionDef = {
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts', kind: 'number', default: 2 },
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 50, unit: 'mm' },
-    { key: 'slot', label: 'Slot length', kind: 'number', default: 0, unit: 'mm' },
+    ...MOVEMENT_PARAMS,
+    { key: 'slot', label: 'Slot length, manual (extra, along the supported member)', kind: 'number', default: 0, unit: 'mm' },
   ],
   trims(ctx) {
     const j = joint(ctx);
@@ -85,6 +121,8 @@ export const finPlate: ConnectionDef = {
     const Cs = centreAt(sec, node);
     const e = Math.max(2 * bolt.hole, 25);
     const ub = face + L - e;
+    // Thermal slot at the member's movement end (auto), or the manual slot.
+    const slot = jointMovement(ctx, jointSlotHole('finPlate', v)).slotValue;
     let offs = boltOffsets(Math.round(num(v.bolts, 2)), num(v.pitch, 50));
     if (offs.some((o) => Math.abs(o) > H / 2 - bolt.hole)) offs = [0];
     // Side plate on the member face, or a knife plate centred in a slotted member.
@@ -97,7 +135,7 @@ export const finPlate: ConnectionDef = {
       name: 'Fin plate',
       t,
       outline: rect(L, H),
-      holes: offs.map((o) => ({ x: L - e, y: H / 2 + o, d: bolt.hole, slot: num(v.slot), angle: 0 })),
+      holes: offs.map((o) => ({ x: L - e, y: H / 2 + o, d: bolt.hole, slot, angle: 0 })),
       frame,
       weldedTo: `m:${j.main.member.id}`,
     });
@@ -136,6 +174,8 @@ export const angleCleat: ConnectionDef = {
     { key: 'bolts', label: 'Bolts per leg', kind: 'number', default: 1 },
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 50, unit: 'mm' },
     { key: 'gauge', label: 'Gauge from heel (0 = auto)', kind: 'number', default: 0, unit: 'mm' },
+    ...MOVEMENT_PARAMS,
+    { key: 'slot', label: 'Slot in the supported member, manual (extra, along its axis)', kind: 'number', default: 0, unit: 'mm' },
   ],
   trims(ctx) {
     const j = joint(ctx);
@@ -168,6 +208,8 @@ export const angleCleat: ConnectionDef = {
     if (offs.some((o) => Math.abs(o) > Lc / 2 - bolt.hole)) offs = [0];
 
     const holes: WorldHole[] = [];
+    // Thermal slot in the supported member's holes (along its axis) at its movement end; cleat holes stay round.
+    const slot = jointMovement(ctx, jointSlotHole('angleCleat', v)).slotValue;
     // Leg against the secondary (bolts along -zp).
     const gripS = t + sec.w;
     out.bolts.push({
@@ -183,7 +225,7 @@ export const angleCleat: ConnectionDef = {
     for (const o of offs) {
       const p = madd(madd(corner, yp, g), xp, o);
       holes.push({ pos: madd(p, zp, t / 2), dir: zp, d: bolt.hole });
-      out.memberHoles.push({ member: sec.member.id, hole: { pos: madd(madd(Cs, dIn, face + g), xp, o), dir: zp, d: bolt.hole } });
+      out.memberHoles.push({ member: sec.member.id, hole: { pos: madd(madd(Cs, dIn, face + g), xp, o), dir: zp, d: bolt.hole, ...(slot > 0 ? { slot, slotDir: dIn } : {}) } });
     }
     // Leg against the main member (bolts along -dIn through the main member).
     const mainDepth = 2 * halfExtent(main, dIn);

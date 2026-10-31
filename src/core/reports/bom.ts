@@ -172,6 +172,11 @@ export function bomToXlsx(b: BomTables, p: Project): Uint8Array {
     { name: 'Profiles', rows: b.profiles },
     { name: 'Bolts', rows: b.bolts },
   ];
+  return xlsxWorkbook(sheets);
+}
+
+/** A minimal XLSX workbook (inline strings, bold frozen header row) with one worksheet per entry. */
+export function xlsxWorkbook(sheets: { name: string; rows: Row[] }[]): Uint8Array {
   const ns = 'http://schemas.openxmlformats.org';
   const files: { name: string; data: string }[] = [
     {

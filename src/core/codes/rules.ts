@@ -4,6 +4,7 @@
  * docs/CODE_RULES.md is the readable version of this table.
  */
 import type { CodeRule, DesignCode } from './types';
+import { MOVEMENT_RULES } from '../movement/rules';
 
 export const AISC_ED = 'ANSI/AISC 360-22 (same values in 360-16)';
 export const EC3_ED = 'EN 1993-1-8:2005+AC:2009';
@@ -477,6 +478,8 @@ export const RULES: CodeRule[] = [
     verification: 'cross-checked',
     sources: [SRC.iso12944],
   },
+  // --- Movement, tolerances and survey (core/movement, docs/MOVEMENT.md) -----
+  ...MOVEMENT_RULES,
   // --- Geometry ---------------------------------------------------------------
   {
     id: 'geom.holeOutside',

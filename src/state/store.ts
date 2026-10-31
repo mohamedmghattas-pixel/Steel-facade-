@@ -24,22 +24,9 @@ export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
 export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'clashes';
-export type DialogName =
-  | null
-  | 'facadeGrid'
-  | 'autoConnect'
-  | 'array'
-  | 'dxfImport'
-  | 'about'
-  | 'issueDrawings'
-  | 'drawingSettings'
-  | 'applyConnection'
-  | 'customConnection'
-  // model management (ui/dialogs/ManagementDialogs.tsx)
-  | 'phases'
-  | 'dwgInfo'
-  | 'ifcSteel'
-  | 'panelLayout';
+/** Dialogs of the model-management area (ui/dialogs/ManagementDialogs.tsx). */
+export type ManagementDialogName = 'phases' | 'dwgInfo' | 'ifcSteel' | 'panelLayout';
+export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings' | 'applyConnection' | 'customConnection' | ManagementDialogName;
 
 export interface Selection {
   members: Id[];

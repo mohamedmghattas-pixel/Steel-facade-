@@ -35,7 +35,16 @@ export interface MemberGeom {
 
 export type Trims = Map<Id, { start: number; end: number }>;
 
-export function memberGeom(p: Project, m: Member, trims?: Trims): MemberGeom {
+/** Member ends set by a connection (see deriveModel): the user extension there is not applied. */
+export type GovernedEnds = Map<Id, { start: boolean; end: boolean }>;
+
+/** Extension actually applied at each end: the user value, or 0 where a connection governs the end. */
+export function appliedExt(m: Member, governed?: GovernedEnds): { start: number; end: number } {
+  const g = governed?.get(m.id);
+  return { start: g?.start ? 0 : m.startExt || 0, end: g?.end ? 0 : m.endExt || 0 };
+}
+
+export function memberGeom(p: Project, m: Member, trims?: Trims, governed?: GovernedEnds): MemberGeom {
   const a = p.nodes[m.start].p;
   const b = p.nodes[m.end].p;
   const axes = axesFor(a, b, m.rotation);
@@ -44,8 +53,9 @@ export function memberGeom(p: Project, m: Member, trims?: Trims): MemberGeom {
   const w = profile?.b ?? 0;
   const shift = sectionShift(m, w, h);
   const t = trims?.get(m.id) ?? { start: 0, end: 0 };
-  const startOff = -(m.startExt || 0) + t.start;
-  let length = dist(a, b) + (m.startExt || 0) + (m.endExt || 0) - t.start - t.end;
+  const ext = appliedExt(m, governed);
+  const startOff = -ext.start + t.start;
+  let length = dist(a, b) + ext.start + ext.end - t.start - t.end;
   const lineStart = madd(a, axes.x, startOff);
   let origin = toWorld({ origin: lineStart, ...axes }, 0, shift.x, shift.y);
   const g: MemberGeom = {

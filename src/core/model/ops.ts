@@ -44,6 +44,7 @@ import {
   sub,
   v3,
 } from './geometry';
+import { isHorizontalAxis, isVerticalAxis } from './geometry';
 import { centreLine, endOnNode, type End } from '../geometry/endPrep';
 import { stiffenerShape } from '../geometry/stiffener';
 import { stripFlatPattern, DEFAULT_K_FACTOR, type StripBend } from '../geometry/bentPlate';
@@ -423,10 +424,11 @@ export function membersAtNode(p: Project, nodeId: Id): { member: Member; at: 'st
 
 export type Direction = 'vertical' | 'horizontal' | 'inclined';
 
+/** Vertical / horizontal by the shared thresholds of geometry.ts (the same test as the member local axes). */
 export function memberDirection(p: Project, m: Member): Direction {
-  const d = normalize(sub(p.nodes[m.end].p, p.nodes[m.start].p));
-  if (Math.abs(d.z) > 0.995) return 'vertical';
-  if (Math.abs(d.z) < 0.005) return 'horizontal';
+  const d = sub(p.nodes[m.end].p, p.nodes[m.start].p);
+  if (isVerticalAxis(d)) return 'vertical';
+  if (isHorizontalAxis(d)) return 'horizontal';
   return 'inclined';
 }
 

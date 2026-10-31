@@ -1,5 +1,5 @@
 import { getBolt, boltLength } from '../library/bolts';
-import { add, dot, madd, normalize, scale, sub, toLocal, toWorld } from '../model/geometry';
+import { add, dot, madd, scale, sub, toLocal, toWorld } from '../model/geometry';
 import type { Vec3 } from '../model/types';
 import { slabBracketMovement } from '../movement/provisions';
 import {
@@ -25,7 +25,9 @@ import {
  * from the project's tolerance stack and movement demand (core/movement,
  * docs/MOVEMENT.md); otherwise the manual values apply. `surveyOut / Vert /
  * Along` move the back plate to the surveyed slab edge (made-to-measure
- * bracket): out = towards the slab, vert = up, along = the mullion's local +y.
+ * bracket) along the bracket's own axes: out = zN (mullion local z towards the
+ * slab), vert = the mullion axis pointing up, along = the mullion's local +y —
+ * the same axes the survey deviation is decomposed on (bracketReference).
  */
 export const slabBracket: ConnectionDef = {
   type: 'slabBracket',
@@ -35,6 +37,7 @@ export const slabBracket: ConnectionDef = {
   params: [
     { key: 'mount', label: 'Mount', kind: 'select', default: 'edge', options: ['edge', 'top'] },
     { key: 'side', label: 'Slab side (±1 along mullion depth)', kind: 'number', default: 1 },
+    { key: 'finSide', label: 'Fin side (±1 along mullion local y)', kind: 'number', default: 1 },
     { key: 'standoff', label: 'Wire line to slab face', kind: 'number', default: 150, unit: 'mm' },
     { key: 'dz', label: 'Height offset (edge mount)', kind: 'number', default: -100, unit: 'mm' },
     { key: 'finT', label: 'Fin thickness', kind: 'number', default: 10, unit: 'mm' },
@@ -43,6 +46,7 @@ export const slabBracket: ConnectionDef = {
     { key: 'backT', label: 'Back plate thickness', kind: 'number', default: 10, unit: 'mm' },
     { key: 'backW', label: 'Back plate width', kind: 'number', default: 160, unit: 'mm' },
     { key: 'backH', label: 'Back plate height / depth', kind: 'number', default: 150, unit: 'mm' },
+    { key: 'edgeSetback', label: 'Base plate set-back from slab edge (top mount)', kind: 'number', default: 20, unit: 'mm' },
     { key: 'bolt', label: 'Bolt', kind: 'bolt', default: 'M12' },
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts in fin', kind: 'number', default: 2 },
@@ -98,6 +102,8 @@ export const slabBracket: ConnectionDef = {
     const mv = slabBracketMovement(ctx);
     const mount = str(v.mount, 'edge');
     const s = num(v.side, 1) >= 0 ? 1 : -1;
+    const fs = num(v.finSide, 1) >= 0 ? 1 : -1;
+    const setback = num(v.edgeSetback, 20);
     const finT = num(v.finT, 10);
     const finH = num(v.finH, 150);
     const finBack = num(v.finBack, 40);
@@ -116,8 +122,9 @@ export const slabBracket: ConnectionDef = {
     const so = num(v.surveyOut);
     const sv = num(v.surveyVert);
     const sa = num(v.surveyAlong);
-    const { x, y, z } = g.frame;
+    const { x, y: yM, z } = g.frame;
     const zN = scale(z, s); // towards the slab
+    const y = scale(yM, fs); // fin side of the mullion
     const up = dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
     const upSign = dot(up, x) >= 0 ? 1 : -1;
 
@@ -139,7 +146,7 @@ export const slabBracket: ConnectionDef = {
     // Fin plate: u along member axis, v towards the slab. Its extent along u
     // follows the back plate when the survey moves it vertically.
     const v0 = -finBack;
-    const v1 = (mount === 'top' ? vWire + standoff + 20 + backH : vWire + standoff - backT) + so;
+    const v1 = (mount === 'top' ? vWire + standoff + setback + backH : vWire + standoff - backT) + so;
     if (v1 - v0 < 2 * finBack) out.warnings.push('Stand-off too small for the fin plate.');
     let u0: number;
     let u1: number;
@@ -187,7 +194,7 @@ export const slabBracket: ConnectionDef = {
     const anchorHoleD = anchor.hole + 2;
     if (mount === 'top') {
       const base = madd(C, up, -(backT + finH / 2));
-      const origin = madd(madd(madd(base, zN, vWire + standoff + 20 + so), y, yFin - backW / 2 + sa), up, sv);
+      const origin = madd(madd(madd(madd(base, zN, vWire + standoff + setback + so), y, yFin - backW / 2), yM, sa), up, sv);
       const frame = plateOn(origin, up, y, zN, backT);
       const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: anchorSlot, angle: 90 }));
       out.plates.push({ key: 'back', name: 'Base plate', t: backT, outline: rect(backW, backH), holes, frame, assemblyMain: true });
@@ -202,7 +209,7 @@ export const slabBracket: ConnectionDef = {
         positions: holes.map((h) => toWorld(frame, h.x, h.y, 0)).map((pt) => madd(pt, up, dot(frame.z, up) >= 0 ? backT : 0)),
       });
     } else {
-      const slabPoint = madd(madd(madd(C, zN, vWire + standoff + so), up, sv), y, sa);
+      const slabPoint = madd(madd(madd(C, zN, vWire + standoff + so), up, sv), yM, sa);
       const origin = madd(madd(slabPoint, y, yFin - backW / 2), x, -backH / 2);
       const frame = plateOn(origin, scale(zN, -1), y, x, backT);
       const holes: Hole2D[] = [ea, backW - ea].map((hx) => ({ x: hx, y: backH / 2, d: anchorHoleD, slot: anchorSlot, angle: 0 }));
@@ -229,7 +236,12 @@ export const slabBracket: ConnectionDef = {
 export interface BracketReference {
   /** Design slab-edge point at the bracket: on the slab face / edge, at the node level, on the fin line. */
   point: Vec3;
-  /** Unit directions: out of plane (towards the slab), vertical (up), along the facade (mullion local +y). */
+  /**
+   * Unit directions the survey offsets are applied along (orthonormal): out of
+   * plane = zN (mullion local z towards the slab), vertical = the mullion axis
+   * pointing up, along = mullion local +y. For a plumb mullion they are the
+   * horizontal facade normal, world Z and the horizontal facade direction.
+   */
   out: Vec3;
   vertical: Vec3;
   along: Vec3;
@@ -242,16 +254,17 @@ export function bracketReference(ctx: Pick<ConnCtx, 'c' | 'v' | 'node' | 'geom'>
   if (!g || !g.profile) return null;
   const { v, node } = ctx;
   const s = num(v.side, 1) >= 0 ? 1 : -1;
+  const fs = num(v.finSide, 1) >= 0 ? 1 : -1;
   const zN = scale(g.frame.z, s);
   const vWire = -g.shift.y * s;
   const finT = num(v.finT, 10);
-  const point = madd(madd(centreAt(g, node), zN, vWire + num(v.standoff, 150)), g.frame.y, g.w / 2 + finT / 2);
-  const horiz = (d: Vec3) => normalize({ x: d.x, y: d.y, z: 0 });
+  const point = madd(madd(centreAt(g, node), zN, vWire + num(v.standoff, 150)), g.frame.y, fs * (g.w / 2 + finT / 2));
+  const up = dot(g.frame.x, { x: 0, y: 0, z: 1 }) >= 0 ? g.frame.x : scale(g.frame.x, -1);
   return {
     point,
-    out: horiz(zN),
-    vertical: { x: 0, y: 0, z: 1 },
-    along: horiz(g.frame.y),
+    out: zN,
+    vertical: up,
+    along: g.frame.y,
     mount: str(v.mount, 'edge') === 'top' ? 'top' : 'edge',
   };
 }

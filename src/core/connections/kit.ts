@@ -280,13 +280,19 @@ export function addBolts(out: ConnectionOut, s: BoltSpecOut) {
   });
 }
 
-/** Hole through a member: `pos` on the member's centre plane, drilled along `dir`; slots run along the member axis. */
-export function memberHole(out: ConnectionOut, g: MemberGeom, pos: Vec3, dir: Vec3, d: number, slot = 0) {
+/**
+ * Hole through a member: `pos` on the member's centre plane, drilled along
+ * `dir`; slots run along the member axis unless `o.slotDir` is given (any
+ * direction in the drilled face, e.g. across the member). `o.through: false`
+ * = a hole in one wall only (`pos` in that wall).
+ */
+export function memberHole(out: ConnectionOut, g: MemberGeom, pos: Vec3, dir: Vec3, d: number, slot = 0, o: { slotDir?: Vec3; through?: boolean } = {}) {
   const hole: WorldHole = { pos, dir: normalize(dir), d };
   if (slot > 0) {
     hole.slot = slot;
-    hole.slotDir = g.frame.x;
+    hole.slotDir = o.slotDir ? normalize(o.slotDir) : g.frame.x;
   }
+  if (o.through === false) hole.through = false;
   out.memberHoles.push({ member: g.member.id, hole });
 }
 
@@ -406,7 +412,8 @@ export function jointOf(ctx: ConnCtx, out?: ConnectionOut, label = 'Joint'): Joi
     return null;
   }
   const { dir, end } = inward(sec, ctx.node);
-  return { main, sec, dIn: dir, end, face: faceDistance(main, ctx.node, dir), Cs: centreAt(sec, ctx.node) };
+  const Cs = centreAt(sec, ctx.node);
+  return { main, sec, dIn: dir, end, face: faceDistance(main, Cs, dir), Cs };
 }
 
 /** Supported member only (steel to concrete types). */

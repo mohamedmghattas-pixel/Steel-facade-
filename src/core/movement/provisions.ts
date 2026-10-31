@@ -481,7 +481,16 @@ function stackGap(p: Project, ms: ResolvedMovement, node: Vec3, lower: MemberGeo
 // Member-to-member joints: one end of a transom / rail is fixed, the other slotted.
 
 export const SLOTTABLE_JOINTS = new Set(['finPlate', 'angleCleat']);
-const JOINT_TYPES = new Set(['finPlate', 'angleCleat', 'endPlate', 'welded', 'splicePlates', 'custom']);
+
+/**
+ * Whether a connection is a member-to-member joint for movement: every type
+ * that ties its supported member to a main member (all `needsMain` types of the
+ * registry, the library joints included, store `main`), plus custom templates
+ * (counted as joints before, also without a main member).
+ */
+export function isMemberJoint(p: Project, c: Connection): boolean {
+  return c.type === 'custom' || (!!c.main && !!p.members[c.main]);
+}
 
 /** The joint at the other end of the connection's supported member, if any. */
 export function otherEndJoint(p: Project, c: Connection): Connection | undefined {
@@ -489,7 +498,7 @@ export function otherEndJoint(p: Project, c: Connection): Connection | undefined
   if (!m) return undefined;
   const other = c.node === m.start ? m.end : c.node === m.end ? m.start : undefined;
   if (!other) return undefined;
-  return resolve(p, connIndex(p).byEnd.get(`${m.id}|${other}`)).find((x) => x.id !== c.id && x.node === other && x.secondary[0] === m.id && JOINT_TYPES.has(x.type));
+  return resolve(p, connIndex(p).byEnd.get(`${m.id}|${other}`)).find((x) => x.id !== c.id && x.node === other && x.secondary[0] === m.id && isMemberJoint(p, x));
 }
 
 const slottedMode = (c: Connection): 'auto' | 'yes' | 'no' => {

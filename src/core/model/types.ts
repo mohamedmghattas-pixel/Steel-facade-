@@ -181,8 +181,9 @@ export interface ConnectionPreset {
 /**
  * A plate in a custom connection. Values are formulas over the template's
  * parameters and the joint variables (h_sec, b_sec, h_main, b_main, depth_main …),
- * in the secondary member's end frame: u along the secondary away from the main
- * face, v across (local y), w up (local z).
+ * in the joint frame (U, V, W) of the secondary member's end: u along the
+ * secondary away from the main face, w up (secondary local z), v across (see
+ * CustomTemplate.frame).
  */
 export interface CustomPlate {
   key: string;
@@ -197,6 +198,14 @@ export interface CustomPlate {
   u: string;
   v: string;
   w: string;
+  /**
+   * Where the plate sits on its own normal (u for end, v for side, w for top plates).
+   * 'face' (default, the original rule): its contact face is at that coordinate and
+   * it grows away from the member axis (towards +U for end plates; for side / top
+   * plates towards sgn(v) / sgn(w), +V / +W when the value is 0).
+   * 'centre': its mid-plane is at that coordinate (e.g. a stiffener on the axis: v = 0).
+   */
+  place?: 'face' | 'centre';
   /** Shop weld: to the main member, the secondary member, another plate key, or none (loose). */
   weldTo: 'main' | 'secondary' | 'none' | string;
   bolts?: {
@@ -226,6 +235,15 @@ export interface CustomTemplate {
   /** Cut-back of the secondary from the main face (or the node). */
   cut: string;
   plates: CustomPlate[];
+  /**
+   * Joint frame at the member end. 'joint' (templates made since the geometry
+   * fixes): right-handed and joint-local — U into the secondary, W = its local z,
+   * V = W × U, so V flips with U at the member's end node and one template gives
+   * the same joint (rotated 180° about W) at both ends. 'member' (absent: older
+   * templates, kept by migration): V = local y at both ends (left-handed at the
+   * end node); v values are then member-local.
+   */
+  frame?: 'joint' | 'member';
 }
 
 export interface ProjectLibrary {
@@ -521,6 +539,12 @@ export interface FabricationSettings {
   paintCoats: PaintCoat[];
   /** Application loss, % (0 = theoretical consumption). */
   paintLoss: number;
+  /**
+   * DSTV NC1: through holes of hollow sections (RHS, CHS) written once on the
+   * drilled face, drilled through both walls ('one', default), or on both faces
+   * ('both': v + h for holes drilled along local y, o + u along local z).
+   */
+  dstvHollowThrough: 'one' | 'both';
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import type { Id, Vec3 } from '../core/model/types';
 import type { DerivedModel } from '../core/derive/model';
 import { holeRuns, weldLines, type PreviewBox } from '../core/connections/preview';
 import { getBolt } from '../core/library/bolts';
-import { ROLE_COLORS, alongMatrix, cachedGeometries, disposeObject, headGeo, linearMatrix, plateGeometry, plateMatrix, profileGeometry, shankGeo, v } from './meshes';
+import { ROLE_COLORS, alongMatrix, cachedGeometries, disposeObject, headGeo, linearMatrix, plateGeometry, plateMatrix, profileGeometry, shankGeo, slottedMemberGeometry, v } from './meshes';
 
 export interface PreviewContent {
   dm: DerivedModel;
@@ -212,11 +212,13 @@ export class ConnectionPreview {
           else plateLabels.set(text, { n: 1, at });
         }
       } else if (pt.shape) {
-        const g = profileGeometry(pt.profile, pt.shape);
+        // Members with open end slots (knife / tongue / stem) get their slotted body.
+        const slotted = !!pt.slots?.length && !pt.ends;
+        const g = slotted ? slottedMemberGeometry(pt) : profileGeometry(pt.profile, pt.shape);
         const isMember = pt.kind === 'member';
         const mesh = new THREE.Mesh(g.mesh, isMember ? this.memberMat(pt.role) : this.mats.cleat);
         mesh.matrixAutoUpdate = false;
-        mesh.matrix.copy(linearMatrix(pt.frame, pt.length));
+        mesh.matrix.copy(linearMatrix(pt.frame, slotted ? 1 : pt.length));
         mesh.add(new THREE.LineSegments(g.edges, this.mats.edge));
         mesh.renderOrder = isMember ? 2 : 0;
         this.content.add(mesh);

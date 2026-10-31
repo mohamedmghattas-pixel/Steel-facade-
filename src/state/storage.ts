@@ -48,6 +48,7 @@ export function migrateProject(p: Project | null): Project | null {
     revisions: p.drawings?.revisions ?? {},
   };
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [] };
+  migrateTemplates(p);
   p.workPlanes ??= [];
   p.plates ??= {};
   p.survey ??= { points: [], matchRadius: 300 };
@@ -60,6 +61,28 @@ export function migrateProject(p: Project | null): Project | null {
   p.clashes.issues ??= [];
   p.clashes.clearance ??= 10;
   return p;
+}
+
+/**
+ * Custom templates saved before the joint frame and the plate placement option
+ * existed. Their v values were written against the member-local frame, so they
+ * keep it (`frame: 'member'`) and their geometry is unchanged. One exception:
+ * the stiffener of the starter template "Bolted end plate with stiffener"
+ * (v = -ts/2, meant to be centred under the secondary but 8 mm off-centre) is
+ * centred on the axis — the only geometry change on load.
+ */
+function migrateTemplates(p: Project) {
+  for (const t of p.library.templates) {
+    if (!t || typeof t !== 'object') continue;
+    t.frame ??= 'member';
+    if (t.name !== 'Bolted end plate with stiffener') continue;
+    for (const pl of t.plates ?? []) {
+      if (pl.key === 'st' && pl.plane === 'side' && pl.place === undefined && pl.t.replace(/\s/g, '') === 'ts' && pl.v.replace(/\s/g, '') === '-ts/2') {
+        pl.v = '0';
+        pl.place = 'centre';
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
  */
 import { getBolt, type BoltSize } from '../library/bolts';
 import type { Vec3 } from '../model/types';
-import { emptyOut, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
+import { emptyOut, endSlot, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
 import { P, addBolts, addPlate, ceilTo, cross, edgeDist, holeAt, jointOf, madd, normalize, scale, type Joint } from './kit';
 
 type Style = 'fork-boss' | 'fork-cap' | 'tab' | 'tongue';
@@ -155,6 +155,8 @@ function buildLug(ctx: ConnCtx, out: ConnectionOut, g: LugGeom, names: { lug: st
       weldedTo: `m:${sec.member.id}`,
     });
     holeAt(piece, P0, pin.hole);
+    // Tongue: welded into the slotted strut end, `insert` mm past the end (at face + uEnd).
+    if (style === 'tongue') endSlot(out, sec, j.end, Cs, nL, tp, g.insert);
     if (uPin - ePiece < 10) out.warnings.push('Tab runs into the main member — increase the lug length.');
     headY = tp / 2;
     grip = tp + tl;

@@ -9,7 +9,7 @@ import { getBolt } from '../library/bolts';
 import { membersAtNode } from '../model/ops';
 import type { Id, Vec2, Vec3 } from '../model/types';
 import type { MemberGeom } from '../derive/memberGeom';
-import { centreAt, emptyOut, halfExtent, inward, num, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
+import { centreAt, emptyOut, endSlot, halfExtent, inward, num, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
 import { P, addBolts, addPlate, capsuleBox, cross, dot, edgeDist, holeAt, hull, intOf, jointOf, madd, memberHole, normalize, pitchFor, scale, sideOf, sub, type Joint } from './kit';
 
 type BraceKind = 'flat' | 'angle' | 'tube' | 'other';
@@ -198,6 +198,8 @@ export const gussetPlate: ConnectionDef = {
         weldedTo: `m:${sec.member.id}`,
       });
       for (const p of axis) holeAt(knife, p, bolt.hole);
+      // The knife runs from the tube's cut-back end (trim) to knifeEnd inside the tube.
+      endSlot(out, sec, j.end, madd(Cs, dIn, g.trim), nG, tk, g.knifeEnd! - g.trim);
     } else {
       tPart = lapThickness(sec);
       const holeOff = kind === 'angle' ? -sec.w / 2 + tPart / 2 : 0;

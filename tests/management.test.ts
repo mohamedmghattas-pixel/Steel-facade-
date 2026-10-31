@@ -55,7 +55,8 @@ describe('mark locking', () => {
     lockMarks(p, deriveModel(p));
     const m = mullions(p)[0];
     const was = asmMarkOf(deriveModel(p), m.id);
-    p.members[m.id].endExt = 37;
+    // (An end extension no longer changes it: both mullion ends are set by their slab brackets.)
+    p.members[m.id].finish = p.members[m.id].finish === 'paint' ? 'hdg' : 'paint';
     const dm = deriveModel(p);
     const a = dm.assemblies.find((x) => x.main === `m:${m.id}`)!;
     expect(a.mark).not.toBe(was);

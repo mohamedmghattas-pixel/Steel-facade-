@@ -18,7 +18,7 @@
  */
 import type { IfcAPI } from 'web-ifc';
 import type { FreePlate, Id, MemberRole, Project, Vec2, Vec3 } from '../model/types';
-import { add, axesFor, cross, dist, dot, normalize, polygonArea, scale, sub, v3 } from '../model/geometry';
+import { add, axesFor, cross, dist, dot, isHorizontalAxis, isVerticalAxis, normalize, polygonArea, scale, sub, v3 } from '../model/geometry';
 import { memberDefaults, newId } from '../model/ops';
 import { PROFILES, getProfile, type Profile, type ProfileDef } from '../library/profiles';
 import { findMaterial } from '../library/materials';
@@ -517,9 +517,9 @@ function guessRole(ifcType: string, predefined: string, a: Vec3, b: Vec3, psetRo
   if (ifcType.startsWith('IFCBEAM')) return 'beam';
   const byType = ROLE_BY_PREDEFINED[predefined];
   if (byType) return byType;
-  const d = normalize(sub(b, a));
-  if (Math.abs(d.z) > 0.995) return 'mullion';
-  if (Math.abs(d.z) < 0.005) return 'transom';
+  const d = sub(b, a);
+  if (isVerticalAxis(d)) return 'mullion';
+  if (isHorizontalAxis(d)) return 'transom';
   return 'brace';
 }
 

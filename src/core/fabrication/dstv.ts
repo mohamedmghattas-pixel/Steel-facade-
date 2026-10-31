@@ -1,8 +1,19 @@
 /**
  * DSTV NC1 export (one file per unique part) for CNC saw/drill lines and plate
- * cutting. Holes drilled along local y land on the web/front face "v", holes
- * drilled along local z on the top face "o". Slots are written as elongated
- * holes ("l"); check the slot convention against your machine's post-processor.
+ * cutting. Faces: "v" = front (local −y side), "h" = back (+y), "o" = top
+ * (+z), "u" = bottom (−z). Holes drilled along local y land on "v", holes
+ * drilled along local z on "o"; a one-wall hole goes on the face of its own
+ * wall (v / h, o / u). Through holes of hollow sections are written once (drill
+ * through both walls) or on both faces (v + h, o + u) — fabrication setting
+ * `dstvHollowThrough`. Slots are written as elongated holes ("l") with their
+ * direction (PartHole.slotAngle); check the slot convention against your
+ * machine's post-processor.
+ *
+ * End slots (knife / tongue / tee-stem inserts) open at the member end, so they
+ * change the outer contour of every face they pass through: they are written as
+ * a rectangular notch in the AK contour of those faces (o + u for slots through
+ * local z, v + h for slots through local y), like a cope. A face that already
+ * has a cope contour keeps the cope contour only.
  *
  * End preparations: the ST header carries the saw angles (web start / end,
  * flange start / end, degrees from square, DSTV range ±89.9°). The web angle is
@@ -189,16 +200,59 @@ export function partToDstv(part: Part, qty: number, p: Project, opts: DstvOption
     if (coped('top')) contour('o', flangeProfile(e.start, e.end, b, h / 2).map((q) => ({ x: q.x, y: q.y + b / 2 })));
     if (coped('bottom')) contour('u', flangeProfile(e.start, e.end, b, -h / 2).map((q) => ({ x: q.x, y: q.y + b / 2 })));
   }
+  const contoured = new Set<string>();
+  if (shape && e && (e.start.copes.length || e.end.copes.length)) {
+    contoured.add('v');
+    for (const k of [...e.start.copes, ...e.end.copes]) contoured.add(k.side === 'top' ? 'o' : 'u');
+  }
+  if (!isPlate && shape && part.slots?.length) {
+    // End slots: rectangular notches in the outer contour of the faces they cut.
+    const [h, b] = [prof?.h ?? height, prof?.b ?? flangeW];
+    for (const faceAxis of ['z', 'y'] as const) {
+      const slots = part.slots.filter((k) => k.face === faceAxis);
+      if (!slots.length) continue;
+      const H = faceAxis === 'z' ? b : h;
+      const notches = slots.map((k) => ({ x0: k.x0, x1: k.x1, y0: k.offset + H / 2 - k.width / 2, y1: k.offset + H / 2 + k.width / 2 }));
+      for (const face of faceAxis === 'z' ? ['o', 'u'] : ['v', 'h']) {
+        if (contoured.has(face)) continue;
+        out.push('AK');
+        for (const q of notchedRect(length, H, notches)) out.push(`  ${face}${f(q.x)}${f(q.y)}${f(0)}`);
+      }
+    }
+  }
   if (!isPlate && part.holes.length && shape) {
     const [h, b] = [prof?.h ?? height, prof?.b ?? flangeW];
+    const both = fabSettings(p).dstvHollowThrough === 'both' && (shape.type === 'RHS' || shape.type === 'CHS');
     out.push('BO');
     for (const hole of part.holes) {
-      if (hole.face === 'y') out.push(holeLine('v', hole.x, hole.z + h / 2, hole.d, hole.slot));
-      else out.push(holeLine('o', hole.x, hole.y + b / 2, hole.d, hole.slot));
+      const a = hole.slotAngle ?? 0;
+      if (hole.face === 'y') {
+        const faces = hole.through === false ? [hole.y > 0 ? 'h' : 'v'] : both ? ['v', 'h'] : ['v'];
+        for (const fc of faces) out.push(holeLine(fc, hole.x, hole.z + h / 2, hole.d, hole.slot, a));
+      } else {
+        const faces = hole.through === false ? [hole.z < 0 ? 'u' : 'o'] : both ? ['o', 'u'] : ['o'];
+        for (const fc of faces) out.push(holeLine(fc, hole.x, hole.y + b / 2, hole.d, hole.slot, a));
+      }
     }
   }
   out.push('EN');
   return out.join('\n') + '\n';
+}
+
+/**
+ * Closed outer contour of a face (x ∈ [0, L], y ∈ [0, H], counter-clockwise from
+ * the origin) with rectangular notches open at x = 0 or x = L.
+ */
+export function notchedRect(L: number, H: number, notches: { x0: number; x1: number; y0: number; y1: number }[]): { x: number; y: number }[] {
+  const cl = (y: number) => Math.max(0, Math.min(H, y));
+  const atEnd = notches.filter((n) => n.x1 >= L - 1e-6).sort((a, b) => a.y0 - b.y0);
+  const atStart = notches.filter((n) => n.x1 < L - 1e-6 && n.x0 <= 1e-6).sort((a, b) => b.y0 - a.y0);
+  const pts: { x: number; y: number }[] = [{ x: 0, y: 0 }, { x: L, y: 0 }];
+  for (const n of atEnd) pts.push({ x: L, y: cl(n.y0) }, { x: n.x0, y: cl(n.y0) }, { x: n.x0, y: cl(n.y1) }, { x: L, y: cl(n.y1) });
+  pts.push({ x: L, y: H }, { x: 0, y: H });
+  for (const n of atStart) pts.push({ x: 0, y: cl(n.y1) }, { x: n.x1, y: cl(n.y1) }, { x: n.x1, y: cl(n.y0) }, { x: 0, y: cl(n.y0) });
+  pts.push({ x: 0, y: 0 });
+  return pts.filter((q, i) => i === 0 || Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) > 1e-6);
 }
 
 /** One NC1 file per unique part mark. */

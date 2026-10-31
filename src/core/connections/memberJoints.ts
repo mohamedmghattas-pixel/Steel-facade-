@@ -10,6 +10,7 @@ import { jointMovement } from '../movement/provisions';
 import {
   centreAt,
   emptyOut,
+  endSlot,
   faceDistance,
   halfExtent,
   inward,
@@ -40,7 +41,7 @@ function joint(ctx: ConnCtx, out?: ConnectionOut): Joint | null {
     return null;
   }
   const { dir, end } = inward(sec, ctx.node);
-  return { main, sec, dIn: dir, end, face: faceDistance(main, ctx.node, dir) };
+  return { main, sec, dIn: dir, end, face: faceDistance(main, centreAt(sec, ctx.node), dir) };
 }
 
 /**
@@ -128,6 +129,8 @@ export const finPlate: ConnectionDef = {
     // Side plate on the member face, or a knife plate centred in a slotted member.
     const knife = str(v.position, 'side').startsWith('knife');
     const contact = knife ? -t / 2 : sec.w / 2;
+    // Knife: the plate runs L − gap into the member past its cut-back end — slot the member end.
+    if (knife) endSlot(out, sec, j.end, Cs, ys, t, L - num(v.gap, 10));
     const origin = madd(madd(madd(Cs, ys, contact), dIn, face), zs, -H / 2);
     const frame = plateOn(origin, ys, dIn, zs, t);
     out.plates.push({

@@ -9,6 +9,7 @@ import { drawingsFor, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfc
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
+import { SurveyView } from './dialogs/MovementDialogs';
 
 export function OutputsPanel() {
   const outputs = useStore((s) => s.outputs);
@@ -18,6 +19,7 @@ export function OutputsPanel() {
     { value: 'nesting', label: 'Cut optimisation' },
     { value: 'drawings', label: 'Drawings' },
     { value: 'checks', label: 'Checks' },
+    { value: 'survey', label: 'Survey' },
   ];
   return (
     <section className="outputs" aria-label="Outputs">
@@ -39,6 +41,7 @@ export function OutputsPanel() {
         {outputs.tab === 'nesting' && <NestingView />}
         {outputs.tab === 'drawings' && <DrawingsView />}
         {outputs.tab === 'checks' && <ChecksView />}
+        {outputs.tab === 'survey' && <SurveyView />}
       </div>
     </section>
   );

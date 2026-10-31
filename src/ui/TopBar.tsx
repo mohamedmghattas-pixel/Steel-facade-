@@ -98,6 +98,7 @@ export function TopBar() {
           { label: 'DXF → wireframe or reference…', hint: 'shop / architect drawings', run: importDxf },
           { label: 'IFC reference model…', hint: 'concrete or main steel', run: importIfcReference },
           { label: 'PDF / image underlay…', hint: 'trace shop drawings', run: importUnderlay },
+          { label: 'Survey points (CSV / DXF / IFC)…', hint: 'as-built slab edges', run: () => set({ dialog: 'survey' }) },
         ]}
       />
       <Menu

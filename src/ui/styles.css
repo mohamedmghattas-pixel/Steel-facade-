@@ -1597,3 +1597,51 @@ textarea:focus {
   border-radius: var(--radius);
   padding: 3px 6px;
 }
+
+/* ------------------------------------------------- movement & survey */
+.tol-item {
+  display: grid;
+  grid-template-columns: 1fr 92px auto;
+  gap: 4px;
+  padding: 6px;
+  margin-bottom: 4px;
+  background: var(--bg-2);
+  border-radius: var(--radius);
+  align-items: center;
+}
+.tol-item input[type='text'],
+.tol-item select {
+  min-width: 0;
+  width: 100%;
+}
+.tol-sub {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+}
+.mv-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+.mv-list li {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 3px 0;
+}
+.mv-ok {
+  color: var(--ok);
+}
+.mv-bad {
+  color: var(--warn);
+}
+.mv-list li span {
+  color: var(--text-2);
+}
+.mv-table {
+  max-height: 320px;
+  margin-top: 8px;
+}

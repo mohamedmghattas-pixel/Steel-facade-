@@ -22,8 +22,8 @@ syncCustomProfiles(initialProject);
 export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure';
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
-export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks';
-export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings' | 'applyConnection' | 'customConnection';
+export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'survey';
+export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings' | 'applyConnection' | 'customConnection' | 'survey';
 
 export interface Selection {
   members: Id[];

@@ -17,7 +17,7 @@ export const MOVEMENT_RULES: CodeRule[] = [
     description:
       'Members lengthen and shorten with temperature. ΔT is taken from the installation temperature to the design maximum (expansion) and minimum (contraction) steel temperature in Project → Movement & tolerances.',
     values: 'α = 12×10⁻⁶ /K carbon steel (T ≤ 100 °C), 16×10⁻⁶ /K austenitic stainless, 13×10⁻⁶ /K duplex, 23×10⁻⁶ /K aluminium.',
-    verification: 'cross-checked',
+    verification: 'unconfirmed',
     sources: [],
   },
   {

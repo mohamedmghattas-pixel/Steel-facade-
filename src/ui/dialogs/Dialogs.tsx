@@ -9,6 +9,7 @@ import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/
 import { putBlob } from '../../state/storage';
 import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
 import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialogs';
+import { SurveyDialog } from './MovementDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -32,6 +33,8 @@ export function Dialogs() {
       return <ApplyConnectionDialog onClose={close} />;
     case 'customConnection':
       return <CustomConnectionDialog onClose={close} />;
+    case 'survey':
+      return <SurveyDialog onClose={close} />;
     default:
       return null;
   }

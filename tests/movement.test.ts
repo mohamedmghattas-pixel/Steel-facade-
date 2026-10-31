@@ -329,6 +329,24 @@ describe('survey-driven brackets', () => {
     expect(Object.values(p.connections).some((c) => 'surveyOut' in c.params)).toBe(false);
   });
 
+  it('moves a top-mount base plate down to a low slab and extends the fin', () => {
+    const p = sampleProject();
+    const top = brackets(p).find((c) => c.params.mount === 'top')!;
+    const dm0 = deriveModel(p);
+    top.params.surveyVert = -10;
+    top.params.surveyOut = 5;
+    const dm = deriveModel(p);
+    const b0 = back(dm0, top).frame.origin;
+    const b1 = back(dm, top).frame.origin;
+    expect(b1.z - b0.z).toBeCloseTo(-10, 6);
+    expect(Math.hypot(b1.x - b0.x, b1.y - b0.y)).toBeCloseTo(5, 6);
+    const h = (pl: ReturnType<typeof fin>) => pl.outline[2].x - pl.outline[0].x;
+    expect(h(fin(dm, top)) - h(fin(dm0, top))).toBeCloseTo(10, 6);
+    // Bolt holes stay on the mullion's holes: 10 mm further from the fin's (lower) edge.
+    expect(fin(dm, top).holes[0].x - fin(dm0, top).holes[0].x).toBeCloseTo(10, 6);
+    expect(dm.warnings.filter((w) => w.connectionId === top.id)).toEqual([]);
+  });
+
   it('builds the setting-out table and exports CSV / XLSX', () => {
     const { p, a, b } = surveyed({ out: 2, vertical: -3 }, { out: 30, vertical: 1 });
     const dm = deriveModel(p);
@@ -356,5 +374,61 @@ describe('survey-driven brackets', () => {
     (p.settings as { movement?: unknown }).movement = undefined;
     expect(movementSettings(p).tolerances.length).toBeGreaterThan(0);
     expect(() => deriveModel(p)).not.toThrow();
+  });
+});
+
+describe('assistant movement tools', () => {
+  it('have small, valid schemas', async () => {
+    const { movementModule } = await import('../src/assistant/modules/movement');
+    const { TOOLS } = await import('../src/assistant/tools');
+    for (const t of movementModule.tools) {
+      expect(t.input_schema.type).toBe('object');
+      expect(JSON.stringify(t.input_schema).length).toBeLessThanOrEqual(4096);
+      expect(t.description!.length).toBeLessThanOrEqual(1024);
+      expect(TOOLS.some((x) => x.name === t.name)).toBe(true);
+    }
+  });
+
+  it('read / set settings, report, import + apply survey, setting-out table (undoable)', async () => {
+    const { runTool } = await import('../src/assistant/tools');
+    const { useStore } = await import('../src/state/store');
+    const run = async (name: string, input: Record<string, unknown>) => JSON.parse(await runTool(name, input));
+    useStore.getState().replaceProject(sampleProject());
+    const got = await run('movement_settings', { action: 'get' });
+    expect(got.tempInstall).toBe(15);
+    expect(got.stacks.out).toBeCloseTo(25.5, 1);
+    const set = await run('movement_settings', {
+      action: 'set',
+      combine: 'linear',
+      upsertTolerances: [
+        { name: 'Slab edge level', value: 15 },
+        { name: 'Bracket fabrication', value: 1, direction: 'vertical', scope: 'steel' },
+      ],
+    });
+    expect(set.combine).toBe('linear');
+    expect(set.tolerances.find((t: { name: string }) => t.name === 'Slab edge level').value).toBe(15);
+    expect(set.stacks.vertical).toBe(16);
+    const rep = await run('movement_report', { onlyProblems: true, limit: 5 });
+    expect(rep.summary.problems).toBeGreaterThan(0);
+    expect(rep.rows.length).toBeLessThanOrEqual(5);
+    // Survey points 40 mm out of plane at every edge bracket on the middle floor, in metres.
+    const p = useStore.getState().project;
+    const refs = surveyBrackets(p, deriveModel(p)).filter((r) => r.ref.mount === 'edge' && r.ref.point.z < 4000);
+    const csv = refs.map((r, i) => {
+      const q = madd(r.ref.point, r.ref.out, 40);
+      return `S${i + 1}, ${q.x / 1000}, ${q.y / 1000}, ${q.z / 1000}`;
+    });
+    const imp = await run('survey', { action: 'import', csv: csv.join('\n'), units: 'm' });
+    expect(imp.points).toBe(refs.length);
+    expect(imp.exceeding).toBe(refs.length);
+    const ap = await run('survey', { action: 'apply', mode: 'exceeding' });
+    expect(ap.exceeding).toBe(0);
+    expect(ap.madeToMeasure).toBe(refs.length);
+    const so = await run('setting_out_table', {});
+    expect(so.rows.filter((r: { status: string }) => r.status === 'Made to measure')).toHaveLength(refs.length);
+    const csvOut = await run('setting_out_table', { format: 'csv' });
+    expect(csvOut.csv).toMatch(/^Mark,/);
+    await run('history', { action: 'undo', steps: 1 });
+    expect(Object.values(useStore.getState().project.connections).some((c) => c.params.surveyOut !== undefined)).toBe(false);
   });
 });

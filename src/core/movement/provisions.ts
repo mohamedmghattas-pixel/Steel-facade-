@@ -88,9 +88,56 @@ function provision(base: Omit<Provision, 'ok' | 'required'> & { required?: numbe
 // ---------------------------------------------------------------------------
 // Slab brackets on a mullion: one fixed (dead-load) bracket, the others slide.
 
+/**
+ * Connections by their first secondary member, and by member + node. Every
+ * builder call would otherwise enumerate all connections (quadratic on large
+ * facades). Cached per connections object (app edits always replace it) and
+ * validated on every use against in-place edits: the key list must be the
+ * same and no entry may have a new type / node / member. Lookups resolve the
+ * ids against the live project.
+ */
+interface ConnIndex {
+  keys: string[];
+  entries: { c: Connection; type: string; node: Id; sec: Id | undefined }[];
+  bySecondary: Map<Id, Id[]>;
+  byEnd: Map<string, Id[]>;
+}
+const indexCache = new WeakMap<Record<Id, Connection>, ConnIndex>();
+
+function connIndex(p: Project): ConnIndex {
+  const conns = p.connections;
+  const keys = Object.keys(conns);
+  const hit = indexCache.get(conns);
+  if (
+    hit &&
+    hit.keys.length === keys.length &&
+    hit.keys.every((k, i) => k === keys[i]) &&
+    hit.entries.every((e) => e.c.type === e.type && e.c.node === e.node && e.c.secondary?.[0] === e.sec)
+  )
+    return hit;
+  const idx: ConnIndex = { keys, entries: [], bySecondary: new Map(), byEnd: new Map() };
+  const push = <K>(m: Map<K, Id[]>, k: K, id: Id) => {
+    const arr = m.get(k);
+    if (arr) arr.push(id);
+    else m.set(k, [id]);
+  };
+  for (const k of keys) {
+    const c = conns[k];
+    const sec = c.secondary?.[0];
+    idx.entries.push({ c, type: c.type, node: c.node, sec });
+    if (!sec) continue;
+    push(idx.bySecondary, sec, k);
+    push(idx.byEnd, `${sec}|${c.node}`, k);
+  }
+  indexCache.set(conns, idx);
+  return idx;
+}
+
+const resolve = (p: Project, ids: Id[] | undefined): Connection[] => (ids ?? []).map((id) => p.connections[id]).filter(Boolean);
+
 /** Slab brackets bolted to a member (the member is the bracket's first secondary). */
-export function bracketsOn(p: Project, memberId: Id): Connection[] {
-  return Object.values(p.connections).filter((c) => c.type === 'slabBracket' && c.secondary[0] === memberId && p.nodes[c.node]);
+export function bracketsOn(p: Project, memberId: Id, idx: ConnIndex = connIndex(p)): Connection[] {
+  return resolve(p, idx.bySecondary.get(memberId)).filter((c) => c.type === 'slabBracket' && c.secondary[0] === memberId && p.nodes[c.node]);
 }
 
 const supportMode = (c: Connection): 'auto' | 'fixed' | 'sliding' => {
@@ -103,8 +150,8 @@ const supportMode = (c: Connection): 'auto' | 'fixed' | 'sliding' => {
  * highest bracket not set to "sliding" (mullions hang from the slab above —
  * typical stick-system practice). Undefined when every bracket slides.
  */
-export function fixedBracketFor(p: Project, memberId: Id): Connection | undefined {
-  const list = bracketsOn(p, memberId);
+export function fixedBracketFor(p: Project, memberId: Id, idx?: ConnIndex): Connection | undefined {
+  const list = bracketsOn(p, memberId, idx);
   const z = (c: Connection) => p.nodes[c.node].p.z;
   const explicit = list.filter((c) => supportMode(c) === 'fixed').sort((a, b) => z(b) - z(a));
   if (explicit.length) return explicit[0];
@@ -114,9 +161,9 @@ export function fixedBracketFor(p: Project, memberId: Id): Connection | undefine
 export type BracketRole = 'fixed' | 'sliding' | 'restrained' | 'unsupported';
 
 /** Fixed = carries the dead load; sliding = restraint only; restrained = a second fixed bracket; unsupported = the member has no fixed bracket. */
-export function bracketRole(p: Project, c: Connection): BracketRole {
+export function bracketRole(p: Project, c: Connection, idx?: ConnIndex): BracketRole {
   const mem = c.secondary[0];
-  const fixed = fixedBracketFor(p, mem);
+  const fixed = fixedBracketFor(p, mem, idx);
   if (!fixed) return 'unsupported';
   if (fixed.id === c.id) return 'fixed';
   return supportMode(c) === 'fixed' ? 'restrained' : 'sliding';
@@ -166,12 +213,13 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
   const anchor = getBolt(strP(v.anchor, 'M12'));
   const d0 = bolt.hole;
   const a0 = anchor.hole + 2;
-  const role = bracketRole(p, c);
+  const idx = connIndex(p);
+  const role = bracketRole(p, c, idx);
   const surveyed = (d: FacadeDir) => survey?.residual[d] !== undefined;
   const S = (d: FacadeDir) => survey?.residual[d] ?? 0;
   const stack = (d: FacadeDir, design = false) => toleranceStack(ms, d, { surveyed: !design && surveyed(d) });
   const axisDir = facadeDirOfAxis(g.frame.x);
-  const fixed = fixedBracketFor(p, g.member.id);
+  const fixed = fixedBracketFor(p, g.member.id, idx);
   const out: Provision[] = [];
 
   // Fin slot along the member axis.
@@ -322,7 +370,7 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
   }
 
   // Storey drift: the mullion rotates by Δ/h; a bolt group in vertical slots takes it within the hole clearance.
-  const others = bracketsOn(p, g.member.id).filter((x) => x.id !== c.id);
+  const others = bracketsOn(p, g.member.id, idx).filter((x) => x.id !== c.id);
   const sThis = dot(sub(node, g.a), g.frame.x);
   const spans = others.map((x) => Math.abs(dot(sub(p.nodes[x.node].p, g.a), g.frame.x) - sThis)).filter((d) => d > 100);
   const h = spans.length ? Math.min(...spans) : dist(g.a, g.b);
@@ -354,7 +402,7 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
   let gapValue = numP(v.gap, 20);
   const up = c.secondary[1] ? geom(c.secondary[1]) : undefined;
   if (up) {
-    gap = stackGap(p, ms, node, g, up, auto, gapValue);
+    gap = stackGap(p, ms, node, g, up, auto, gapValue, idx);
     gapValue = gap.provided;
     out.push(gap);
   }
@@ -372,10 +420,10 @@ function slotRequired(half: number, ms: ResolvedMovement): number {
  * lower end comes down (thermal expansion below its fixed point, deflection of
  * the slab it hangs from) or the lower member's top end goes up.
  */
-function stackGap(p: Project, ms: ResolvedMovement, node: Vec3, lower: MemberGeom, upper: MemberGeom, auto: boolean, manual: number): Provision {
+function stackGap(p: Project, ms: ResolvedMovement, node: Vec3, lower: MemberGeom, upper: MemberGeom, auto: boolean, manual: number, idx: ConnIndex): Provision {
   const topOf = (g: MemberGeom) => (g.a.z >= g.b.z ? g.a : g.b);
-  const fU = fixedBracketFor(p, upper.member.id);
-  const fL = fixedBracketFor(p, lower.member.id);
+  const fU = fixedBracketFor(p, upper.member.id, idx);
+  const fL = fixedBracketFor(p, lower.member.id, idx);
   const zFU = fU ? p.nodes[fU.node].p.z : topOf(upper).z;
   const zFL = fL ? p.nodes[fL.node].p.z : topOf(lower).z;
   const tU = thermalMovement(Math.max(0, zFU - node.z), upper.member.material, ms);
@@ -419,7 +467,7 @@ export function otherEndJoint(p: Project, c: Connection): Connection | undefined
   if (!m) return undefined;
   const other = c.node === m.start ? m.end : c.node === m.end ? m.start : undefined;
   if (!other) return undefined;
-  return Object.values(p.connections).find((x) => x.id !== c.id && x.node === other && x.secondary[0] === m.id && JOINT_TYPES.has(x.type));
+  return resolve(p, connIndex(p).byEnd.get(`${m.id}|${other}`)).find((x) => x.id !== c.id && x.node === other && x.secondary[0] === m.id && JOINT_TYPES.has(x.type));
 }
 
 const slottedMode = (c: Connection): 'auto' | 'yes' | 'no' => {

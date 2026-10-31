@@ -24,7 +24,7 @@ import type { Drawing } from './types';
 import { Sheet, dimChain, dimLinear, dimRunning } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
 import { ISO_SCALES, FINISH_LABEL, TEXT, generalNotes, scaleLabel } from './standards';
-import { brokenAxis, drawBand, frontInnerLines, symmetricSection, topInnerLines, uniqSorted } from './views';
+import { bendMarks, brokenAxis, drawBand, endFeatures, endMarks, endOutline, frontInnerLines, symmetricSection, topInnerLines, uniqSorted } from './views';
 import { closedByWelding, designation, finalize, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
 import { SECTION_LABEL, cutPrism, cuttingPlane, drawCut, lineIntervals, partPrism, viewLabel, type Poly, type ViewAxes } from './section';
@@ -189,7 +189,7 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
   const vHoles = holes.filter((h) => h.face === 'v');
   const oHoles = holes.filter((h) => h.face === 'o');
   const cutX = Math.min(L, Math.max(0, sectionAt(part.holes.map((h) => ({ x: h.x, key: `${h.face}${Math.round(h.y)},${Math.round(h.z)}` })), L / 2)));
-  const features = [...holes.map((h) => h.x), cutX];
+  const features = [...holes.map((h) => h.x), cutX, ...endFeatures(part)];
   const prism = partPrism(part);
   const look = { x: first ? 1 : -1, y: 0 };
   // Elevation dimensions away from the plan, plan dimensions away from the elevation.
@@ -218,7 +218,9 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
       hp,
       frontInnerLines(shape).map((l) => ({ v: l.z, hidden: l.hidden })),
       ZF,
+      endOutline(part, 'elevation'),
     );
+    endMarks(E, part, 'elevation', X, ZF);
     if (symmetric) E.line({ x: X(0) - 3, y: 0 }, { x: X(L) + 3, y: 0 }, 'center');
     for (const h of vHoles) {
       const c = { x: X(h.x), y: -hp + h.y / den };
@@ -259,7 +261,9 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
       wp,
       topInnerLines(shape).map((l) => ({ v: l.y, hidden: l.hidden })),
       YT,
+      endOutline(part, 'plan'),
     );
+    endMarks(P, part, 'plan', X, YT);
     if (symmetric) P.line({ x: X(0) - 3, y: 0 }, { x: X(L) + 3, y: 0 }, 'center');
     for (const h of oHoles) {
       const c = { x: X(h.x), y: -wp + h.y / den };
@@ -370,6 +374,7 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
       true,
       'visible',
     );
+    bendMarks(E, part, X, Y);
     for (const h of holes) {
       const c = { x: h.x / den, y: h.y / den };
       const r = Math.max(0.5, h.d / 2 / den);

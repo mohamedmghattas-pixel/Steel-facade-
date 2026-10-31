@@ -95,9 +95,12 @@ export interface Member {
 export type EndPrepKind = 'square' | 'bevel' | 'mitre' | 'cope' | 'fit';
 
 /**
- * How a member end is prepared. Angles are saw angles from square, degrees:
- * `angleWeb` rotates the cut about local z (seen in the web / side view),
- * `angleFlange` about local y (seen from above).
+ * How a member end is prepared. Angles are saw angles from square, degrees
+ * (DSTV convention, |angle| < 90):
+ * `angleWeb` is the cut seen in the web / side view (local x–z plane, so the cut
+ * plane turns about local y); positive makes the top (+z) edge shorter at that end.
+ * `angleFlange` is the cut seen from above (local x–y plane, turning about local z);
+ * positive makes the +y edge shorter at that end.
  */
 export interface EndPrep {
   kind: EndPrepKind;
@@ -110,6 +113,8 @@ export interface EndPrep {
   copeLength?: number;
   /** Which flange is coped: +z (top) / -z (bottom) / both. */
   copeSide?: 'top' | 'bottom' | 'both';
+  /** Re-entrant corner radius of the cope, mm (default 15, ≥ 13 mm per AISC 360 J1.6). */
+  copeRadius?: number;
   /** Gap left at the end, mm (fit / mitre). */
   gap?: number;
 }
@@ -219,10 +224,18 @@ export interface Level {
 
 export type PlaneKind = 'XY' | 'XZ' | 'YZ';
 
-/** XY: plan at z = offset; XZ: elevation at y = offset; YZ: elevation at x = offset. */
+/**
+ * XY: plan at z = offset; XZ: elevation at y = offset; YZ: elevation at x = offset;
+ * custom: a NamedWorkPlane (`planeId`), shifted by `offset` along its normal. Custom
+ * planes carry a copy of their axes so geometry helpers need no project lookup.
+ */
 export interface WorkPlane {
-  kind: PlaneKind;
+  kind: PlaneKind | 'custom';
   offset: number;
+  planeId?: Id;
+  origin?: Vec3;
+  xAxis?: Vec3;
+  yAxis?: Vec3;
 }
 
 /** A user work plane: origin and in-plane axes (unit vectors, x ⟂ y). Normal = x × y. */
@@ -265,6 +278,8 @@ export interface FreePlate {
   weldedTo?: Id;
   phase?: Id;
   batch?: Id;
+  /** Neutral-axis K-factor for the flat pattern of bent plates (default 0.33). */
+  kFactor?: number;
 }
 
 // ---------------------------------------------------------------------------

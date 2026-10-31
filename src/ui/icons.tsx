@@ -10,6 +10,13 @@ const paths: Record<string, JSX.Element> = {
     </>
   ),
   polyline: <path d="M3 16l5-7 4 4 5-9" />,
+  arc: <path d="M3 16c1.5-7 6.5-11 14-11M3 16v.1M17 5v.1" />,
+  curved: <path d="M3 17c2-8 7-12 14-13M6 15.5V9.5M10.5 12.5V6.5M15 11V4.5" />,
+  mitre: <path d="M3 17V3h14M7 17V7h10M3 3l4 4" />,
+  fit: <path d="M14 3v14M3 8h9v4H3" />,
+  stiffener: <path d="M4 3h12M4 17h12M10 3v14M11.5 6h3.5v8h-3.5" />,
+  plate: <path d="M3 14l4-10 9 3-2 9z" />,
+  bent: <path d="M3 6h7a5 5 0 015 5v6" />,
   grid: <path d="M3 3h14v14H3zM8 3v14M13 3v14M3 8h14M3 13h14" />,
   move: <path d="M10 2v16M2 10h16M10 2l-2.5 2.5M10 2l2.5 2.5M10 18l-2.5-2.5M10 18l2.5-2.5M2 10l2.5-2.5M2 10l2.5 2.5M18 10l-2.5-2.5M18 10l-2.5 2.5" />,
   copy: <path d="M7 7h10v10H7zM3 13V3h10" />,

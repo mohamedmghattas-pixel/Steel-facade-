@@ -3,14 +3,27 @@
  * cutting. Holes drilled along local y land on the web/front face "v", holes
  * drilled along local z on the top face "o". Slots are written as elongated
  * holes ("l"); check the slot convention against your machine's post-processor.
+ *
+ * End preparations: the ST header carries the saw angles (web start / end,
+ * flange start / end, degrees from square, DSTV range ±89.9°). The web angle is
+ * seen on face v, the flange angle on face o; positive makes the piece shorter
+ * at the top edge (face o side) resp. the back edge (face h side) — the
+ * convention of FacadeSteel's EndPrep. Length and saw length are both the
+ * overall length between the extreme points of the cuts (the stock to saw) and
+ * all coordinates are measured from that extreme start. Coped parts also get
+ * outer contours (AK) of the web (v) and of every coped flange (o / u), with the
+ * cope corner radii as polylines.
  */
 import type { Project } from '../model/types';
 import { bbox2 } from '../model/geometry';
+import { flangeProfile, sideProfile } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
 import type { Shape } from '../library/shapes';
 import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
 
 const f = (n: number, w = 10) => n.toFixed(2).padStart(w);
+/** DSTV saw angle range. */
+const clampSaw = (a: number) => Math.max(-89.9, Math.min(89.9, Math.abs(a) < 0.005 ? 0 : a));
 const line = (s: string | number) => `  ${s}`;
 
 function profileCode(shape: Shape | undefined, kind: Part['kind']): string {
@@ -123,7 +136,9 @@ export function partToDstv(part: Part, qty: number, p: Project): string {
   out.push(f(radius, 12));
   out.push(f(massPerM, 12));
   out.push(f(surfPerM, 12));
-  for (let i = 0; i < 4; i++) out.push(f(0, 12)); // web/flange start and end cuts
+  // Saw angles: web start, web end, flange start, flange end.
+  const e = !isPlate ? part.ends : undefined;
+  for (const a of [e?.start.angleWeb, e?.end.angleWeb, e?.start.angleFlange, e?.end.angleFlange]) out.push(f(clampSaw(a ?? 0), 12));
   out.push(line(part.assembly || '-'));
   out.push(line(part.finish));
   out.push(line(part.name));
@@ -139,7 +154,19 @@ export function partToDstv(part: Part, qty: number, p: Project): string {
       out.push('BO');
       for (const h of holes) out.push(holeLine('v', h.x - bb.minX, h.y - bb.minY, h.d, h.slot, h.angle));
     }
-  } else if (part.holes.length && shape) {
+  } else if (shape && e && (e.start.copes.length || e.end.copes.length)) {
+    // Outer contours of the coped faces: web (v, y from the bottom) and coped flanges (o / u, y from the v side).
+    const [h, b] = [prof?.h ?? height, prof?.b ?? flangeW];
+    const contour = (face: string, pts: { x: number; y: number }[]) => {
+      out.push('AK');
+      for (const q of [...pts, pts[0]]) out.push(`  ${face}${f(q.x)}${f(q.y)}${f(0)}`);
+    };
+    contour('v', sideProfile(e.start, e.end, h).map((q) => ({ x: q.x, y: q.y + h / 2 })));
+    const coped = (side: 'top' | 'bottom') => [...e.start.copes, ...e.end.copes].some((k) => k.side === side);
+    if (coped('top')) contour('o', flangeProfile(e.start, e.end, b, h / 2).map((q) => ({ x: q.x, y: q.y + b / 2 })));
+    if (coped('bottom')) contour('u', flangeProfile(e.start, e.end, b, -h / 2).map((q) => ({ x: q.x, y: q.y + b / 2 })));
+  }
+  if (!isPlate && part.holes.length && shape) {
     const [h, b] = [prof?.h ?? height, prof?.b ?? flangeW];
     out.push('BO');
     for (const hole of part.holes) {

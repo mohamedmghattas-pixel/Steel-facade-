@@ -3,6 +3,14 @@
  * definitions so Tekla/Revit/etc. recognise the sections; plates use arbitrary
  * profiles with their holes as voids. Parts are grouped into
  * IfcElementAssembly objects matching the shop assemblies.
+ *
+ * End preparations: the member body is the full-length IfcExtrudedAreaSolid
+ * clipped by one IfcBooleanClippingResult (DIFFERENCE) per angled end, with an
+ * IfcHalfSpaceSolid on the cut plane (normal into the waste, AgreementFlag .F.),
+ * and one per cope with an IfcPolygonalBoundedHalfSpace (the notch outline with
+ * its corner radius, bounded across the section). Bent plates are written as
+ * extruded segments — the flat pieces exactly, with their holes as voids, and
+ * each bend zone as tangent strips (see core/geometry/bentPlate).
  */
 import type { Level, MemberRole, Project, Vec2, Vec3 } from '../model/types';
 import { madd } from '../model/geometry';
@@ -11,6 +19,8 @@ import { getMaterial } from '../library/materials';
 import { getBolt } from '../library/bolts';
 import type { Hole2D } from '../connections/common';
 import type { DerivedModel, Part } from '../derive/model';
+import { copeNotch, isSquare } from '../geometry/endPrep';
+import { foldPlate } from '../geometry/bentPlate';
 
 export interface IfcExportOptions {
   includeBolts?: boolean;
@@ -310,6 +320,59 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     ]);
   }
 
+  /** Plate profile from an outline and the holes (as voids). */
+  const plateProfile = (name: string, outline: Vec2[], holes: Hole2D[]) => {
+    const outer = polyline(outline);
+    const voids = holes.map((h) => polyline(holeCurve(h)));
+    return voids.length
+      ? w.add('IFCARBITRARYPROFILEDEFWITHVOIDS', [en('AREA'), str(name), outer, list(voids)])
+      : w.add('IFCARBITRARYCLOSEDPROFILEDEF', [en('AREA'), str(name), outer]);
+  };
+
+  /** Bent plate body: one extruded solid per flat piece / bend strip, placed in the plate's frame. */
+  const bentPlateItems = (part: Part): Ref[] => {
+    const holes = part.plateHoles ?? [];
+    const fold = foldPlate(part.outline ?? [], holes, part.bends ?? [], part.thickness, part.kFactor);
+    return fold.pieces.map((pc) =>
+      extrude(
+        plateProfile(part.profile, pc.poly, pc.holes.map((i) => holes[i])),
+        part.thickness,
+        axis3(pc.frame.origin, pc.frame.z, pc.frame.x),
+      ),
+    );
+  };
+
+  /**
+   * Member body with end preparations, in the member placement (X = part y,
+   * Y = part z, Z = part x): extrusion over the overall length, clipped at every
+   * angled end and coped flange.
+   */
+  const clippedBody = (part: Part, shape: Shape): Ref => {
+    let solid = extrude(profileDef(part.profile, shape), part.length);
+    const e = part.ends!;
+    const toIfc = (v: Vec3): Vec3 => ({ x: v.y, y: v.z, z: v.x });
+    const W = shape.type === 'CHS' || shape.type === 'RD' ? shape.d : part.width;
+    const H = sectionHeight(shape);
+    for (const c of [e.start, e.end]) {
+      if (!isSquare({ ...c, copes: [] })) {
+        const n = toIfc(c.n);
+        const plane = w.add('IFCPLANE', [axis3({ x: 0, y: 0, z: c.x }, n, perpendicular(n))]);
+        const half = w.add('IFCHALFSPACESOLID', [plane, '.F.']);
+        solid = w.add('IFCBOOLEANCLIPPINGRESULT', [en('DIFFERENCE'), solid, half]);
+      }
+      for (const k of c.copes) {
+        const dir = c === e.start ? 1 : -1;
+        const notch = copeNotch(k, H, c.x, dir, 2);
+        // Half-space X < W/2 + 5 (normal +X points away from it), bounded by the notch prism in (part x, part z).
+        const plane = w.add('IFCPLANE', [axis3({ x: W / 2 + 5, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, { x: 0, y: 1, z: 0 })]);
+        const pos = axis3({ x: 0, y: 0, z: 0 }, { x: -1, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+        const half = w.add('IFCPOLYGONALBOUNDEDHALFSPACE', [plane, '.T.', pos, polyline(notch)]);
+        solid = w.add('IFCBOOLEANCLIPPINGRESULT', [en('DIFFERENCE'), solid, half]);
+      }
+    }
+    return solid;
+  };
+
   // Parts.
   for (const part of dm.parts) {
     const relTo = placementOf.get(part.ref) ?? storeys[0].pl;
@@ -317,11 +380,9 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     if (part.kind === 'plate') {
       const f = part.frame;
       const pl = w.add('IFCLOCALPLACEMENT', [relTo, axis3(f.origin, f.z, f.x)]);
-      const outer = polyline(part.outline ?? []);
-      const voids = (part.plateHoles ?? []).map((h) => polyline(holeCurve(h)));
-      const prof = voids.length
-        ? w.add('IFCARBITRARYPROFILEDEFWITHVOIDS', [en('AREA'), str(part.profile), outer, list(voids)])
-        : w.add('IFCARBITRARYCLOSEDPROFILEDEF', [en('AREA'), str(part.profile), outer]);
+      const items = part.bends?.length
+        ? bentPlateItems(part)
+        : [extrude(plateProfile(part.profile, part.outline ?? [], part.plateHoles ?? []), part.thickness)];
       element = w.add('IFCPLATE', [
         str(ifcGuid()),
         '$',
@@ -329,7 +390,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
         str(part.name),
         str(part.profile),
         pl,
-        shapeRep([extrude(prof, part.thickness)]),
+        shapeRep(items),
         str(part.ref),
         en('NOTDEFINED'),
       ]);
@@ -337,7 +398,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
       if (!part.shape) continue;
       const f = part.frame;
       const pl = w.add('IFCLOCALPLACEMENT', [relTo, axis3(f.origin, f.x, f.y)]);
-      const rep = shapeRep([extrude(profileDef(part.profile, part.shape), part.length)]);
+      const rep = part.ends ? shapeRep([clippedBody(part, part.shape)], 'Clipping') : shapeRep([extrude(profileDef(part.profile, part.shape), part.length)]);
       const role = part.kind === 'member' ? (part.role as MemberRole) : 'other';
       const predefined = MEMBER_TYPE[role] ?? 'MEMBER';
       const isBeam = part.kind === 'member' && predefined === 'BEAM';

@@ -3,5 +3,6 @@
  * keep this file to that list only.
  */
 import type { ToolModule } from './types';
+import { modellingModule } from './modelling';
 
-export const TOOL_MODULES: ToolModule[] = [];
+export const TOOL_MODULES: ToolModule[] = [modellingModule];

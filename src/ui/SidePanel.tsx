@@ -14,6 +14,7 @@ import { dist } from '../core/model/geometry';
 import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
 import { askConfirm } from './askState';
+import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -57,6 +58,7 @@ function PropertiesPanel() {
   const project = useStore((s) => s.project);
   if (sel.members.length) return <MemberProps ids={sel.members} />;
   if (sel.connections.length) return <ConnectionProps id={sel.connections[0]} count={sel.connections.length} />;
+  if (sel.plates?.length) return <PlateProps ids={sel.plates} />;
   if (sel.nodes.length) {
     const n = project.nodes[sel.nodes[0]];
     return (
@@ -170,6 +172,7 @@ function MemberProps({ ids }: { ids: string[] }) {
           <NumberInput value={c((m) => m.endExt).value as number} mixed={c((m) => m.endExt).mixed} unit="mm" onChange={(v) => patch('Extension', { endExt: v })} />
         </Field>
       </div>
+      <EndPrepSection ids={ids} />
       <button className="secondary-btn wide-btn" onClick={() => useStore.getState().set({ dialog: 'applyConnection' })}>
         <Icon name="bracket" size={15} /> Apply a connection to {ms.length === 1 ? 'this member' : `these ${ms.length} members`}…
       </button>

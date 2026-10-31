@@ -19,16 +19,32 @@ export function syncCustomProfiles(p: Project) {
 const initialProject = migrateProject(loadAutosave()) ?? createProject();
 syncCustomProfiles(initialProject);
 
-export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure';
+export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure' | 'plate' | 'arc' | 'plane3';
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
 export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks';
-export type DialogName = null | 'facadeGrid' | 'autoConnect' | 'array' | 'dxfImport' | 'about' | 'issueDrawings' | 'drawingSettings' | 'applyConnection' | 'customConnection';
+export type DialogName =
+  | null
+  | 'facadeGrid'
+  | 'autoConnect'
+  | 'array'
+  | 'dxfImport'
+  | 'about'
+  | 'issueDrawings'
+  | 'drawingSettings'
+  | 'applyConnection'
+  | 'customConnection'
+  | 'stiffeners'
+  | 'bentPlate'
+  | 'arcMembers'
+  | 'curvedFacade';
 
 export interface Selection {
   members: Id[];
   nodes: Id[];
   connections: Id[];
+  /** Free plates (Project.plates). */
+  plates?: Id[];
 }
 
 export interface SnapSettings {
@@ -182,6 +198,7 @@ export const useStore = create<State>((set, get) => ({
         members: toggle(cur.members, sel.members),
         nodes: toggle(cur.nodes, sel.nodes),
         connections: toggle(cur.connections, sel.connections),
+        plates: toggle(cur.plates ?? [], sel.plates),
       },
       sidePanel: panel,
     });
@@ -198,6 +215,7 @@ function pruneSelection(sel: Selection, p: Project): Selection {
     members: sel.members.filter((id) => p.members[id]),
     nodes: sel.nodes.filter((id) => p.nodes[id]),
     connections: sel.connections.filter((id) => p.connections[id]),
+    plates: (sel.plates ?? []).filter((id) => p.plates?.[id]),
   };
 }
 

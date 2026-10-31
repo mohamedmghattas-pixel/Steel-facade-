@@ -7,7 +7,8 @@ import { dxfReferenceObject, loadIfcReference, loadUnderlayImage, placeUnderlay,
 import { handleToolPoints } from './actions';
 import { Icon } from './icons';
 import { Segmented } from './widgets';
-import type { PlaneKind, Vec3 } from '../core/model/types';
+import type { Vec3 } from '../core/model/types';
+import { WorkPlaneControl } from './dialogs/ModellingDialogs';
 import { disposeObject } from '../viewer/meshes';
 
 let viewerInstance: Viewer | null = null;
@@ -39,7 +40,7 @@ export function ViewportPanel() {
           if (!additive) s.clearSelection();
           return;
         }
-        const key = hit.kind === 'member' ? 'members' : hit.kind === 'connection' ? 'connections' : 'nodes';
+        const key = hit.kind === 'member' ? 'members' : hit.kind === 'connection' ? 'connections' : hit.kind === 'plate' ? 'plates' : 'nodes';
         s.select({ [key]: [hit.id] }, additive);
       },
       onBoxSelect: (sel, additive) => useStore.getState().select(sel, additive),
@@ -113,34 +114,6 @@ export function ViewportPanel() {
         <DisplayToggles />
       </div>
       <div className="viewport-overlay bottom-left nav-hint">Right-drag orbit · Middle-drag or Shift+right-drag pan · Wheel zoom</div>
-    </div>
-  );
-}
-
-function WorkPlaneControl() {
-  const wp = useStore((s) => s.workPlane);
-  const setWorkPlane = useStore((s) => s.setWorkPlane);
-  const opts: { value: PlaneKind; label: string; title: string }[] = [
-    { value: 'XZ', label: 'XZ', title: 'Elevation plane at constant Y (facade along X)' },
-    { value: 'YZ', label: 'YZ', title: 'Elevation plane at constant X (facade along Y)' },
-    { value: 'XY', label: 'XY', title: 'Plan plane at constant Z' },
-  ];
-  return (
-    <div className="wp-control" title="Work plane: lines and grid snapping happen on this plane">
-      <span className="wp-label">
-        <Icon name="plane" size={14} /> Work plane
-      </span>
-      <Segmented value={wp.kind} options={opts} onChange={(k) => setWorkPlane(k)} />
-      <span className="wp-offset">
-        {wp.kind === 'XY' ? 'Z' : wp.kind === 'XZ' ? 'Y' : 'X'} =
-        <input
-          type="number"
-          value={wp.offset}
-          step={100}
-          onChange={(e) => setWorkPlane(wp.kind, Number(e.target.value) || 0)}
-          onKeyDown={(e) => e.stopPropagation()}
-        />
-      </span>
     </div>
   );
 }

@@ -19,7 +19,8 @@ import type { Vec2 } from '../model/types';
 import { bbox2 } from '../model/geometry';
 import type { Part } from '../derive/model';
 import { shapeBox, shapeOutline, type Shape } from '../library/shapes';
-import { holeRows, machiningOps, type HoleRow } from '../fabrication/machining';
+import { endSlotRows, holeRows, machiningOps, type HoleRow } from '../fabrication/machining';
+import type { PartSlot } from '../derive/model';
 import type { Drawing } from './types';
 import { Sheet, dimChain, dimLinear, dimRunning } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
@@ -85,9 +86,29 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
           { head: 'X', w: 13, align: 'end' },
           { head: 'Y', w: 13, align: 'end' },
           { head: 'Ø', w: 9, align: 'end' },
-          { head: 'Slot', w: 11, align: 'end' },
+          { head: 'Slot', w: 18, align: 'end' },
         ],
-        rows: holes.map((h) => [h.ref, h.face === 'plate' ? '—' : h.face === 'v' ? 'side' : 'top', Math.round(h.x), Math.round(h.y), h.d, h.slotLength ? Math.round(h.slotLength) : '—']),
+        rows: holes.map((h) => [
+          h.ref,
+          h.face === 'plate' ? '—' : h.face === 'v' ? 'side' : 'top',
+          Math.round(h.x),
+          Math.round(h.y),
+          h.d,
+          h.slotLength ? `${Math.round(h.slotLength)}${Math.abs(h.angle) > 0.01 ? ` @${Math.round(h.angle)}°` : ''}` : '—',
+        ]),
+      }),
+    );
+  }
+  const slots = endSlotRows(part);
+  if (slots.length) {
+    blocks.push(
+      tableBlock({
+        title: 'End slots (plate inserts)',
+        cols: [
+          { head: 'End', w: 12 },
+          { head: 'Slot', w: 104 },
+        ],
+        rows: slots.map((k) => [k.end, k.detail]),
       }),
     );
   }
@@ -129,6 +150,21 @@ function holeLabel(s: Sheet, c: Vec2, r: number, ref: string) {
 
 /** Gap between the outline and the first dimension line where the cutting-plane ends sit. */
 const CUT_CLEAR = 11;
+
+/**
+ * An end slot seen through its open faces: the notch outline (two long edges
+ * from the open end, the slot bottom) as visible lines, and a label.
+ */
+function endSlotOutline(s: Sheet, X: (x: number) => number, k: PartSlot, Y: (t: number) => number, label: string) {
+  const inner = k.end === 'end' ? k.x0 : k.x1;
+  const open = k.end === 'end' ? k.x1 : k.x0;
+  const lo = Y(k.offset - k.width / 2);
+  const hi = Y(k.offset + k.width / 2);
+  s.line({ x: X(open), y: lo }, { x: X(inner), y: lo });
+  s.line({ x: X(inner), y: lo }, { x: X(inner), y: hi });
+  s.line({ x: X(inner), y: hi }, { x: X(open), y: hi });
+  s.text({ x: X(inner) + (k.end === 'end' ? -1 : 1), y: hi + 1.2 }, label, TEXT.label, k.end === 'end' ? 'end' : 'start');
+}
 
 /**
  * A hole seen side-on (inside the material): hidden lines at its edges across
@@ -190,7 +226,8 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
   const vHoles = holes.filter((h) => h.face === 'v');
   const oHoles = holes.filter((h) => h.face === 'o');
   const cutX = Math.min(L, Math.max(0, sectionAt(part.holes.map((h) => ({ x: h.x, key: `${h.face}${Math.round(h.y)},${Math.round(h.z)}` })), L / 2)));
-  const features = [...holes.map((h) => h.x), cutX, ...endFeatures(part)];
+  const features = [...holes.map((h) => h.x), cutX, ...endFeatures(part), ...(part.slots ?? []).flatMap((k) => [k.x0, k.x1])];
+  const slotLabel = (k: PartSlot) => `SLOT ${Math.round(k.width * 10) / 10}×${Math.round(k.x1 - k.x0)}`;
   const prism = partPrism(part);
   const look = { x: first ? 1 : -1, y: 0 };
   // Elevation dimensions away from the plan, plan dimensions away from the elevation.
@@ -198,7 +235,7 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
   const pSide = -eSide;
   const extent = Math.max(H, W);
   const symmetric = symmetricSection(shape);
-  const halfX = (h: HoleRow) => (h.slotLength || h.d) / 2;
+  const halfX = (h: HoleRow) => (h.slotLength ? Math.abs(Math.cos((h.angle * Math.PI) / 180)) * (h.slotLength - h.d) : 0) / 2 + h.d / 2;
 
   const build = (den: number, ds: number) => {
     const keep = Math.max(1.2 * extent, 14 * den, 40);
@@ -226,8 +263,12 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
     for (const h of vHoles) {
       const c = { x: X(h.x), y: -hp + h.y / den };
       const r = Math.max(0.6, h.d / 2 / den);
-      E.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, 0);
+      E.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, h.angle);
       holeLabel(E, c, r, h.ref);
+    }
+    for (const k of part.slots ?? []) {
+      if (k.face === 'y') endSlotOutline(E, X, k, ZF, slotLabel(k));
+      else E.line({ x: X(k.end === 'end' ? k.x0 : k.x1), y: -hp }, { x: X(k.end === 'end' ? k.x0 : k.x1), y: hp }, 'hidden');
     }
     // Holes drilled along z are inside the material in this view.
     for (const h of oHoles) hiddenBore(E, X, h.x, halfX(h), lineIntervals(polys, { x: h.y - W / 2, y: 0 }, { x: 0, y: 1 }), ZF);
@@ -269,8 +310,12 @@ function drawLinear(ctx: DrawCtx, s: Sheet, part: Part, shape: Shape, holes: Hol
     for (const h of oHoles) {
       const c = { x: X(h.x), y: -wp + h.y / den };
       const r = Math.max(0.6, h.d / 2 / den);
-      P.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, 0);
+      P.hole(c, 2 * r, h.slotLength ? (h.slotLength - h.d) / den : 0, h.angle);
       holeLabel(P, c, r, h.ref);
+    }
+    for (const k of part.slots ?? []) {
+      if (k.face === 'z') endSlotOutline(P, X, k, YT, slotLabel(k));
+      else P.line({ x: X(k.end === 'end' ? k.x0 : k.x1), y: -wp }, { x: X(k.end === 'end' ? k.x0 : k.x1), y: wp }, 'hidden');
     }
     for (const h of vHoles) hiddenBore(P, X, h.x, halfX(h), lineIntervals(polys, { x: 0, y: h.y - H / 2 }, { x: 1, y: 0 }), YT);
     const pEdge = pSide * wp;

@@ -7,7 +7,7 @@
 import { getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
 import type { Vec3 } from '../model/types';
-import { centreAt, emptyOut, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ProfilePartOut, type Trim } from './common';
+import { centreAt, emptyOut, endSlot, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ProfilePartOut, type Trim } from './common';
 import {
   P,
   addBolts,
@@ -292,7 +292,9 @@ export const teeCleat: ConnectionDef = {
     const gf = Math.ceil(Math.max(tee.tw / 2 + tee.r + washer, knife ? sec.w / 2 + washer + 3 : 0));
     if (tee.b / 2 - gf < edgeDist(bolt.name) - 0.5) out.warnings.push(`${tee.prof.name} flange too narrow for bolts clear of the stem${knife ? ' and the secondary' : ''}.`);
     if (!knife && stemOff - gf > -sec.w / 2 - washer && gap < bolt.head + 5) out.warnings.push('Inner flange bolt head clashes with the secondary end — use the knife position or a larger gap.');
-    if (knife && isHollow(sec) && tee.h > 0 && Lc > sec.h - 2 * wallOf(sec)) out.warnings.push('Stem is wider than the inside of the secondary — slot the secondary end.');
+    // Knife: the stem runs into the secondary past its cut-back end (tf + gap). It needs
+    // a slot unless it fits inside a hollow section; an open section's web is in its plane.
+    if (knife && (!isHollow(sec) || Lc > sec.h - 2 * wallOf(sec))) endSlot(out, sec, j.end, Cs, ys, tee.tw, tee.h - tee.tf - gap);
     // The secondary is cut back clear of the tee flange (tf + gap).
     const gs = Math.ceil(Math.max(tee.tf + tee.r + washer, tee.tf + gap + edgeDist(bolt.name)));
     if (tee.h - gs < edgeDist(bolt.name) - 0.5) out.warnings.push('Tee stem too short for the bolt edge distance.');

@@ -76,7 +76,7 @@ all checked by the code-check module).
 
 | Type | Name | Use | Members | Key parameters | Standards notes |
 | --- | --- | --- | --- | --- | --- |
-| `slabBracket` | Slab bracket | Curtain-wall mullions to slab edge / top at stack joints | Mullion(s); slab | mount edge / top, standoff 150, fin / back plate 10, M12 bolts and anchors, fin slot 17 | Long fin slots ≤ 2.5 d |
+| `slabBracket` | Slab bracket | Curtain-wall mullions to slab edge / top at stack joints | Mullion(s); slab | mount edge / top, standoff 150, fin side ±1, base plate set-back 20 (top mount), fin / back plate 10, M12 bolts and anchors, fin slot 17 | Long fin slots ≤ 2.5 d |
 | `baseplate` | Base plate | Posts on slabs / plinths | Post; floor | t 15, width / length auto, edge 35, M16 anchors | Oversize anchor holes |
 | `helpingHand` | Helping-hand bracket | Rainscreen subframes on walls: fixed point + sliding points | Mullion / vertical rail; wall or slab edge | variant fixed / sliding point; angle L 100x100x10 … L 200x100x12 (default L 150x100x10); standoff 120; M12; slot 17; anchor type | Sliding points: long slots, snug-tight bolts with sliding washers; thermal isolator pad (typical practice) |
 | `castInChannel` | Cast-in channel bracket | Brackets on cast-in anchor channels; 3-way adjustment | Mullion; slab edge or slab top with channel | mount; channel 28/15 … 72/48 (40/22); T-bolt M12; plate slot across channel 17; fin slot 17 | T-bolt sizes per channel (typical); channel design by the supplier (EN 1992-4 / EAD 330008, ICC-ES AC232) |
@@ -116,7 +116,7 @@ all checked by the code-check module).
 
 | Type | Name | Use | Members | Key parameters | Standards notes |
 | --- | --- | --- | --- | --- | --- |
-| `gussetPlate` | Gusset plate | Wind bracing of facade frames | Column / beam / mullion + brace (FL, L, CHS, RHS) | t 10; M12 × 2; slotted gusset holes along the brace; knife 10 and insert (tubes) | Gusset outline = convex hull of the weld base and the bolt group with its edge distances; tube slot length = knife insert |
+| `gussetPlate` | Gusset plate | Wind bracing of facade frames | Column / beam / mullion + brace (FL, L, CHS, RHS) | t 10; M12 × 2; slotted gusset holes along the brace; knife 10 and insert (tubes) | Gusset outline = convex hull of the weld base and the bolt group with its edge distances; tube end slot = knife t + 2 × insert + 5 |
 | `crossBrace` | Cross-bracing centre plate | X-bracing of flats / angles | Two crossing braces | t 10; M12 × 2 per brace; end clearance 20 | One plate per crossing |
 
 ### Hangers & ties
@@ -124,14 +124,19 @@ all checked by the code-check module).
 | Type | Name | Use | Members | Key parameters | Standards notes |
 | --- | --- | --- | --- | --- | --- |
 | `hangerRod` | Hanger rod end | Hung facades and canopies | Supporting beam + rod (RD) / tube | fork + lug (pinned) / tab + lug (bolted); pin M20; lug 12; lug slot | Pin holes sized as bolt holes; proprietary tension-rod systems by their supplier |
-| `tieBack` | Tie-back strut end | Struts tying facade frames back | Mullion / column / beam + strut | tongue (single shear) / fork on end cap (double shear); M16; lug slot 22 | Tongue insert = tube slot length |
+| `tieBack` | Tie-back strut end | Struts tying facade frames back | Mullion / column / beam + strut | tongue (single shear) / fork on end cap (double shear); M16; lug slot 22 | Strut end slot = tongue t + 2 × insert + 5 |
 
 ### Custom templates & presets
 
 `custom` connections are built from formula templates in the project library
-(Joints → Custom). Presets (saved from the library, the Apply dialog or the
-properties panel) are named parameter sets of any type and appear in the same
-library category.
+(Joints → Custom). Plates are positioned in the joint frame u (into the
+secondary), w (its local z) and v = w × u — joint-local, so one template gives
+the same joint at both member ends; templates saved before keep the
+member-local v (frame "member"). A plate's position on its normal is its
+contact face (default) or its mid-plane ("centred"). Geometry:
+[CONNECTION_GEOMETRY.md §4.4, §5.1](CONNECTION_GEOMETRY.md). Presets (saved
+from the library, the Apply dialog or the properties panel) are named
+parameter sets of any type and appear in the same library category.
 
 ## Placement rules
 
@@ -252,8 +257,15 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
   distances to the real slab edge are not known to the model.
 - Plates are flat; bent plates and proprietary products (clamps, channels,
   clevises) are represented by fabricated equivalents or bolt-list items.
-- The tube slot for knife / tongue plates and slots in member ends are
-  fabrication notes (insert length), not modelled cuts.
+- Plates inserted into a member end (knife fin plate, gusset knife in a tube
+  brace, tie-back tongue, a tee stem wider than the inside of a hollow
+  secondary) cut a rectangular end slot through the member: width plate
+  t + 2 mm, length insert + 5 mm (typical clearances, fixed). It is in the 3D
+  view, the IFC (opening), DSTV (notch in the outer contours of the faces it
+  cuts), the machining steps and the part drawing. Slots on members with an
+  angled / coped end preparation at the same end are not drawn in 3D.
+- A user extension at a member end that a connection supports or trims is
+  ignored (with a warning): the connection sets that end.
 - `addConnectionFromSelection` (Joints → Add) places types without a main
   member at the selected node or the lower member end; use the library or
   Apply for the `APPLY_END` rules.

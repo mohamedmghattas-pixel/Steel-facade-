@@ -18,9 +18,11 @@ export interface HoleRow {
   x: number;
   y: number;
   d: number;
-  /** Overall slot length (0 = round hole) and slot direction in degrees. */
+  /** Overall slot length (0 = round hole) and slot direction in degrees (linear parts: from X towards Y of the face). */
   slotLength: number;
   angle: number;
+  /** Linear parts: the hole passes only one wall (the one at its position), not the whole section. */
+  oneWall?: boolean;
 }
 
 export interface MachiningOp {
@@ -40,11 +42,8 @@ export function holeRows(part: Part): HoleRow[] {
   } else {
     const box = part.shape ? shapeBox(part.shape) : { w: 0, h: 0 };
     for (const h of part.holes) {
-      rows.push(
-        h.face === 'y'
-          ? { face: 'v', x: h.x, y: h.z + box.h / 2, d: h.d, slotLength: h.slot ? h.slot + h.d : 0, angle: 0 }
-          : { face: 'o', x: h.x, y: h.y + box.w / 2, d: h.d, slotLength: h.slot ? h.slot + h.d : 0, angle: 0 },
-      );
+      const common = { d: h.d, slotLength: h.slot ? h.slot + h.d : 0, angle: h.slot ? (h.slotAngle ?? 0) : 0, ...(h.through === false ? { oneWall: true } : {}) };
+      rows.push(h.face === 'y' ? { face: 'v', x: h.x, y: h.z + box.h / 2, ...common } : { face: 'o', x: h.x, y: h.y + box.w / 2, ...common });
     }
   }
   rows.sort((a, b) => a.face.localeCompare(b.face) || a.x - b.x || a.y - b.y);
@@ -52,6 +51,16 @@ export function holeRows(part: Part): HoleRow[] {
 }
 
 const isHollow = (part: Part) => part.shape?.type === 'RHS' || part.shape?.type === 'CHS';
+
+/** End slots of a linear part as machining text (width × length from the end, through which walls, centre offset). */
+export function endSlotRows(part: Part): { end: 'start' | 'end'; width: number; length: number; detail: string }[] {
+  return (part.slots ?? []).map((k) => {
+    const len = k.x1 - k.x0;
+    const walls = k.face === 'z' ? (isHollow(part) ? 'through top and bottom walls' : 'through flanges / top and bottom') : isHollow(part) ? 'through both side walls' : 'through web / sides';
+    const off = Math.abs(k.offset) > 0.5 ? `, centre ${Math.round(k.offset)} mm off the axis` : ', on the axis';
+    return { end: k.end, width: k.width, length: len, detail: `${Math.round(k.width * 10) / 10} wide × ${Math.round(len)} long from the ${k.end} end, ${walls}${off} (plate insert)` };
+  });
+}
 
 export function machiningOps(part: Part, standard: DrawingStandard, opts: { hollowClosed?: boolean } = {}): MachiningOp[] {
   const ops: Omit<MachiningOp, 'step'>[] = [];
@@ -69,9 +78,23 @@ export function machiningOps(part: Part, standard: DrawingStandard, opts: { holl
   }
   const groups = new Map<string, number>();
   for (const h of holes) {
-    const where = h.face === 'plate' ? 'through' : h.face === 'v' ? (isHollow(part) ? 'through both side walls' : 'through web/side') : isHollow(part) ? 'through top and bottom walls' : 'through flange/top';
+    const where =
+      h.face === 'plate'
+        ? 'through'
+        : h.oneWall
+          ? h.face === 'v'
+            ? 'one side wall only'
+            : 'one flange / wall only'
+          : h.face === 'v'
+            ? isHollow(part)
+              ? 'through both side walls'
+              : 'through web/side'
+            : isHollow(part)
+              ? 'through top and bottom walls'
+              : 'through flange/top';
+    const dir = h.slotLength && Math.abs(h.angle) > 0.01 ? ` at ${Math.round(h.angle * 10) / 10}°` : '';
     const key = h.slotLength
-      ? `Slot|Ø${h.d} × ${Math.round(h.slotLength)} long, ${where}`
+      ? `Slot|Ø${h.d} × ${Math.round(h.slotLength)} long${dir}, ${where}`
       : `Drill|Ø${h.d} ${where}`;
     groups.set(key, (groups.get(key) ?? 0) + 1);
   }
@@ -79,6 +102,7 @@ export function machiningOps(part: Part, standard: DrawingStandard, opts: { holl
     const [op, detail] = k.split('|');
     ops.push({ op, detail: `${detail} — see hole table`, qty: n });
   }
+  for (const s of endSlotRows(part)) ops.push({ op: 'End slot', detail: s.detail, qty: 1 });
   ops.push(...bendOps(part.bends, part.kFactor));
   ops.push({ op: 'Deburr', detail: holes.length ? 'Holes, slots and cut edges' : 'Cut edges; break sharp edges', qty: 1 });
   ops.push({ op: 'Mark', detail: `Part mark ${part.mark}${part.assembly && part.assembly !== part.mark ? ` (assembly ${part.assembly})` : ''}`, qty: 1 });

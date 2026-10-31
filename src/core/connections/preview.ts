@@ -13,6 +13,7 @@ import { runCodeChecks, type CheckResult, type DesignCode } from '../codes';
 import { CATALOG, jointKindFor, type ConcreteHint, type JointKind } from './catalog';
 import { applyConnection } from './registry';
 import { shapeBox, shapeOutline } from '../library/shapes';
+import { holeWalls } from '../geometry/sectionWalls';
 
 export interface PreviewJoint {
   project: Project;
@@ -432,38 +433,20 @@ export interface HoleRun {
   axis: Vec3;
 }
 
-/** Solid intervals of a line through a polygon set (even-odd), at constant `c` of coordinate `fixed`. */
-function intervals(polys: { x: number; y: number }[][], fixed: 'x' | 'y', c: number): [number, number][] {
-  const free = fixed === 'x' ? 'y' : 'x';
-  const xs: number[] = [];
-  for (const poly of polys) {
-    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const a = poly[j];
-      const b = poly[i];
-      const fa = a[fixed];
-      const fb = b[fixed];
-      if (fa > c !== fb > c) xs.push(a[free] + ((c - fa) / (fb - fa)) * (b[free] - a[free]));
-    }
-  }
-  xs.sort((m, n) => m - n);
-  const out: [number, number][] = [];
-  for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
-  return out;
-}
-
 /** Hole runs through the walls of linear parts (members, cleats, sleeves) for display. */
 export function holeRuns(pt: DPart): HoleRun[] {
   if (!pt.shape || !pt.holes.length) return [];
-  const o = shapeOutline(pt.shape);
-  const polys = [o.outer, ...o.holes];
   const runs: HoleRun[] = [];
   for (const h of pt.holes) {
     // face 'y': drilled along local y (section x) at section y = h.z; face 'z': along local z at section x = h.y.
-    const ivs = h.face === 'y' ? intervals(polys, 'y', h.z) : intervals(polys, 'x', h.y);
+    const ivs = holeWalls(pt.shape, h);
+    const a0 = ((h.slotAngle ?? 0) * Math.PI) / 180;
+    const across = h.face === 'y' ? pt.frame.z : pt.frame.y;
+    const axis = madd(scale(pt.frame.x, Math.cos(a0)), across, Math.sin(a0));
     for (const [s0, s1] of ivs) {
       const a = h.face === 'y' ? world(pt.frame, h.x, s0 - 0.6, h.z) : world(pt.frame, h.x, h.y, s0 - 0.6);
       const b = h.face === 'y' ? world(pt.frame, h.x, s1 + 0.6, h.z) : world(pt.frame, h.x, h.y, s1 + 0.6);
-      runs.push({ a, b, d: h.d, slot: h.slot ?? 0, axis: pt.frame.x });
+      runs.push({ a, b, d: h.d, slot: h.slot ?? 0, axis });
     }
   }
   return runs;

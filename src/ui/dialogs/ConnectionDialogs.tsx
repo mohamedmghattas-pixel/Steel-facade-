@@ -128,6 +128,7 @@ function blankTemplate(): CustomTemplate {
     name: 'New connection',
     description: '',
     needsMain: true,
+    frame: 'joint',
     params: [{ key: 'tp', label: 'Plate thickness', default: 10 }],
     cut: 'tp',
     plates: [
@@ -269,6 +270,16 @@ export function CustomConnectionDialog({ onClose }: { onClose: () => void }) {
       <Field label="Description">
         <TextInput value={draft.description} onChange={(v) => setDraft({ ...draft, description: v })} />
       </Field>
+      <Field label="v at the member's end node">
+        <Segmented
+          value={draft.frame ?? 'member'}
+          options={[
+            { value: 'joint', label: 'Joint-local (mirrors at both ends)' },
+            { value: 'member', label: 'Member-local (older templates)' },
+          ]}
+          onChange={(v) => setDraft({ ...draft, frame: v as 'joint' })}
+        />
+      </Field>
       <div className="sp-preview">
         <div className="row-inline">
           <h4 style={{ margin: 0 }}>Live preview</h4>
@@ -283,7 +294,7 @@ export function CustomConnectionDialog({ onClose }: { onClose: () => void }) {
           height={260}
         />
       </div>
-      <p className="muted">{VAR_HELP} Frame: u along the secondary away from the main face (or node), v across, w up.</p>
+      <p className="muted">{VAR_HELP} Frame: u along the secondary away from the main face (or node), w up (secondary local z), v across (joint-local: w × u).</p>
       <h4>Parameters</h4>
       {draft.params.map((prm, i) => (
         <div className="rule rule4" key={i}>
@@ -340,6 +351,16 @@ export function CustomConnectionDialog({ onClose }: { onClose: () => void }) {
                 <TextInput value={pl[k]} onChange={(v) => setPlate(i, { [k]: v })} />
               </Field>
             ))}
+            <Field label="Position">
+              <Select
+                value={pl.place ?? 'face'}
+                options={[
+                  { value: 'face', label: 'Contact face at u/v/w' },
+                  { value: 'centre', label: 'Centred on u/v/w' },
+                ]}
+                onChange={(v) => setPlate(i, { place: v === 'centre' ? 'centre' : undefined })}
+              />
+            </Field>
             <Field label="Bolts">
               <Select
                 value={pl.bolts ? pl.bolts.through : 'off'}

@@ -32,14 +32,41 @@ export interface Frame {
 }
 
 /**
+ * |d̂·Ẑ| above this counts as vertical (about 5.7° from plumb), below
+ * HORIZONTAL_SIN as horizontal (about 0.29°). One threshold for the member
+ * local axes, the placement rules (autoConnect, applyConnection), auto-assign
+ * rules and IFC role guessing, so a member the rules treat as a mullion also
+ * gets mullion local axes.
+ */
+export const VERTICAL_COS = 0.995;
+export const HORIZONTAL_SIN = 0.005;
+
+/** Whether a direction (any length) is vertical by the shared threshold. */
+export function isVerticalAxis(d: Vec3): boolean {
+  const l = len(d);
+  return l > EPS && Math.abs(d.z / l) > VERTICAL_COS;
+}
+
+/** Whether a direction (any length) is horizontal by the shared threshold. */
+export function isHorizontalAxis(d: Vec3): boolean {
+  const l = len(d);
+  return l > EPS && Math.abs(d.z / l) < HORIZONTAL_SIN;
+}
+
+/**
  * Local axes of a member running from `a` to `b`.
- * Non-vertical members: local z is the projection of global Z (section "up").
- * Vertical members: local z points along global +Y, local y along global +X.
+ * Non-vertical members: local z is the projection of global Z (section "up"),
+ * local y = Z × x points to the left of the travel direction seen from above.
+ * Vertical members (isVerticalAxis, plumb or leaning less than ~5.7°): the
+ * reference is global +Y instead, y = norm(Y × x), z = x × y. Plumb members
+ * drawn upwards get y = +X, z = +Y; drawn downwards y = −X, z = +Y (y flips
+ * with x like a horizontal member drawn the other way; the section depth z
+ * stays +Y). A near-plumb member keeps z ≈ +Y, continuous with the plumb case.
  * `rotationDeg` then spins y/z about x.
  */
 export function axesFor(a: Vec3, b: Vec3, rotationDeg = 0): Omit<Frame, 'origin'> {
   const x = normalize(sub(b, a));
-  const vertical = Math.abs(x.z) > 0.9999;
+  const vertical = isVerticalAxis(x);
   const zRef = vertical ? v3(0, 1, 0) : v3(0, 0, 1);
   let y = normalize(cross(zRef, x));
   let z = cross(x, y);

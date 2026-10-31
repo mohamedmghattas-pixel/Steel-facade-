@@ -371,12 +371,11 @@ lists and NC files cannot disagree.
 
 - **Engineering:** no member or connection capacity design yet (wind, dead load,
   bolts, welds, anchors). This is the next milestone (see [ROADMAP.md](ROADMAP.md)).
-- **Geometry:** the inconsistencies found in the placement code are listed in
-  [CONNECTION_GEOMETRY.md §14](CONNECTION_GEOMETRY.md). The most important:
-  - two different vertical thresholds
-  - custom side/top plates that grow away from the axis
-  - auto thermal slots that only recognise the original joint types
-  - survey offsets that are exact for plumb mullions only
+- **Geometry:** the fourteen placement inconsistencies found while documenting
+  the geometry are fixed; [CONNECTION_GEOMETRY.md §14](CONNECTION_GEOMETRY.md)
+  lists what changed and where. Remaining approximations are noted there per
+  section (e.g. skewed secondaries meet the face at their axis; end slots on
+  prepared ends are not drawn in 3D).
 - **Shop data:** DSTV saw-angle signs and plate marking blocks must be
   verified on the target machines. Galvanizing dip rules are typical and must
   be confirmed with the galvanizer.

@@ -4,14 +4,14 @@
  * `DerivedModel` so they always agree with each other.
  */
 import type { Finish, Id, Member, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
-import { cross, dot, madd, normalize, toLocal, type Frame } from '../model/geometry';
+import { cross, dot, len, madd, normalize, toLocal, type Frame } from '../model/geometry';
 import { cutAngle, massLength, type EndCut } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
 import { CONNECTIONS, resolveParams } from '../connections/registry';
-import type { BoltOut, ConnCtx, ConnectionOut, Hole2D, PartRef, WorldHole } from '../connections/common';
+import type { BoltOut, ConnCtx, ConnectionOut, Hole2D, PartRef, WorldEndSlot, WorldHole } from '../connections/common';
 import { beginConnIndexPass } from '../movement/provisions';
-import { memberGeom, type MemberGeom, type Trims } from './memberGeom';
+import { memberGeom, type GovernedEnds, type MemberGeom, type Trims } from './memberGeom';
 import type { Shape } from '../library/shapes';
 import { polygonArea, bbox2 } from '../model/geometry';
 
@@ -19,12 +19,39 @@ import { polygonArea, bbox2 } from '../model/geometry';
 export interface PartHole {
   /** Distance along the part from its physical start. */
   x: number;
-  /** Position across the section: local y and z (only the one not drilled through is meaningful). */
+  /**
+   * Position across the section: local y and z. The coordinate along the
+   * drilling axis only matters for one-wall holes (`through: false`).
+   */
   y: number;
   z: number;
   face: 'y' | 'z';
   d: number;
+  /** Extra slot length (overall d + slot). */
   slot?: number;
+  /**
+   * Slot direction in the face plane, degrees in (−90, 90], from local +x
+   * towards local +z (face 'y') or local +y (face 'z'). Absent = along x.
+   */
+  slotAngle?: number;
+  /** false = the hole passes only the wall at its position (y for face 'y', z for face 'z'); absent = every wall on its line. */
+  through?: false;
+}
+
+/**
+ * Open slot at a linear part's end (receives a knife plate, tongue or tee
+ * stem): a rectangular cut through the whole section along local `face`
+ * ('z': seen from above, through the top and bottom walls / flanges; 'y':
+ * through the side walls / web), `width` across, centred on local y (face 'z')
+ * or z (face 'y') = `offset`, from x0 to x1 (one of them is the part end).
+ */
+export interface PartSlot {
+  end: 'start' | 'end';
+  face: 'y' | 'z';
+  x0: number;
+  x1: number;
+  offset: number;
+  width: number;
 }
 
 export type PartKind = 'member' | 'profile' | 'plate';
@@ -50,6 +77,8 @@ export interface Part {
   outline?: Vec2[];
   plateHoles?: Hole2D[];
   holes: PartHole[];
+  /** Linear parts: open end slots (knife / tongue / stem inserts). */
+  slots?: PartSlot[];
   /** kg */
   mass: number;
   /** m² */
@@ -118,15 +147,53 @@ export interface DerivedModel {
   warnings: { connectionId?: Id; memberId?: Id; text: string }[];
 }
 
+/**
+ * Slot direction of a hole in a linear part, in the face plane: degrees from
+ * local +x towards +z (face 'y') or +y (face 'z'), folded into (−90, 90]
+ * (a slot has no sense). Undefined when it runs along x.
+ */
+export function slotAngleOf(frame: Frame, face: 'y' | 'z', dir: Vec3): number | undefined {
+  const across = face === 'y' ? frame.z : frame.y;
+  let a = (Math.atan2(dot(dir, across), dot(dir, frame.x)) * 180) / Math.PI;
+  if (a > 90 + 1e-9) a -= 180;
+  else if (a <= -90 + 1e-9) a += 180;
+  a = Math.round(a * 1000) / 1000;
+  return Math.abs(a) < 0.01 ? undefined : a;
+}
+
 function holesToLocal(frame: Frame, holes: WorldHole[]): PartHole[] {
   const out: PartHole[] = [];
   for (const h of holes) {
     const l = toLocal(frame, h.pos);
     const face: 'y' | 'z' = Math.abs(dot(h.dir, frame.y)) >= Math.abs(dot(h.dir, frame.z)) ? 'y' : 'z';
     if (Math.abs(dot(h.dir, frame.x)) > 0.5) continue; // axial holes are not drilled in linear parts
-    out.push({ x: l.x, y: l.y, z: l.z, face, d: h.d, slot: h.slot });
+    const ph: PartHole = { x: l.x, y: l.y, z: l.z, face, d: h.d, slot: h.slot };
+    if (h.slot && h.slotDir) {
+      const a = slotAngleOf(frame, face, h.slotDir);
+      if (a !== undefined) ph.slotAngle = a;
+    }
+    if (h.through === false) ph.through = false;
+    out.push(ph);
   }
   return out.sort((a, b) => a.x - b.x || a.z - b.z || a.y - b.y);
+}
+
+/** End slots of a member in its part frame, snapped to the nearest section axis. */
+function slotsToLocal(frame: Frame, length: number, slots: WorldEndSlot[], warn: (t: string) => void): PartSlot[] {
+  const out: PartSlot[] = [];
+  for (const s of slots) {
+    const t = normalize(cross(frame.x, s.normal));
+    if (len(t) < 0.5 || s.width <= 0 || s.length <= 0) continue;
+    const ty = Math.abs(dot(t, frame.y));
+    const tz = Math.abs(dot(t, frame.z));
+    const face: 'y' | 'z' = ty >= tz ? 'y' : 'z';
+    const off = (Math.acos(Math.min(1, Math.max(ty, tz))) * 180) / Math.PI;
+    if (off > 2) warn(`End slot runs ${Math.round(off)}° off the section axes — drawn and exported along the nearest axis.`);
+    const l = toLocal(frame, s.pos);
+    const L = Math.min(s.length, length);
+    out.push({ end: s.end, face, x0: s.end === 'start' ? 0 : length - L, x1: s.end === 'start' ? L : length, offset: face === 'z' ? l.y : l.z, width: s.width });
+  }
+  return out.sort((a, b) => a.x0 - b.x0);
 }
 
 function plateMass(outline: Vec2[], holes: Hole2D[], t: number, material: string): number {
@@ -140,10 +207,34 @@ export function deriveModel(p: Project): DerivedModel {
   const warnings: DerivedModel['warnings'] = [];
   const members = Object.values(p.members).filter((m) => m.profile && getProfile(m.profile));
 
+  // Member ends governed by a connection: a supported member ending at the
+  // connection's node, or any member end a connection trims. The connection
+  // places its parts from the node and sets the end (trim / cut-back), so a
+  // user extension there is ignored (with a warning) instead of moving the
+  // member end against the plates.
+  const governed: GovernedEnds = new Map();
+  const governedBy = new Map<string, Id>();
+  const govern = (id: Id, end: 'start' | 'end', cid: Id) => {
+    const g = governed.get(id) ?? { start: false, end: false };
+    g[end] = true;
+    governed.set(id, g);
+    if (!governedBy.has(`${id}|${end}`)) governedBy.set(`${id}|${end}`, cid);
+  };
+  for (const c of Object.values(p.connections)) {
+    for (const id of c.secondary) {
+      const m = p.members[id];
+      if (!m) continue;
+      if (m.start === c.node) govern(id, 'start', c.id);
+      if (m.end === c.node) govern(id, 'end', c.id);
+    }
+  }
+
   // Pass 1: trims from connections, using untrimmed geometry.
   const raw = new Map<Id, MemberGeom>();
-  for (const m of Object.values(p.members)) raw.set(m.id, memberGeom(p, m));
+  for (const m of Object.values(p.members)) raw.set(m.id, memberGeom(p, m, undefined, governed));
   const trims: Trims = new Map();
+  /** Every trim per member end with its connection, to flag ends cut back by different amounts. */
+  const trimsAt = new Map<string, { cid: Id; amount: number }[]>();
   const ctxFor = (cid: Id, geoms: Map<Id, MemberGeom>): ConnCtx | null => {
     const c = p.connections[cid];
     const node = p.nodes[c.node];
@@ -155,17 +246,40 @@ export function deriveModel(p: Project): DerivedModel {
     const ctx = ctxFor(c.id, raw);
     if (!def?.trims || !ctx) continue;
     for (const t of def.trims(ctx)) {
+      // Coincident joints cut to the governing (largest) cut-back, not the sum.
       const cur = trims.get(t.member) ?? { start: 0, end: 0 };
       cur[t.end] = Math.max(cur[t.end], t.amount);
       trims.set(t.member, cur);
+      const k = `${t.member}|${t.end}`;
+      trimsAt.set(k, [...(trimsAt.get(k) ?? []), { cid: c.id, amount: t.amount }]);
+      govern(t.member, t.end, c.id);
+    }
+  }
+  const labelOf = (cid: Id) => CONNECTIONS[p.connections[cid].type]?.label ?? p.connections[cid].type;
+  for (const [k, list] of trimsAt) {
+    const amounts = list.map((x) => x.amount);
+    if (list.length < 2 || Math.max(...amounts) - Math.min(...amounts) < 0.05) continue;
+    const [id, end] = k.split('|');
+    const by = list.map((x) => `${labelOf(x.cid)} ${Math.round(x.amount * 10) / 10} mm`).join(', ');
+    warnings.push({ memberId: id, text: `${end === 'start' ? 'Start' : 'End'} is cut back by ${list.length} connections (${by}); the largest is used — check that their parts do not clash.` });
+  }
+  for (const m of Object.values(p.members)) {
+    const g = governed.get(m.id);
+    if (!g || !m.profile) continue;
+    for (const end of ['start', 'end'] as const) {
+      const ext = end === 'start' ? m.startExt : m.endExt;
+      if (!g[end] || !ext) continue;
+      const cid = governedBy.get(`${m.id}|${end}`)!;
+      warnings.push({ memberId: m.id, connectionId: cid, text: `${end === 'start' ? 'Start' : 'End'} extension ${Math.round(ext * 10) / 10} mm is ignored: the ${labelOf(cid)} at that end sets the member end.` });
     }
   }
 
   // Pass 2: trimmed member geometry and connection parts.
   const geoms = new Map<Id, MemberGeom>();
-  for (const m of Object.values(p.members)) geoms.set(m.id, memberGeom(p, m, trims));
+  for (const m of Object.values(p.members)) geoms.set(m.id, memberGeom(p, m, trims, governed));
   const connectionOut = new Map<Id, ConnectionOut>();
   const memberHoles = new Map<Id, WorldHole[]>();
+  const memberSlots = new Map<Id, WorldEndSlot[]>();
   for (const c of Object.values(p.connections)) {
     const def = CONNECTIONS[c.type];
     const ctx = ctxFor(c.id, geoms);
@@ -184,6 +298,11 @@ export function deriveModel(p: Project): DerivedModel {
       arr.push(mh.hole);
       memberHoles.set(mh.member, arr);
     }
+    for (const ms of out.memberSlots ?? []) {
+      const arr = memberSlots.get(ms.member) ?? [];
+      arr.push(ms.slot);
+      memberSlots.set(ms.member, arr);
+    }
   }
 
   // Parts.
@@ -194,6 +313,7 @@ export function deriveModel(p: Project): DerivedModel {
     if (g.length <= 1) warnings.push({ memberId: m.id, text: `Member is cut back to zero length.` });
     for (const w of g.prepWarnings ?? []) warnings.push({ memberId: m.id, text: `End preparation — ${w}` });
     const lp = linearPart(g.frame, g.length, g.cuts, prof.shape, prof.area, { y: prof.cy ?? 0, z: prof.cz ?? 0 });
+    const slots = slotsToLocal(lp.frame, lp.length, memberSlots.get(m.id) ?? [], (text) => warnings.push({ memberId: m.id, text }));
     parts.push({
       ref: `m:${m.id}`,
       kind: 'member',
@@ -209,6 +329,7 @@ export function deriveModel(p: Project): DerivedModel {
       thickness: 0,
       shape: prof.shape,
       holes: holesToLocal(lp.frame, memberHoles.get(m.id) ?? []),
+      ...(slots.length ? { slots } : {}),
       mass: (prof.mass * lp.massLength * densityFactor(m.material)) / 1000,
       surface: (prof.surface * lp.massLength) / 1000,
       ends: lp.ends,
@@ -455,7 +576,9 @@ function rank(pt: Part): number {
 const r1 = (n: number) => Math.round(n * 2) / 2; // 0.5 mm
 
 export function partSignature(pt: Part): string {
-  const holes = pt.holes.map((h) => `${h.face}${r1(h.x)},${r1(h.face === 'y' ? h.z : h.y)},${h.d},${h.slot ?? 0}`).join(';');
+  const holes =
+    pt.holes.map((h) => `${h.face}${r1(h.x)},${r1(h.face === 'y' ? h.z : h.y)},${h.d},${h.slot ?? 0}` + (h.slotAngle ? `@${h.slotAngle}` : '') + (h.through === false ? `w${r1(h.face === 'y' ? h.y : h.z)}` : '')).join(';') +
+    (pt.slots ?? []).map((k) => `|S${k.face}${r1(k.x0)}-${r1(k.x1)},${r1(k.offset)},${r1(k.width)}`).join('');
   const plate = pt.outline
     ? pt.outline.map((v) => `${r1(v.x)},${r1(v.y)}`).join(' ') +
       '|' +

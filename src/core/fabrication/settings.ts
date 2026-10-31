@@ -18,6 +18,7 @@ export function defaultFabricationSettings(): FabricationSettings {
       { name: 'Topcoat', dft: 60, solids: 55 },
     ],
     paintLoss: 0,
+    dstvHollowThrough: 'one',
   };
 }
 

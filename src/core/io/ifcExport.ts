@@ -20,6 +20,7 @@ import { getBolt } from '../library/bolts';
 import type { Hole2D } from '../connections/common';
 import type { DerivedModel, Part } from '../derive/model';
 import { copeNotch, isSquare } from '../geometry/endPrep';
+import { holeWalls } from '../geometry/sectionWalls';
 import { foldPlate } from '../geometry/bentPlate';
 import { assemblyGuid, ifcGuidFrom, partGuid } from './guid';
 
@@ -436,32 +437,49 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     ]);
   }
 
+  /**
+   * Openings of a linear part, in the host placement (X = local y, Y = local z,
+   * Z = local x). Holes: drilled along their face axis over the walls they pass
+   * (every wall on the line for through holes, their own wall for one-wall
+   * holes, from the section outline), round or slot-shaped along the slot
+   * direction. End slots: rectangular cut through the section.
+   */
   function addOpenings(part: Part, hostPlacement: Ref, host: Ref) {
-    // In the host placement: X = local y, Y = local z, Z = local x.
     const margin = 5;
+    const W = part.shape && (part.shape.type === 'CHS' || part.shape.type === 'RD') ? part.shape.d : part.width;
+    const H = part.shape ? sectionHeight(part.shape) : part.width;
+    const opening = (name: string, pl: Ref, item: Ref) => {
+      const ref = w.add('IFCOPENINGELEMENT', [str(ifcGuid()), '$', str(name), '$', '$', pl, shapeRep([item]), '$', en('OPENING')]);
+      w.add('IFCRELVOIDSELEMENT', [str(ifcGuid()), '$', '$', '$', host, ref]);
+    };
+    // Opening axes: Z = the drilling axis, X = part x; so the profile's X runs along the part.
+    const partX = { x: 0, y: 0, z: 1 };
     for (const h of part.holes) {
-      const through = h.face === 'y' ? part.width : (part.shape ? sectionHeight(part.shape) : part.width);
-      const depth = through + 2 * margin;
-      const loc =
-        h.face === 'y'
-          ? { x: -(part.width / 2 + margin), y: h.z, z: h.x }
-          : { x: h.y, y: -(through / 2 + margin), z: h.x };
+      const walls = part.shape ? holeWalls(part.shape, h) : [];
+      const half = (h.face === 'y' ? W : H) / 2;
+      const [lo, hi] = walls.length ? [walls[0][0], walls[walls.length - 1][1]] : [-half, half];
+      const depth = hi - lo + 2 * margin;
+      const loc = h.face === 'y' ? { x: lo - margin, y: h.z, z: h.x } : { x: h.y, y: lo - margin, z: h.x };
       const axis = h.face === 'y' ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
-      const ref = h.face === 'y' ? { x: 0, y: 0, z: 1 } : { x: 1, y: 0, z: 0 };
-      const pl = w.add('IFCLOCALPLACEMENT', [hostPlacement, axis3(loc, axis, ref)]);
-      const circle = w.shared('IFCCIRCLEPROFILEDEF', [en('AREA'), '$', pos2d, real(h.d / 2)]);
-      const opening = w.add('IFCOPENINGELEMENT', [
-        str(ifcGuid()),
-        '$',
-        str('Hole'),
-        '$',
-        '$',
-        pl,
-        shapeRep([extrude(circle, depth)]),
-        '$',
-        en('OPENING'),
-      ]);
-      w.add('IFCRELVOIDSELEMENT', [str(ifcGuid()), '$', '$', '$', host, opening]);
+      const pl = w.add('IFCLOCALPLACEMENT', [hostPlacement, axis3(loc, axis, partX)]);
+      let profile: Ref;
+      if (h.slot && h.slot > 0) {
+        // Opening local Y = Z × X: −(local z) for face y, +(local y) for face z.
+        const a = (h.slotAngle ?? 0) * (h.face === 'y' ? -1 : 1);
+        profile = w.add('IFCARBITRARYCLOSEDPROFILEDEF', [en('AREA'), str('Slot'), polyline(holeCurve({ x: 0, y: 0, d: h.d, slot: h.slot, angle: a }))]);
+      } else profile = w.shared('IFCCIRCLEPROFILEDEF', [en('AREA'), '$', pos2d, real(h.d / 2)]);
+      opening(h.slot ? 'Slot' : 'Hole', pl, extrude(profile, depth));
+    }
+    for (const k of part.slots ?? []) {
+      // Rectangle through the section, run past the open end by the margin.
+      const x0 = k.end === 'start' ? k.x0 - margin : k.x0;
+      const x1 = k.end === 'end' ? k.x1 + margin : k.x1;
+      const half = (k.face === 'y' ? W : H) / 2 + margin;
+      const loc = k.face === 'y' ? { x: -half, y: k.offset, z: (x0 + x1) / 2 } : { x: k.offset, y: -half, z: (x0 + x1) / 2 };
+      const axis = k.face === 'y' ? { x: 1, y: 0, z: 0 } : { x: 0, y: 1, z: 0 };
+      const pl = w.add('IFCLOCALPLACEMENT', [hostPlacement, axis3(loc, axis, partX)]);
+      const rectProf = w.add('IFCRECTANGLEPROFILEDEF', [en('AREA'), str('End slot'), pos2d, real(x1 - x0), real(k.width)]);
+      opening('End slot', pl, extrude(rectProf, 2 * half));
     }
   }
 

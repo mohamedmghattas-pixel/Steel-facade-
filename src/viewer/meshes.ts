@@ -236,6 +236,73 @@ export function preparedMemberGeometry(part: Part) {
   return g;
 }
 
+/** Polygon with holes in section coordinates. */
+type SecPoly = { outer: Vec2[]; holes: Vec2[][] };
+
+/**
+ * The part of a section on one side of a line (a·x + b·y ≤ c): the outer
+ * polygon clipped, holes the line misses kept as holes, holes it cuts spliced
+ * into the outline (a C shape for a tube). Exact for convex outlines and holes
+ * (tubes, boxes); open sections come out joined by zero-width bridges.
+ */
+function clipSectionSide(sp: SecPoly, a: number, b: number, c: number): SecPoly | null {
+  let outer = clipHalfPlane(sp.outer, a, b, c);
+  if (outer.length < 3) return null;
+  const on = (q: Vec2) => Math.abs(a * q.x + b * q.y - c) < 1e-6;
+  const lineEdge = (pts: Vec2[]) => pts.findIndex((q, i) => on(q) && on(pts[(i + 1) % pts.length]));
+  const holes: Vec2[][] = [];
+  for (const h of sp.holes) {
+    const hc = clipHalfPlane(h, a, b, c);
+    if (hc.length < 3) continue;
+    if (h.every((q) => a * q.x + b * q.y - c < -1e-6)) {
+      holes.push(h);
+      continue;
+    }
+    const i = lineEdge(outer);
+    const k = lineEdge(hc);
+    if (i < 0 || k < 0) continue;
+    const n = outer.length;
+    const m = hc.length;
+    const rot = Array.from({ length: n }, (_, j) => outer[(i + 1 + j) % n]); // O[i+1] … O[i]
+    const last = outer[i];
+    const qa = hc[k];
+    const qb = hc[(k + 1) % m];
+    const near = Math.hypot(qa.x - last.x, qa.y - last.y) <= Math.hypot(qb.x - last.x, qb.y - last.y) ? k : (k + 1) % m;
+    const step = near === k ? -1 : 1;
+    const path = Array.from({ length: m }, (_, j) => hc[(((near + step * j) % m) + m) % m]);
+    outer = [...rot, ...path];
+  }
+  return { outer, holes };
+}
+
+/**
+ * Linear part with open end slots (square ends): the section prism, with the
+ * slot strip removed over each slot's x range. Millimetres, placed with
+ * `linearMatrix(frame, 1)`. Slots on prepared (cut / coped) ends are not drawn.
+ */
+export function slottedMemberGeometry(part: Part) {
+  const o = shapeOutline(part.shape!);
+  const L = part.length;
+  const slots = part.slots ?? [];
+  const xs = [...new Set([0, L, ...slots.flatMap((k) => [k.x0, k.x1])].map((x) => Math.min(L, Math.max(0, x))))].sort((a, b) => a - b);
+  const pieces: THREE.BufferGeometry[] = [];
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const [xa, xb] = [xs[i], xs[i + 1]];
+    if (xb - xa < 1e-6) continue;
+    let secs: SecPoly[] = [{ outer: o.outer, holes: o.holes }];
+    for (const k of slots.filter((s) => s.x0 <= xa + 1e-6 && s.x1 >= xb - 1e-6)) {
+      // Section x = local y, section y = local z; a slot through z removes a strip of local y.
+      const [ax, ay] = k.face === 'z' ? [1, 0] : [0, 1];
+      const lo = k.offset - k.width / 2;
+      const hi = k.offset + k.width / 2;
+      secs = secs.flatMap((sp) => [clipSectionSide(sp, ax, ay, lo), clipSectionSide(sp, -ax, -ay, -hi)].filter((x): x is SecPoly => !!x));
+    }
+    for (const sp of secs) pieces.push(slab(sp.outer, sp.holes, () => xa, () => xb));
+  }
+  const mesh = pieces.length === 1 ? pieces[0] : mergeGeometries(pieces)!;
+  return { mesh, edges: new THREE.EdgesGeometry(mesh, 35) };
+}
+
 /** Combine top and bottom cope stations at the same x (cope "both"). */
 function mergeStations(st: { x: number; zTop: number; zBot: number }[]) {
   const out: { x: number; zTop: number; zBot: number }[] = [];
@@ -325,6 +392,7 @@ export function linearPartMesh(part: Part): { mesh: THREE.BufferGeometry; edges:
     const g = preparedMemberGeometry(part);
     return { ...g, matrix: linearMatrix(part.frame, 1) };
   }
+  if (part.slots?.length && part.shape) return { ...slottedMemberGeometry(part), matrix: linearMatrix(part.frame, 1) };
   const g = profileGeometry(part.profile, part.shape!);
   return { ...g, matrix: linearMatrix(part.frame, part.length) };
 }
@@ -355,6 +423,8 @@ export function partGeometryKey(part: Part, member?: Member): string {
   }
   // End-prepared parts (cuts, mitres, copes) carry their cut geometry in part.ends (derive/model.ts).
   if (part.ends && part.shape) return `prep|${part.profile}|${q(part.length)}|${part.sigExtra ?? ''}`;
+  // Open end slots (knife / tongue / stem inserts).
+  if (part.slots?.length && part.shape) return `slot|${part.profile}|${q(part.length)}|${part.slots.map((k) => `${k.face}${q(k.x0)},${q(k.x1)},${q(k.offset)},${q(k.width)}`).join(';')}`;
   const prepped = !!member && ((!!member.startPrep && member.startPrep.kind !== 'square') || (!!member.endPrep && member.endPrep.kind !== 'square'));
   return prepped ? `lin|${part.profile}|${q(part.length)}|${JSON.stringify([member!.startPrep ?? null, member!.endPrep ?? null])}` : `lin|${part.profile}`;
 }
@@ -413,6 +483,7 @@ export function geometryForKey(key: string, part: Part, coarse = false): { mesh:
   if (isUnitLinearKey(key)) return { ...(coarse ? coarseProfileGeometry(part.profile, part.shape!) : profileGeometry(part.profile, part.shape!)), cached: true };
   // Exact cut / coped body in millimetres (placed with linearMatrix(frame, 1)); shared via its own cache.
   if (part.ends && part.shape) return { ...preparedMemberGeometry(part), cached: true };
+  if (key.startsWith('slot|') && part.shape) return { ...slottedMemberGeometry(part), cached: false };
   // Prepared ends: full-length extrusion (end cuts are drawn by the modelling geometry where available).
   const unit = coarse ? coarseProfileGeometry(part.profile, part.shape!) : profileGeometry(part.profile, part.shape!);
   const m = new THREE.Matrix4().makeScale(1, 1, Math.max(part.length, 0.1));

@@ -230,7 +230,7 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: 'save_custom_template',
     description:
-      'Create or replace a custom connection template in the project library. Plates are formulas over template params and the joint variables h_sec, b_sec, h_main, b_main, depth_main, face; functions max, min, round, ceil, floor, abs, ceilto(x, step). Frame: u along the secondary away from the main face, v across (local y), w up (local z). plane "end" = across the member end (width along v, height along w, centred at v,w, contact at u); "side" = on a side face (width along u from u, height along w centred at w, contact at v); "top" = on top/bottom (width along u, height along v centred at v, contact at w). weldTo: "main" | "secondary" | "none" | another plate key. bolts.through: "main" | "secondary" | "none" | "concrete" (anchors). cut = cut-back of the secondary from the main face.',
+      'Create or replace a custom connection template in the project library. Plates are formulas over template params and the joint variables h_sec, b_sec, h_main, b_main, depth_main, face; functions max, min, round, ceil, floor, abs, ceilto(x, step). Frame: u along the secondary away from the main face, w up (local z), v = w × u (frame "joint", default; "member" = v along local y at both ends). plane "end" = across the member end (width along v, height along w, centred at v,w, contact at u); "side" = width along u from u, height along w centred at w, contact at v; "top" = width along u, height along v centred at v, contact at w. place "centre" puts the mid-plane at the contact value. weldTo: "main" | "secondary" | "none" | another plate key. bolts.through: "main" | "secondary" | "none" | "concrete" (anchors). cut = cut-back of the secondary from the main face.',
     input_schema: {
       type: 'object',
       properties: {
@@ -238,6 +238,7 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
         name: str,
         description: str,
         needsMain: { type: 'boolean' },
+        frame: { type: 'string', enum: ['joint', 'member'] },
         params: { type: 'array', items: { type: 'object', properties: { key: str, label: str, default: num }, required: ['key', 'default'] } },
         cut: str,
         plates: {
@@ -254,6 +255,7 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
               u: str,
               v: str,
               w: str,
+              place: { type: 'string', enum: ['face', 'centre'] },
               weldTo: str,
               bolts: {
                 type: 'object',
@@ -647,7 +649,7 @@ export async function runTool(name: string, input: Json): Promise<string> {
 
     case 'save_custom_template': {
       const id = (input.id as string) || newId('tpl');
-      const tpl = { ...(input as object), id, description: String(input.description ?? '') } as Project['library']['templates'][number];
+      const tpl = { frame: 'joint', ...(input as object), id, description: String(input.description ?? '') } as Project['library']['templates'][number];
       s.apply('Assistant: custom template', (d) => {
         d.library.templates = [...d.library.templates.filter((t) => t.id !== id), tpl];
       });

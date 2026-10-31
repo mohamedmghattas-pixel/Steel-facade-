@@ -6,7 +6,7 @@
  */
 import type { CustomPlate, CustomTemplate, Project } from '../model/types';
 import { boltLength, getBolt } from '../library/bolts';
-import { madd, scale, type Frame } from '../model/geometry';
+import { cross, madd, scale, type Frame } from '../model/geometry';
 import type { MemberGeom } from '../derive/memberGeom';
 import {
   centreAt,
@@ -43,7 +43,7 @@ function joint(ctx: ConnCtx, t: CustomTemplate): Joint | null {
   const main = ctx.c.main ? ctx.geom(ctx.c.main) : undefined;
   if (t.needsMain && !main?.profile) return null;
   const { dir, end } = inward(sec, ctx.node);
-  return { sec, main, dIn: dir, end, face: main ? faceDistance(main, ctx.node, dir) : 0 };
+  return { sec, main, dIn: dir, end, face: main ? faceDistance(main, centreAt(sec, ctx.node), dir) : 0 };
 }
 
 /** Variables available to template formulas. */
@@ -96,9 +96,12 @@ export const customConnection: ConnectionDef = {
       return out;
     }
     const vars = templateVars(ctx, t, j);
+    // Joint frame: U into the secondary, W = its local z (up). 'joint' frames are
+    // right-handed (V = W × U, flips with U at the end node); legacy 'member'
+    // frames keep V = local y (left-handed at the end node).
     const U = j.dIn;
-    const V = j.sec.frame.y;
     const W = j.sec.frame.z;
+    const V = (t.frame ?? 'member') === 'joint' ? cross(W, U) : j.sec.frame.y;
     const O = madd(centreAt(j.sec, ctx.node), U, j.face);
     const E = (e: string) => evalExpr(e, vars);
     for (const pl of t.plates) {
@@ -129,23 +132,26 @@ function buildPlate(
   if (t <= 0 || width <= 0 || height <= 0) throw new Error('thickness, width and height must be positive');
   const { U, V, W, O } = f;
   const sgn = (x: number) => (x < 0 ? -1 : 1);
+  // Position on the plate's own normal: contact face there ('face') or mid-plane there ('centre').
+  const centred = pl.place === 'centre';
+  const back = centred ? -t / 2 : 0;
   let corner;
   let outward;
   let xDir;
   let yDir;
   if (pl.plane === 'end') {
-    corner = madd(madd(madd(O, U, u), V, v - width / 2), W, w - height / 2);
+    corner = madd(madd(madd(O, U, u + back), V, v - width / 2), W, w - height / 2);
     outward = U;
     xDir = V;
     yDir = W;
   } else if (pl.plane === 'side') {
-    corner = madd(madd(madd(O, U, u), V, v), W, w - height / 2);
-    outward = scale(V, sgn(v));
+    outward = centred ? V : scale(V, sgn(v));
+    corner = madd(madd(madd(O, U, u), V, v + back), W, w - height / 2);
     xDir = U;
     yDir = W;
   } else {
-    corner = madd(madd(madd(O, U, u), W, w), V, v - height / 2);
-    outward = scale(W, sgn(w));
+    outward = centred ? W : scale(W, sgn(w));
+    corner = madd(madd(madd(O, U, u), W, w + back), V, v - height / 2);
     xDir = U;
     yDir = V;
   }
@@ -200,6 +206,7 @@ export function exampleTemplates(newId: (p: string) => string): CustomTemplate[]
       name: 'Bolted end plate with stiffener',
       description: 'End plate welded to the secondary, 4 bolts through the main member, triangular-ish stiffener plate under the secondary.',
       needsMain: true,
+      frame: 'joint',
       params: [
         { key: 'tp', label: 'Plate thickness', default: 12 },
         { key: 'edge', label: 'Edge distance', default: 30 },
@@ -220,7 +227,7 @@ export function exampleTemplates(newId: (p: string) => string): CustomTemplate[]
           weldTo: 'secondary',
           bolts: { size: 'M16', grade: '8.8', rows: '2', cols: '2', pitch: 'h_sec + 40', gauge: 'b_sec + 50', through: 'main' },
         },
-        { key: 'st', name: 'Stiffener', plane: 'side', t: 'ts', width: '100', height: '60', u: 'tp', v: '-ts/2', w: '-h_sec/2 - 30', weldTo: 'ep' },
+        { key: 'st', name: 'Stiffener', plane: 'side', t: 'ts', width: '100', height: '60', u: 'tp', v: '0', w: '-h_sec/2 - 30', place: 'centre', weldTo: 'ep' },
       ],
     },
     {
@@ -228,6 +235,7 @@ export function exampleTemplates(newId: (p: string) => string): CustomTemplate[]
       name: 'Wall bracket (anchored L)',
       description: 'Back plate anchored to concrete behind the member end, with a fin plate bolted to the member through slotted holes.',
       needsMain: false,
+      frame: 'joint',
       params: [
         { key: 'tb', label: 'Back plate thickness', default: 10 },
         { key: 'tf', label: 'Fin thickness', default: 10 },

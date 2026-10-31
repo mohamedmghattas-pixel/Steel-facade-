@@ -191,6 +191,15 @@ export function FabricationView() {
         <div className="fab-row">
           <PlateCncButtons />
         </div>
+        <div className="fab-row">
+          <label className="fab-inline" title="DSTV NC1 of members: through holes of RHS / CHS once on the drilled face (drill through both walls) or on both faces (v + h, o + u)">
+            Hollow-section through holes (DSTV){' '}
+            <select value={s.dstvHollowThrough} onChange={(e) => setFabSettings({ dstvHollowThrough: e.target.value === 'both' ? 'both' : 'one' })}>
+              <option value="one">one face (drill through)</option>
+              <option value="both">both faces (v + h / o + u)</option>
+            </select>
+          </label>
+        </div>
       </section>
 
       <section className="fab-card">

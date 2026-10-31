@@ -14,14 +14,17 @@ Becoming #1 means doing that niche better than the general tools, while being ea
 
 | Area | Status |
 |---|---|
-| Wireframe modelling | Lines and polylines on work planes, snapping, typed coordinates, facade grid generator, move/copy/array/split, undo/redo |
+| Wireframe modelling | Lines and polylines on work planes, snapping, typed coordinates, facade grid generator, move/copy/array/split, undo/redo; work planes from 3 points, arcs and curved facade grids |
+| Geometry | End preparations (cuts, mitres, copes, fitting); polygon plates, bent plates and stiffeners as parts — see [MODELLING.md](MODELLING.md) |
+| Model management | Manual marks, mark locking, phases/zones/delivery batches, clash detection with BCF 2.1, editable steel from IFC, sub-frame from the architect's panel layout, instanced rendering and spatial index for 100k+ parts — see [MODEL_MANAGEMENT.md](MODEL_MANAGEMENT.md) |
+| Movement and site | Thermal movement, slab-deflection and drift checks, slot lengths from the tolerance stack, survey-driven bracket adjustment with setting-out tables — see [MOVEMENT.md](MOVEMENT.md) |
 | References | IFC concrete/main steel (web-ifc), DXF linework, PDF/image underlay with 2-point calibration |
 | Libraries | EN, BS, AISC profiles; steel, stainless and aluminium grades; metric and imperial bolts; anchors; custom profiles |
-| Connections | Slab bracket (edge/top), base plate, fin/knife plate, angle cleat, end plate, welded, splice plates, plus **custom templates** with formula parameters; presets; apply to selected members; auto-connect |
+| Connections | 30 parametric types (steel to concrete, steel to steel, splices and movement joints, bracing, hangers) plus **custom templates**; library browser with a **live 3D preview**; presets; apply to selected members; auto-connect — see [CONNECTIONS.md](CONNECTIONS.md) |
 | Derivation | Parts, assemblies, holes, weights, numbering of identical parts and assemblies |
 | Code rules | Detailing checks per AISC 360 / EN 1993-1-8 / EN 1090-2 / EN ISO 1461 (edge distance, spacing, holes, welds, coating) |
-| Outputs | IFC4, BOM (XLSX/CSV), DSTV NC1, bar and plate nesting |
-| Drawings | ISO drawing set:<ul><li>register, GA, assembly and part sheets</li><li>3 views and sections</li><li>revisions</li><li>cross-references</li><li>hole tables</li><li>machining steps</li></ul> |
+| Outputs | IFC4, BOM (XLSX/CSV), DSTV NC1, bar and plate nesting (stock on hand first), plate CNC DXF per part and per nested sheet, labels with QR/Code 128, packing lists, galvanizing lists with dip checks, paint areas, MIS/ERP export — see [FABRICATION.md](FABRICATION.md) |
+| Drawings | ISO drawing set:<ul><li>register, GA, assembly and part sheets</li><li>3 views and sections</li><li>revisions</li><li>cross-references</li><li>hole tables</li><li>machining steps</li><li>interactive editing (views, dimensions, notes, leaders, revision clouds)</li><li>company templates and a title-block designer</li><li>erection drawings: bracket setting-out plans, anchor schedules, erection sequences</li><li>section cuts and detail views anywhere on the GA</li></ul> |
 | AI | Chat assistant that operates the whole application through tools |
 
 ## The balance (what is still missing)
@@ -39,35 +42,18 @@ Priority: **P1** = needed to win real projects, **P2** = needed to beat the incu
   - fillet welds (AISC J2.4, EN 1993-1-8 4.5)
   - plates in bending
   - anchors to EN 1992-4 / ACI 318 Ch. 17, with a manufacturer data import
-- **Movement and tolerance design:**
-  - thermal movement and slab-edge deflection compatibility
-  - slot lengths derived from the tolerance stack, not entered by hand
 
-### 2. Modelling (P1–P2)
-- Cuts, copes, mitres and fitting between members (true end preparations).
-- Bent plates, polygonal plates and stiffeners as first-class parts.
-- Non-orthogonal and curved facades: work planes from 3 points, members along arcs, segmented curved mullions.
-- **Survey-driven brackets:** import surveyed slab-edge positions (point cloud / CSV) and adjust bracket stand-offs per location, with a setting-out table. This is a facade-specific killer feature.
-- Generate the sub-frame from the architect's panel layout (IFC/DXF panel joints → mullion/transom positions).
-- Clash detection against the reference model (hard and clearance) with a BCF issue list.
-- DWG import; editable steel from IFC (round-trip with Tekla/Revit).
-- Manual marks, mark locking, phases/zones, delivery batches.
-- Large-model performance: instanced rendering and spatial indexing for 100k+ parts.
+### 2. Modelling (P2)
+- Saddle cuts for tube-to-tube fitting; rolled (truly curved) members.
+- DWG import through a licensed converter (detection and guidance are in place).
+- Incremental scene updates for very large models (today the scene is rebuilt on each edit).
 
-### 3. Drawings (P1–P2)
-- Interactive drawing editing: move views and dimensions, add notes and leaders, revision clouds.
-- Company sheet templates and a title-block designer.
-- **Erection drawings for facades:**
-  - bracket setting-out plans with anchor positions to grids/levels
-  - anchor schedules
-  - per-elevation erection sequences
-- Section cuts anywhere in the GA, detail callouts and detail views.
+### 3. Drawings (P2)
+- Hidden-line removal in sections and details; multi-line notes in the editor.
 
 ### 4. Fabrication and supply chain (P2)
-- Plate DXF per part for laser/plasma, and nested sheet DXF/NC output.
-- Part labels with QR/barcodes, packing lists, galvanizing batch lists (dip size checks), paint areas.
 - Cost estimation: material, fabrication hours per operation, coating, bolts and anchors.
-- Exports for fabrication MIS/ERP systems (CSV/JSON/IFC), and import of stock availability.
+- Remnant / offcut tracking in plate nesting; CAM lead-ins and kerf compensation.
 
 ### 5. Collaboration and platform (P2)
 - Cloud projects with multi-user access, permissions, version history and review comments on drawings.
@@ -94,12 +80,8 @@ Priority: **P1** = needed to win real projects, **P2** = needed to beat the incu
    - mullion/transom design and deflection checks
    - bracket and anchor capacity checks
    - automatic sizing
-2. **Erection and site:**
-   - bracket setting-out drawings and anchor schedules
-   - survey-driven bracket adjustment
-   - clash detection with BCF
-3. **Platform:**
-   - cloud projects and sharing
-   - drawing editing and templates
-   - plate DXF/nesting outputs
+2. **Platform:**
+   - cloud projects and sharing, approval workflow
    - cost estimation
+   - imperial display units and localisation
+3. **Trust:** verify catalogue data, DSTV conventions (saw-angle signs, SI marking) and dip rules against suppliers and machines on a reference project.

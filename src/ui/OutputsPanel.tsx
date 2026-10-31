@@ -3,9 +3,10 @@ import { derived, useStore, type OutputTab } from '../state/store';
 import { buildBom } from '../core/reports/bom';
 import { nestBars } from '../core/optimize/barNesting';
 import { nestPlates } from '../core/optimize/plateNesting';
-import { drawingToSvg } from '../core/drawings/render';
+import { DrawingEditor } from './DrawingEditor';
+import { GaCutsDialog } from './dialogs/DrawingDialogs';
 import type { Drawing } from '../core/drawings/types';
-import { drawingsFor, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
+import { drawingsFor, exportAnchorScheduleCsv, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
@@ -224,13 +225,17 @@ function DrawingsView() {
       return [] as Drawing[];
     }
   }, [project]);
-  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed'>('all');
-  const [current, setCurrent] = useState(0);
-  const list = drawings.filter((d) => kind === 'all' || (kind === 'changed' ? d.changed : d.kind === kind));
-  const d = list[Math.min(current, list.length - 1)];
-  const svg = useMemo(() => (d ? drawingToSvg(d) : ''), [d]);
+  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed' | 'erection'>('all');
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [cutsOpen, setCutsOpen] = useState(false);
+  const list = drawings.filter(
+    (d) => kind === 'all' || (kind === 'changed' ? d.changed : kind === 'erection' ? d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence' : d.kind === kind),
+  );
+  // Follow the sheet by id, so it stays selected when sheets are added or removed.
+  const d = list.find((x) => x.id === currentId) ?? list[0];
   const changed = drawings.filter((x) => x.changed).length;
   const std = project.drawings.settings.standard;
+  const hasErection = drawings.some((x) => x.kind === 'anchors' || x.kind === 'setout' || x.kind === 'sequence');
   return (
     <div className="drawings">
       <div className="drawing-list">
@@ -241,19 +246,21 @@ function DrawingsView() {
             { value: 'changed', label: `Changed ${changed}`, title: 'Not issued yet, or changed since the last issue' },
             { value: 'register', label: 'Reg' },
             { value: 'ga', label: 'GA' },
+            ...(drawings.some((x) => x.kind === 'section') ? [{ value: 'section' as const, label: 'Sec', title: 'Sections and details cut on the GA' }] : []),
+            ...(hasErection ? [{ value: 'erection' as const, label: 'Erection', title: 'Setting-out plans, anchor schedules, erection sequences' }] : []),
             { value: 'assembly', label: 'Asm' },
             { value: 'part', label: 'Part' },
           ]}
-          onChange={(k) => {
-            setKind(k);
-            setCurrent(0);
-          }}
+          onChange={(k) => setKind(k)}
         />
         <div className="list">
-          {list.map((x, i) => (
-            <button key={x.id} className={i === current ? 'on' : ''} onClick={() => setCurrent(i)} title={x.title}>
+          {list.map((x) => (
+            <button key={x.id} className={x === d ? 'on' : ''} onClick={() => setCurrentId(x.id)} title={x.title}>
               <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
-              <span className="dwg-no">{x.number}</span>
+              <span className="dwg-no">
+                {x.number}
+                {x.edited ? <span className="edited" title="Edited by hand"> ✎</span> : null}
+              </span>
               <span className={`rev ${x.changed ? 'changed' : ''}`} title={x.changed ? (x.revisions.length ? `Changed since rev ${x.rev}` : 'Not issued yet') : x.status}>
                 {x.rev}
                 {x.changed ? ' •' : ''}
@@ -275,6 +282,11 @@ function DrawingsView() {
           <button className="secondary-btn" disabled={!list.length} onClick={() => exportDrawingsDxf(list)}>
             <Icon name="export" size={15} /> {list.length} sheets → DXF
           </button>
+          {hasErection && (
+            <button className="secondary-btn" onClick={exportAnchorScheduleCsv} title="Every anchor with bracket, grid and level reference, coordinates, type, size and length">
+              <Icon name="export" size={15} /> Anchor schedule → CSV
+            </button>
+          )}
           {d && (
             <button className="link-btn" onClick={() => void exportDrawingsPdf([d])}>
               This sheet only (PDF)
@@ -282,7 +294,8 @@ function DrawingsView() {
           )}
         </div>
       </div>
-      <div className="drawing-preview" dangerouslySetInnerHTML={{ __html: svg }} />
+      {d ? <DrawingEditor drawing={d} onCuts={() => setCutsOpen(true)} /> : <div className="drawing-preview" />}
+      {cutsOpen && <GaCutsDialog onClose={() => setCutsOpen(false)} />}
     </div>
   );
 }

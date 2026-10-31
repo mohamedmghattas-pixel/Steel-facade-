@@ -122,7 +122,34 @@ export type ConnectionType =
   | 'endPlate'
   | 'welded'
   | 'splicePlates'
-  | 'custom';
+  | 'custom'
+  // Connection library: steel to concrete
+  | 'helpingHand'
+  | 'castInChannel'
+  | 'embedPlate'
+  | 'soffitHanger'
+  | 'wallAngle'
+  | 'adjustableBracket'
+  | 'stiffenedBase'
+  | 'anchorPlate'
+  // steel to steel
+  | 'flangeClamp'
+  | 'doubleAngle'
+  | 'teeCleat'
+  | 'seatedAngle'
+  | 'stubBracket'
+  | 'saddleBracket'
+  | 'shearBlock'
+  | 'endCap'
+  // splices and movement joints
+  | 'endPlateSplice'
+  | 'sleeveSplice'
+  // bracing
+  | 'gussetPlate'
+  | 'crossBrace'
+  // hangers and ties
+  | 'hangerRod'
+  | 'tieBack';
 
 export type ParamValue = number | string | boolean;
 

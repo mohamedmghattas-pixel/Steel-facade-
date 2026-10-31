@@ -3,5 +3,6 @@
  * keep this file to that list only.
  */
 import type { ToolModule } from './types';
+import { connectionsModule } from './connections';
 
-export const TOOL_MODULES: ToolModule[] = [];
+export const TOOL_MODULES: ToolModule[] = [connectionsModule];

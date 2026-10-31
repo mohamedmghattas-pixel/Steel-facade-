@@ -1,5 +1,6 @@
 import type { Connection, ConnectionType, Id, ParamValue, Project } from '../model/types';
 import { addConnection, memberDirection, membersAtNode } from '../model/ops';
+import { getProfile } from '../library/profiles';
 import { axesFor } from '../model/geometry';
 import { basePlate } from './basePlate';
 import type { ConnectionDef } from './common';
@@ -7,6 +8,11 @@ import { angleCleat, endPlate, finPlate, welded } from './memberJoints';
 import { slabBracket } from './slabBracket';
 import { splicePlates } from './splice';
 import { customConnection } from './custom';
+import { adjustableBracket, anchorPlate, castInChannel, embedPlate, helpingHand, soffitHanger, stiffenedBase, wallAngle } from './concreteBrackets';
+import { doubleAngle, endCap, flangeClamp, saddleBracket, seatedAngle, shearBlock, stubBracket, teeCleat } from './steelJoints';
+import { endPlateSplice, sleeveSplice } from './spliceJoints';
+import { crossBrace, gussetPlate } from './bracing';
+import { hangerRod, tieBack } from './hangers';
 
 export const CONNECTIONS: Record<ConnectionType, ConnectionDef> = {
   slabBracket,
@@ -17,7 +23,76 @@ export const CONNECTIONS: Record<ConnectionType, ConnectionDef> = {
   welded,
   splicePlates,
   custom: customConnection,
+  // Connection library (see catalog.ts and docs/CONNECTIONS.md)
+  helpingHand,
+  castInChannel,
+  embedPlate,
+  soffitHanger,
+  wallAngle,
+  adjustableBracket,
+  stiffenedBase,
+  anchorPlate,
+  flangeClamp,
+  doubleAngle,
+  teeCleat,
+  seatedAngle,
+  stubBracket,
+  saddleBracket,
+  shearBlock,
+  endCap,
+  endPlateSplice,
+  sleeveSplice,
+  gussetPlate,
+  crossBrace,
+  hangerRod,
+  tieBack,
 };
+
+/** Joints between collinear members (the main member is the other half). */
+export const COLLINEAR_TYPES: ReadonlySet<ConnectionType> = new Set<ConnectionType>(['splicePlates', 'endPlateSplice', 'sleeveSplice']);
+
+/** Types placed at most once per node (splices, cross-bracing centre plates). */
+export const ONE_PER_NODE: ReadonlySet<ConnectionType> = new Set<ConnectionType>(['splicePlates', 'endPlateSplice', 'sleeveSplice', 'crossBrace']);
+
+/**
+ * Which member end a type without a main member goes on when applied to
+ * members: the lower end (default), the upper end (brackets just below a slab
+ * level, soffit restraints), free ends (end caps, wall fixings), or free ends
+ * of non-vertical members and the lower end of vertical ones.
+ */
+export type ApplyEnd = 'lower' | 'upper' | 'free' | 'freeOrLower';
+
+const mountTop = (v: Record<string, ParamValue>) => v.mount === 'slab top';
+export const APPLY_END: Partial<Record<ConnectionType, (params: Record<string, ParamValue>) => ApplyEnd>> = {
+  helpingHand: () => 'upper',
+  adjustableBracket: () => 'upper',
+  soffitHanger: () => 'upper',
+  castInChannel: (v) => (mountTop(v) ? 'lower' : 'upper'),
+  embedPlate: (v) => (mountTop(v) ? 'lower' : 'upper'),
+  wallAngle: () => 'freeOrLower',
+  anchorPlate: () => 'freeOrLower',
+  endCap: () => 'free',
+  stiffenedBase: () => 'lower',
+};
+
+function endsFor(p: Project, m: { id: Id; start: Id; end: Id }, rule: ApplyEnd): Id[] {
+  const a = p.nodes[m.start].p;
+  const b = p.nodes[m.end].p;
+  const lower = a.z <= b.z ? m.start : m.end;
+  const upper = lower === m.start ? m.end : m.start;
+  const free = (n: Id) => !membersAtNode(p, n).some((x) => x.member.id !== m.id && x.member.profile);
+  const vertical = memberDirection(p, p.members[m.id]) === 'vertical';
+  switch (rule) {
+    case 'upper':
+      return [upper];
+    case 'free':
+      return [m.start, m.end].filter(free);
+    case 'freeOrLower':
+      return vertical ? [lower].filter(free) : [m.start, m.end].filter(free);
+    default:
+      return [lower];
+  }
+}
 
 export const CONNECTION_LIST: ConnectionDef[] = Object.values(CONNECTIONS);
 
@@ -42,6 +117,8 @@ export interface AutoConnectOptions {
   /** Which way the slab is from the mullions (along mullion local z). */
   slabSide: 1 | -1;
   standoff: number;
+  /** Joint used where a member with role 'brace' (flat, angle or hollow section) ends on another member. */
+  braceJoint?: ConnectionType | 'none';
 }
 
 export const AUTO_DEFAULTS: AutoConnectOptions = {
@@ -50,7 +127,10 @@ export const AUTO_DEFAULTS: AutoConnectOptions = {
   postBases: true,
   slabSide: 1,
   standoff: 150,
+  braceJoint: 'gussetPlate',
 };
+
+const BRACE_SHAPES = new Set(['FL', 'L', 'CHS', 'RHS']);
 
 /**
  * Rule-based connection placement. Only members with a profile take part.
@@ -118,6 +198,11 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
           candidates.find(isV) ??
           candidates.find((y) => y.at === 'through');
         if (!main) continue;
+        const braceJoint = o.braceJoint ?? 'none';
+        if (braceJoint !== 'none' && x.member.role === 'brace' && BRACE_SHAPES.has(getProfile(x.member.profile)?.shape.type ?? '')) {
+          created.push(addConnection(p, braceJoint, node.id, main.member.id, [x.member.id]));
+          continue;
+        }
         // Put cleats/fins on the side of the secondary where the main member continues.
         const params: Record<string, number> = {};
         const ys = axesFor(p.nodes[x.member.start].p, p.nodes[x.member.end].p, x.member.rotation).y;
@@ -173,28 +258,25 @@ export function applyConnection(p: Project, memberIds: Id[], o: ApplyOptions): I
   const def = CONNECTIONS[o.type];
   const tplNeedsMain = o.type === 'custom' ? (p.library.templates.find((t) => t.id === params.template)?.needsMain ?? true) : def.needsMain;
   const existing = (node: Id, sec: Id) => Object.values(p.connections).filter((c) => c.node === node && c.secondary[0] === sec);
+  const merged = resolveParams({ id: '', type: o.type, node: '', main: null, secondary: [], params }, p);
+  const endRule = APPLY_END[o.type]?.(merged) ?? 'lower';
   for (const mid of ids) {
     const m = p.members[mid];
     if (!m?.profile) continue;
-    const ends: Id[] = [m.start, m.end];
-    if (!tplNeedsMain) {
-      const a = p.nodes[m.start].p;
-      const b = p.nodes[m.end].p;
-      ends.splice(0, 2, a.z <= b.z ? m.start : m.end);
-    }
+    const ends: Id[] = tplNeedsMain ? [m.start, m.end] : endsFor(p, m, endRule);
     for (const node of ends) {
       const old = existing(node, mid);
       if (old.length && !o.replace) continue;
       let main: Id | null = null;
       if (tplNeedsMain) {
         const others = membersAtNode(p, node).filter((x) => x.member.id !== mid && x.member.profile);
-        const pick =
-          o.type === 'splicePlates'
-            ? others.find((x) => x.at !== 'through' && collinear(p, x.member, m))
-            : others.find((x) => x.at === 'through' && !collinear(p, x.member, m)) ?? others.find((x) => !collinear(p, x.member, m));
+        const pick = COLLINEAR_TYPES.has(o.type)
+          ? others.find((x) => x.at !== 'through' && collinear(p, x.member, m))
+          : others.find((x) => x.at === 'through' && !collinear(p, x.member, m)) ?? others.find((x) => !collinear(p, x.member, m));
         if (!pick) continue;
-        // Never splice a pair twice.
-        if (o.type === 'splicePlates' && Object.values(p.connections).some((c) => c.type === 'splicePlates' && c.node === node)) continue;
+        // Never splice a pair twice; one cross-bracing plate per crossing.
+        const sameKind = (t: ConnectionType) => t === o.type || (COLLINEAR_TYPES.has(t) && COLLINEAR_TYPES.has(o.type));
+        if (ONE_PER_NODE.has(o.type) && Object.values(p.connections).some((c) => sameKind(c.type) && c.node === node && !old.includes(c))) continue;
         main = pick.member.id;
       }
       for (const c of old) delete p.connections[c.id];

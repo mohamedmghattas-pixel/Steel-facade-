@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useStore, type Tool } from '../state/store';
 import { Icon } from './icons';
 import { CONNECTION_LIST } from '../core/connections/registry';
+import { CATALOG, CATEGORIES } from '../core/connections/catalog';
+import { ConnectionLibraryHost, openConnectionLibrary } from './ConnectionLibrary';
 import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool, splitSelection } from './actions';
 
 function ToolBtn({ tool, icon, label, shortcut }: { tool: Tool; icon: string; label: string; shortcut?: string }) {
@@ -53,22 +55,40 @@ export function ToolRail() {
         <div className="rail-pop-host">
           <ActionBtn icon="bracket" label="Add" onClick={() => setConnOpen(!connOpen)} title="Add a connection to the selected members" />
           {connOpen && (
-            <div className="rail-pop" onMouseLeave={() => setConnOpen(false)}>
-              {CONNECTION_LIST.filter((c) => c.type !== 'custom').map((c) => (
-                <button
-                  key={c.type}
-                  onClick={() => {
-                    setConnOpen(false);
-                    addConnectionFromSelection(c.type);
-                  }}
-                >
-                  <strong>{c.label}</strong>
-                  <span className="muted">{c.needsMain ? 'Select main, then Shift+click secondary' : 'Select the supported member'}</span>
-                </button>
+            <div className="rail-pop" style={{ maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' }} onMouseLeave={() => setConnOpen(false)}>
+              <button
+                onClick={() => {
+                  setConnOpen(false);
+                  openConnectionLibrary();
+                }}
+              >
+                <strong>Browse the connection library…</strong>
+                <span className="muted">All types with live 3D preview</span>
+              </button>
+              {CATEGORIES.filter((cat) => cat.id !== 'custom').map((cat) => (
+                <div key={cat.id}>
+                  <span className="rail-title" style={{ display: 'block', textAlign: 'left', padding: '6px 10px 2px' }}>
+                    {cat.label}
+                  </span>
+                  {CONNECTION_LIST.filter((c) => c.type !== 'custom' && CATALOG[c.type]?.category === cat.id).map((c) => (
+                    <button
+                      key={c.type}
+                      onClick={() => {
+                        setConnOpen(false);
+                        addConnectionFromSelection(c.type);
+                      }}
+                    >
+                      <strong>{c.label}</strong>
+                      <span className="muted">{c.needsMain ? 'Select main, then Shift+click secondary' : 'Select the supported member'}</span>
+                    </button>
+                  ))}
+                </div>
               ))}
             </div>
           )}
         </div>
+        <ActionBtn icon="bolt" label="Library" onClick={() => openConnectionLibrary()} title="Connection library: browse all types with a live 3D preview" />
+        <ConnectionLibraryHost />
         <ActionBtn icon="bracket" label="Apply" onClick={() => set({ dialog: 'applyConnection' })} title="Apply a connection type / preset / template to the selected members" />
         <ActionBtn icon="layers" label="Custom" onClick={() => set({ dialog: 'customConnection' })} title="Build custom connections from plates and bolt groups" />
         <ActionBtn icon="auto" label="Auto" onClick={() => set({ dialog: 'autoConnect' })} title="Place connections by rules" />

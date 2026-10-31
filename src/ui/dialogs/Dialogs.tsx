@@ -10,6 +10,7 @@ import { putBlob } from '../../state/storage';
 import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
 import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialogs';
 import { SurveyDialog } from './MovementDialogs';
+import { ModellingDialogs } from './ModellingDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -36,7 +37,7 @@ export function Dialogs() {
     case 'survey':
       return <SurveyDialog onClose={close} />;
     default:
-      return null;
+      return <ModellingDialogs dialog={dialog} onClose={close} />;
   }
 }
 
@@ -44,7 +45,7 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
   const wp = useStore((s) => s.workPlane);
   const apply = useStore((s) => s.apply);
   const select = useStore((s) => s.select);
-  const [plane, setPlane] = useState<PlaneKind>(wp.kind === 'XY' ? 'XZ' : wp.kind);
+  const [plane, setPlane] = useState<PlaneKind | 'custom'>(wp.kind === 'XY' ? 'XZ' : wp.kind);
   const [offset, setOffset] = useState(wp.offset);
   const [u0, setU0] = useState(0);
   const [v0, setV0] = useState(0);
@@ -66,7 +67,7 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
     let ids: string[] = [];
     apply('Facade grid', (p) => {
       ids = facadeGrid(p, {
-        plane: { kind: plane, offset },
+        plane: plane === 'custom' ? { ...wp, offset } : { kind: plane, offset },
         u0,
         v0,
         bays: b,
@@ -108,13 +109,14 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
           <Segmented
             value={plane}
             options={[
-              { value: 'XZ', label: 'Along X (XZ)' },
-              { value: 'YZ', label: 'Along Y (YZ)' },
+              { value: 'XZ' as const, label: 'Along X (XZ)' },
+              { value: 'YZ' as const, label: 'Along Y (YZ)' },
+              ...(wp.kind === 'custom' ? [{ value: 'custom' as const, label: 'Work plane' }] : []),
             ]}
             onChange={setPlane}
           />
         </Field>
-        <Field label={plane === 'XZ' ? 'Plane at Y =' : 'Plane at X ='}>
+        <Field label={plane === 'XZ' ? 'Plane at Y =' : plane === 'YZ' ? 'Plane at X =' : 'Offset along normal'}>
           <NumberInput value={offset} unit="mm" onChange={setOffset} />
         </Field>
       </div>
@@ -287,7 +289,7 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
     }
   }, [pending]);
   const [mode, setMode] = useState<'wire' | 'reference'>('wire');
-  const [plane, setPlane] = useState<PlaneKind>(wp.kind);
+  const [plane, setPlane] = useState<PlaneKind>(wp.kind === 'custom' ? 'XZ' : wp.kind);
   const [offset, setOffset] = useState(wp.offset);
   const ok = parsed && !('error' in parsed);
   const [scale, setScale] = useState(() => (ok ? dxfUnitScale(parsed.insunits) : 1));

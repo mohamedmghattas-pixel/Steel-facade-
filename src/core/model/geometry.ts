@@ -1,4 +1,4 @@
-import type { Align, Member, Project, Vec2, Vec3, WorkPlane } from './types';
+import type { Align, Member, NamedWorkPlane, Project, Vec2, Vec3, WorkPlane } from './types';
 
 export const EPS = 1e-6;
 
@@ -108,7 +108,88 @@ export function planeAxes(wp: WorkPlane): { u: Vec3; v: Vec3; n: Vec3; origin: V
       return { u: v3(1, 0, 0), v: v3(0, 0, 1), n: v3(0, -1, 0), origin: v3(0, wp.offset, 0) };
     case 'YZ':
       return { u: v3(0, 1, 0), v: v3(0, 0, 1), n: v3(1, 0, 0), origin: v3(wp.offset, 0, 0) };
+    case 'custom': {
+      const u = normalize(wp.xAxis ?? v3(1, 0, 0));
+      let n = normalize(cross(u, wp.yAxis ?? v3(0, 1, 0)));
+      if (len(n) < 0.5) n = v3(0, 0, 1);
+      const v = cross(n, u);
+      return { u, v, n, origin: madd(wp.origin ?? v3(), n, wp.offset || 0) };
+    }
   }
+}
+
+/** A work plane that follows a named (3-point) plane. */
+export function customWorkPlane(np: NamedWorkPlane, offset = 0): WorkPlane {
+  return { kind: 'custom', offset, planeId: np.id, origin: { ...np.origin }, xAxis: { ...np.xAxis }, yAxis: { ...np.yAxis } };
+}
+
+/**
+ * Orthonormal plane axes from three points: `origin`, a point on the +x
+ * direction and any other point in the plane (on the +y side). Returns null when
+ * the points are (nearly) collinear.
+ */
+export function planeFrom3Points(origin: Vec3, xPoint: Vec3, inPlane: Vec3): { origin: Vec3; xAxis: Vec3; yAxis: Vec3; normal: Vec3 } | null {
+  const dx = sub(xPoint, origin);
+  const d2 = sub(inPlane, origin);
+  if (len(dx) < 1 || len(d2) < 1) return null;
+  const xAxis = normalize(dx);
+  const nRaw = cross(xAxis, d2);
+  if (len(nRaw) < 1e-3 * len(d2)) return null;
+  const normal = normalize(nRaw);
+  const yAxis = normalize(cross(normal, xAxis));
+  return { origin: { ...origin }, xAxis, yAxis, normal };
+}
+
+/**
+ * Rotation (degrees, for Member.rotation) that turns the section of a member
+ * from a to b so its local z points along `dir` (projected onto the section plane).
+ */
+export function rotationForDepth(a: Vec3, b: Vec3, dir: Vec3): number {
+  const ax = axesFor(a, b, 0);
+  const dy = dot(dir, ax.y);
+  const dz = dot(dir, ax.z);
+  if (Math.hypot(dy, dz) < EPS) return 0;
+  const deg = (Math.atan2(-dy, dz) * 180) / Math.PI;
+  return Math.round(deg * 1e6) / 1e6;
+}
+
+/** Closest points of two infinite lines (p + s·d, q + t·e); midpoint when they are skew. */
+export function lineLineClosest(p: Vec3, d: Vec3, q: Vec3, e: Vec3): { s: number; t: number; mid: Vec3; gap: number } | null {
+  const r = sub(p, q);
+  const a = dot(d, d);
+  const b = dot(d, e);
+  const c = dot(e, e);
+  const dd = dot(d, r);
+  const ee = dot(e, r);
+  const den = a * c - b * b;
+  if (Math.abs(den) < 1e-9 * a * c) return null;
+  const s = (b * ee - c * dd) / den;
+  const t = (a * ee - b * dd) / den;
+  const P = madd(p, d, s);
+  const Q = madd(q, e, t);
+  return { s, t, mid: lerp(P, Q, 0.5), gap: dist(P, Q) };
+}
+
+/**
+ * Sutherland–Hodgman clip of a polygon to the half-plane a·x + b·y ≤ c.
+ * Exact for convex polygons; for concave ones the area is still correct
+ * (pieces may be joined by zero-width bridges along the clip line).
+ */
+export function clipHalfPlane(pts: Vec2[], a: number, b: number, c: number): Vec2[] {
+  const out: Vec2[] = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const P = pts[i];
+    const Q = pts[(i + 1) % n];
+    const fp = a * P.x + b * P.y - c;
+    const fq = a * Q.x + b * Q.y - c;
+    if (fp <= 0) out.push(P);
+    if ((fp < 0 && fq > 0) || (fp > 0 && fq < 0)) {
+      const t = fp / (fp - fq);
+      out.push({ x: P.x + (Q.x - P.x) * t, y: P.y + (Q.y - P.y) * t });
+    }
+  }
+  return out;
 }
 
 export function planeToWorld(wp: WorkPlane, u: number, v: number): Vec3 {

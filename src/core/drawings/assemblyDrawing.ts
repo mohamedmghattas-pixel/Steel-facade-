@@ -16,7 +16,7 @@ import type { Drawing } from './types';
 import { Sheet, balloon, dimChain, dimLinear, weldSymbol } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Rect } from './layout';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
-import { brokenAxis, drawBand, frontInnerLines, keptMid, symmetricSection, topInnerLines, uniqSorted } from './views';
+import { brokenAxis, drawBand, endOutline, frontInnerLines, keptMid, symmetricSection, topInnerLines, uniqSorted } from './views';
 import { bounds } from './project';
 import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
@@ -442,6 +442,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
       box.h / 2 / den,
       frontInnerLines(shape).map((l) => ({ v: l.z, hidden: l.hidden })),
       (z) => z / den,
+      endOutline(main, 'elevation'),
     );
     if (symmetric) E.line({ x: MX(0) - 3, y: 0 }, { x: MX(L) + 3, y: 0 }, 'center');
     for (const h of main.holes) if (h.face === 'y') E.hole(PV({ x: h.x, y: h.z }), Math.max(1.2, h.d / den), (h.slot ?? 0) / den, 0);
@@ -487,6 +488,7 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
       box.w / 2 / den,
       topInnerLines(shape).map((l) => ({ v: l.y, hidden: l.hidden })),
       (y) => y / den,
+      endOutline(main, 'plan'),
     );
     if (symmetric) P.line({ x: MX(0) - 3, y: 0 }, { x: MX(L) + 3, y: 0 }, 'center');
     for (const h of main.holes) if (h.face === 'z') P.hole(PV({ x: h.x, y: h.y }), Math.max(1.2, h.d / den), (h.slot ?? 0) / den, 0);

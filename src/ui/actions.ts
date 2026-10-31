@@ -16,7 +16,9 @@ import {
   updateMembers,
   addConnection,
   membersAtNode,
+  deletePlates,
 } from '../core/model/ops';
+import { handleModellingPoints } from './dialogs/modellingActions';
 import { dist, sub, worldToPlane } from '../core/model/geometry';
 import { autoConnect, CONNECTIONS } from '../core/connections/registry';
 import type { ConnectionType } from '../core/model/types';
@@ -77,10 +79,11 @@ export function loadSample() {
 
 export function deleteSelection() {
   const { selection } = st();
-  if (!selection.members.length && !selection.connections.length) return;
+  if (!selection.members.length && !selection.connections.length && !selection.plates?.length) return;
   st().apply('Delete', (p) => {
     deleteConnections(p, selection.connections);
     deleteMembers(p, selection.members);
+    deletePlates(p, selection.plates ?? []);
   });
   st().clearSelection();
 }
@@ -158,6 +161,10 @@ export function setTool(t: Tool) {
 export function handleToolPoints(tool: Tool, pts: Vec3[]) {
   const [a, b] = pts;
   const s = st();
+  if (tool === 'plate' || tool === 'arc' || tool === 'plane3') {
+    void handleModellingPoints(tool, pts);
+    return;
+  }
   if (tool === 'line' || tool === 'polyline') {
     const props = s.drawWithProfile ? { profile: s.activeProfile, role: s.activeRole } : {};
     s.apply('Draw line', (p) => {

@@ -3,6 +3,7 @@ import { useStore, type Tool } from '../state/store';
 import { Icon } from './icons';
 import { CONNECTION_LIST } from '../core/connections/registry';
 import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool, splitSelection } from './actions';
+import { fitSelection, mitreSelection } from './dialogs/modellingActions';
 
 function ToolBtn({ tool, icon, label, shortcut }: { tool: Tool; icon: string; label: string; shortcut?: string }) {
   const active = useStore((s) => s.tool === tool);
@@ -27,6 +28,7 @@ export function ToolRail() {
   const set = useStore((s) => s.set);
   const outputs = useStore((s) => s.outputs);
   const [connOpen, setConnOpen] = useState(false);
+  const [curvedOpen, setCurvedOpen] = useState(false);
   const openOutputs = (tab: typeof outputs.tab) => set({ outputs: { open: true, tab } });
   return (
     <nav className="rail" aria-label="Tools">
@@ -35,7 +37,28 @@ export function ToolRail() {
         <ToolBtn tool="select" icon="select" label="Select" shortcut="S" />
         <ToolBtn tool="line" icon="line" label="Line" shortcut="L" />
         <ToolBtn tool="polyline" icon="polyline" label="Polyline" shortcut="P" />
+        <ToolBtn tool="arc" icon="arc" label="Arc" />
         <ActionBtn icon="grid" label="Facade grid" onClick={() => set({ dialog: 'facadeGrid' })} title="Generate mullions and transoms from bays and levels" />
+        <div className="rail-pop-host">
+          <ActionBtn icon="curved" label="Curved" onClick={() => setCurvedOpen(!curvedOpen)} title="Arcs and curved facades" />
+          {curvedOpen && (
+            <div className="rail-pop" onMouseLeave={() => setCurvedOpen(false)}>
+              <button onClick={() => (setCurvedOpen(false), set({ dialog: 'curvedFacade' }))}>
+                <strong>Curved facade grid…</strong>
+                <span className="muted">Bays along a plan arc, mullions normal to the facade</span>
+              </button>
+              <button onClick={() => (setCurvedOpen(false), set({ dialog: 'arcMembers' }))}>
+                <strong>Arc members…</strong>
+                <span className="muted">Centre, radius and angles on the work plane</span>
+              </button>
+              <button onClick={() => (setCurvedOpen(false), setTool('arc'))}>
+                <strong>Arc through 3 points</strong>
+                <span className="muted">Pick start, end and a point on the arc</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <ToolBtn tool="plane3" icon="plane" label="Plane" />
         <ToolBtn tool="move" icon="move" label="Move" shortcut="M" />
         <ToolBtn tool="copy" icon="copy" label="Copy" shortcut="C" />
         <ActionBtn icon="array" label="Array" onClick={() => set({ dialog: 'array' })} title="Copy the selection several times" />
@@ -47,6 +70,11 @@ export function ToolRail() {
         <span className="rail-title">2 · Members</span>
         <ActionBtn icon="profile" label="Assign" onClick={assignActiveProfile} title="Assign the active profile and role (Library) to the selected lines" />
         <ActionBtn icon="auto" label="Auto-assign" onClick={autoAssignSelection} title="Assign profiles by direction / DXF layer rules" />
+        <ActionBtn icon="mitre" label="Mitre" onClick={mitreSelection} title="Mitre two selected members at their shared corner" />
+        <ActionBtn icon="fit" label="Fit to" onClick={fitSelection} title="Cut the first selected member to the face of the second (Shift+click)" />
+        <ActionBtn icon="stiffener" label="Stiffener" onClick={() => set({ dialog: 'stiffeners' })} title="Add web stiffeners to the selected I/H or channel members" />
+        <ToolBtn tool="plate" icon="plate" label="Plate" />
+        <ActionBtn icon="bent" label="Bent plate" onClick={() => set({ dialog: 'bentPlate' })} title="Add a bent plate (angle, channel or Z bracket) from leg dimensions" />
       </div>
       <div className="rail-group">
         <span className="rail-title">3 · Joints</span>

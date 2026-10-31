@@ -7,6 +7,8 @@ import type { DrawingStandard } from '../model/types';
 import type { Part } from '../derive/model';
 import { shapeBox } from '../library/shapes';
 import { bbox2 } from '../model/geometry';
+import { copeOps, sawCutDetail } from '../geometry/endPrep';
+import { bendOps } from '../geometry/bentPlate';
 
 export interface HoleRow {
   ref: string;
@@ -63,7 +65,7 @@ export function machiningOps(part: Part, standard: DrawingStandard, opts: { holl
       qty: 1,
     });
   } else {
-    ops.push({ op: 'Saw cut', detail: `L = ${Math.round(part.length)}, ends square 90°/90°`, qty: 1 });
+    ops.push({ op: 'Saw cut', detail: sawCutDetail(part.length, part.ends), qty: 1 }, ...copeOps(part.ends));
   }
   const groups = new Map<string, number>();
   for (const h of holes) {
@@ -77,6 +79,7 @@ export function machiningOps(part: Part, standard: DrawingStandard, opts: { holl
     const [op, detail] = k.split('|');
     ops.push({ op, detail: `${detail} — see hole table`, qty: n });
   }
+  ops.push(...bendOps(part.bends, part.kFactor));
   ops.push({ op: 'Deburr', detail: holes.length ? 'Holes, slots and cut edges' : 'Cut edges; break sharp edges', qty: 1 });
   ops.push({ op: 'Mark', detail: `Part mark ${part.mark}${part.assembly && part.assembly !== part.mark ? ` (assembly ${part.assembly})` : ''}`, qty: 1 });
   if (part.finish === 'hdg' || part.finish === 'hdg+paint') {

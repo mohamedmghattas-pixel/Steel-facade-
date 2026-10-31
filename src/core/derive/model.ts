@@ -3,8 +3,9 @@
  * marks. Every output (3D, IFC, drawings, reports, NC, nesting) reads from the
  * `DerivedModel` so they always agree with each other.
  */
-import type { Finish, Id, MemberRole, Project, Vec2, Vec3 } from '../model/types';
-import { dot, toLocal, type Frame } from '../model/geometry';
+import type { Finish, Id, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
+import { cross, dot, madd, normalize, toLocal, type Frame } from '../model/geometry';
+import { cutAngle, massLength, type EndCut } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
 import { CONNECTIONS, resolveParams } from '../connections/registry';
@@ -54,6 +55,19 @@ export interface Part {
   surface: number;
   weldedTo?: PartRef;
   assemblyMain?: boolean;
+  /**
+   * Linear parts with end preparations: cut planes (outward normals, x where they
+   * cross the axis, in this part's frame) and copes. `length` is then the overall
+   * length — the extreme points of the cuts on the section, i.e. the stock length
+   * to saw from — and the frame origin sits at the extreme start (x = 0).
+   */
+  ends?: { start: EndCut; end: EndCut };
+  /** Free plates (Project.plates): source id, bends of the flat pattern and K-factor. */
+  plateId?: Id;
+  bends?: PlateBend[];
+  kFactor?: number;
+  /** Extra geometry signature for numbering (end cuts, bends). */
+  sigExtra?: string;
   /** Filled by numbering. */
   mark: string;
   assembly: string;
@@ -155,6 +169,8 @@ export function deriveModel(p: Project): DerivedModel {
     const g = geoms.get(m.id)!;
     const prof = g.profile!;
     if (g.length <= 1) warnings.push({ memberId: m.id, text: `Member is cut back to zero length.` });
+    for (const w of g.prepWarnings ?? []) warnings.push({ memberId: m.id, text: `End preparation — ${w}` });
+    const lp = linearPart(g.frame, g.length, g.cuts, prof.shape, prof.area, { y: prof.cy ?? 0, z: prof.cz ?? 0 });
     parts.push({
       ref: `m:${m.id}`,
       kind: 'member',
@@ -164,14 +180,16 @@ export function deriveModel(p: Project): DerivedModel {
       material: m.material,
       finish: m.finish,
       role: m.role,
-      frame: g.frame,
-      length: g.length,
+      frame: lp.frame,
+      length: lp.length,
       width: prof.b,
       thickness: 0,
       shape: prof.shape,
-      holes: holesToLocal(g.frame, memberHoles.get(m.id) ?? []),
-      mass: (prof.mass * g.length * densityFactor(m.material)) / 1000,
-      surface: (prof.surface * g.length) / 1000,
+      holes: holesToLocal(lp.frame, memberHoles.get(m.id) ?? []),
+      mass: (prof.mass * lp.massLength * densityFactor(m.material)) / 1000,
+      surface: (prof.surface * lp.massLength) / 1000,
+      ends: lp.ends,
+      sigExtra: lp.sig,
       mark: '',
       assembly: '',
     });
@@ -235,6 +253,7 @@ export function deriveModel(p: Project): DerivedModel {
     }
     welds.push(...out.welds);
   }
+  freePlateParts(p, parts, warnings);
   const partByRef = new Map(parts.map((pt) => [pt.ref, pt]));
   warnings.push(...holeSpacingWarnings(parts));
 
@@ -290,6 +309,86 @@ export function deriveModel(p: Project): DerivedModel {
   return dm;
 }
 
+// ---------------------------------------------------------------------------
+// Part building: end-prepared members and free plates
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Part frame, overall length, mass length and end cuts of a linear part. With
+ * end preparations the frame moves to the extreme start of the material and the
+ * length becomes the overall (stock) length; cut x values are re-based.
+ */
+export function linearPart(
+  frame: Frame,
+  length: number,
+  cuts: { start: EndCut; end: EndCut; xMin: number; xMax: number } | undefined,
+  shape: Part['shape'],
+  area: number,
+  centroid: { y: number; z: number },
+): { frame: Frame; length: number; massLength: number; ends?: Part['ends']; sig?: string } {
+  if (!cuts || !shape) return { frame, length, massLength: length };
+  const x0 = cuts.xMin;
+  const start = { ...cuts.start, x: cuts.start.x - x0 };
+  const end = { ...cuts.end, x: cuts.end.x - x0 };
+  const ml = massLength(shape, area, centroid, start, end);
+  const sigEnd = (c: EndCut) =>
+    `${r2(c.angleWeb)},${r2(c.angleFlange)},${r1(c.x)}` + c.copes.map((k) => `/${k.side}${r1(k.depth)}x${r1(k.length)}r${r1(k.radius)}`).join('');
+  const sig = Math.abs(cutAngle(start)) < 1e-6 && Math.abs(cutAngle(end)) < 1e-6 && !start.copes.length && !end.copes.length ? undefined : `E${sigEnd(start)}|${sigEnd(end)}`;
+  return {
+    frame: { ...frame, origin: madd(frame.origin, frame.x, x0) },
+    length: Math.max(0, cuts.xMax - x0),
+    massLength: ml,
+    ends: sig ? { start, end } : undefined,
+    sig,
+  };
+}
+
+/** Free plates, bent plates and stiffeners (Project.plates) as plate parts. */
+function freePlateParts(p: Project, parts: Part[], warnings: DerivedModel['warnings']) {
+  const memberRefs = new Set(parts.filter((pt) => pt.kind === 'member').map((pt) => pt.ref));
+  for (const pl of Object.values(p.plates ?? {})) {
+    if (!pl.outline || pl.outline.length < 3 || !(pl.t > 0)) {
+      warnings.push({ text: `Plate ${pl.name || pl.id}: needs an outline of 3+ points and a thickness.` });
+      continue;
+    }
+    const x = normalize(pl.xAxis);
+    const z = normalize(cross(x, pl.yAxis));
+    const frame: Frame = { origin: pl.origin, x, y: cross(z, x), z };
+    const bb = bbox2(pl.outline);
+    const holes = (pl.holes ?? []).map((h) => ({ x: h.x, y: h.y, d: h.d, slot: h.slot, angle: h.angle }));
+    const bends = pl.kind === 'bent' || pl.bends?.length ? (pl.bends ?? []) : [];
+    const weld = pl.weldedTo ? `m:${pl.weldedTo}` : undefined;
+    if (pl.weldedTo && !memberRefs.has(weld!)) warnings.push({ text: `Plate ${pl.name || pl.id}: the member it is welded to has no profile — it is a loose part.` });
+    const k = pl.kFactor ?? 0.33;
+    parts.push({
+      ref: `p:${pl.id}`,
+      kind: 'plate',
+      plateId: pl.id,
+      name: pl.name || (pl.kind === 'stiffener' ? 'Stiffener' : pl.kind === 'bent' ? 'Bent plate' : 'Plate'),
+      profile: `PL${pl.t}`,
+      material: pl.material,
+      finish: pl.finish,
+      role: 'plate',
+      frame,
+      length: bb.maxX - bb.minX,
+      width: bb.maxY - bb.minY,
+      thickness: pl.t,
+      outline: pl.outline,
+      plateHoles: holes,
+      holes: [],
+      mass: plateMass(pl.outline, holes, pl.t, pl.material),
+      surface: (2 * Math.abs(polygonArea(pl.outline))) / 1e6,
+      weldedTo: weld && memberRefs.has(weld) ? weld : undefined,
+      bends: bends.length ? bends : undefined,
+      kFactor: bends.length ? k : undefined,
+      sigExtra: bends.length ? `B${k}:` + bends.map((b) => `${r1(b.a.x)},${r1(b.a.y)},${r1(b.b.x)},${r1(b.b.y)},${r2(b.angle)},${r1(b.radius)}`).join(';') : undefined,
+      mark: '',
+      assembly: '',
+    });
+  }
+}
+
 /**
  * Bolt holes in a linear part that are closer than 2.2 d0 (EN 1993-1-8 minimum
  * spacing) usually mean two connections clash.
@@ -333,7 +432,7 @@ export function partSignature(pt: Part): string {
       '|' +
       (pt.plateHoles ?? []).map((h) => `${r1(h.x)},${r1(h.y)},${h.d},${h.slot ?? 0},${h.angle ?? 0}`).sort().join(';')
     : '';
-  return [pt.kind, pt.profile, pt.material, pt.finish, r1(pt.length), plate, holes].join('#');
+  return [pt.kind, pt.profile, pt.material, pt.finish, r1(pt.length), plate, holes, pt.sigExtra ?? ''].join('#');
 }
 
 function partPrefix(pt: Part, p: Project): string {

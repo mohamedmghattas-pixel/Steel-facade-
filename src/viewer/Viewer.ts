@@ -12,17 +12,17 @@ import {
   cachedGeometries,
   disposeObject,
   headGeo,
-  linearMatrix,
-  plateGeometry,
+  linearPartMesh,
   plateMatrix,
-  profileGeometry,
+  platePartGeometry,
   shankGeo,
   v,
 } from './meshes';
+import { arcFrom3Points, arcPoints } from '../core/geometry/arc';
 import { getBolt } from '../core/library/bolts';
 
 export interface PickHit {
-  kind: 'member' | 'connection' | 'node';
+  kind: 'member' | 'connection' | 'node' | 'plate';
   id: Id;
 }
 
@@ -58,7 +58,13 @@ const PROMPTS: Partial<Record<Tool, string[]>> = {
   copy: ['Pick base point', 'Pick target point'],
   measure: ['Pick first point', 'Pick second point'],
   calibrate: ['Pick first known point on the underlay', 'Pick second known point'],
+  plate: ['Pick the first corner of the plate', 'Pick the next corner', 'Pick the next corner · double-click, click the first corner or type c to close'],
+  arc: ['Pick the arc start point', 'Pick the arc end point', 'Pick a point on the arc'],
+  plane3: ['Pick the work plane origin', 'Pick a point on the plane x axis', 'Pick a third point in the plane (+y side)'],
 };
+
+/** Points a tool collects before it fires; polyline / plate keep going. */
+const TOOL_POINTS: Partial<Record<Tool, number>> = { arc: 3, plane3: 3, plate: Infinity };
 
 export class Viewer {
   readonly renderer: THREE.WebGLRenderer;
@@ -84,6 +90,8 @@ export class Viewer {
   private memberObjs = new Map<Id, THREE.Mesh[]>();
   private connObjs = new Map<Id, THREE.Mesh[]>();
   private wireObjs = new Map<Id, THREE.Line>();
+  private plateObjs = new Map<Id, THREE.Mesh[]>();
+  private preview: THREE.Line;
   private mats = new Map<string, THREE.Material>();
   private selectedMat = new THREE.MeshStandardMaterial({ color: SELECT_COLOR, metalness: 0.2, roughness: 0.5 });
   private edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2430, transparent: true, opacity: 0.55 });
@@ -157,6 +165,10 @@ export class Viewer {
     this.rubber.renderOrder = 10;
     this.rubber.visible = false;
     this.helperGroup.add(this.rubber);
+    this.preview = new THREE.Line(new THREE.BufferGeometry(), new THREE.LineBasicMaterial({ color: 0xff7a1a, depthTest: false, transparent: true, opacity: 0.8 }));
+    this.preview.renderOrder = 10;
+    this.preview.visible = false;
+    this.helperGroup.add(this.preview);
 
     this.marker = document.createElement('div');
     this.marker.className = 'snap-marker';
@@ -242,6 +254,7 @@ export class Viewer {
     this.memberObjs.clear();
     this.connObjs.clear();
     this.wireObjs.clear();
+    this.plateObjs.clear();
     this.nodeList = Object.values(p.nodes).map((n) => ({ id: n.id, p: n.p }));
 
     // Wire lines.
@@ -266,20 +279,27 @@ export class Viewer {
     // Parts.
     for (const part of dm.parts) {
       if (part.kind === 'plate' && part.outline) {
-        const g = plateGeometry(part.outline, part.plateHoles ?? [], part.thickness);
+        const g = platePartGeometry(part);
         const mesh = new THREE.Mesh(g.mesh, this.mat('plate', ROLE_COLORS.plate));
         mesh.applyMatrix4(plateMatrix(part.frame));
         const edges = new THREE.LineSegments(g.edges, this.edgeMat);
         mesh.add(edges);
+        if (part.plateId) {
+          // Free plates are modelled objects of their own; they show with the members.
+          mesh.userData = { kind: 'plate', id: part.plateId, role: 'plate' };
+          this.memberGroup.add(mesh);
+          this.track(this.plateObjs, part.plateId, mesh);
+          continue;
+        }
         mesh.userData = { kind: 'connection', id: part.connectionId, role: 'plate' };
         this.connGroup.add(mesh);
         this.track(this.connObjs, part.connectionId!, mesh);
       } else if (part.shape) {
-        const g = profileGeometry(part.profile, part.shape);
+        const g = linearPartMesh(part);
         const role = part.role;
         const mesh = new THREE.Mesh(g.mesh, this.mat(role, ROLE_COLORS[role] ?? 0x8899aa));
         mesh.matrixAutoUpdate = false;
-        mesh.matrix.copy(linearMatrix(part.frame, part.length));
+        mesh.matrix.copy(g.matrix);
         const edges = new THREE.LineSegments(g.edges, this.edgeMat);
         mesh.add(edges);
         if (part.kind === 'member') {
@@ -349,6 +369,10 @@ export class Viewer {
         const role = m.userData.role as keyof typeof ROLE_COLORS;
         m.material = sc.has(id) ? this.selectedMat : this.mat(role, ROLE_COLORS[role] ?? 0xc9a46a);
       }
+    }
+    const sp = new Set(this.selection.plates ?? []);
+    for (const [id, meshes] of this.plateObjs) {
+      for (const m of meshes) m.material = sp.has(id) ? this.selectedMat : this.mat('plate', ROLE_COLORS.plate);
     }
     for (const [id, line] of this.wireObjs) {
       const m = this.project?.members[id];
@@ -458,6 +482,8 @@ export class Viewer {
   modelBox(): THREE.Box3 {
     const box = new THREE.Box3();
     for (const n of this.nodeList) box.expandByPoint(v(n.p));
+    // Free plates have no nodes: include them through their placed geometry.
+    for (const meshes of this.plateObjs.values()) for (const m of meshes) box.union(new THREE.Box3().setFromObject(m));
     if (this.display.references && this.refGroup.children.length) box.union(new THREE.Box3().setFromObject(this.refGroup));
     if (this.underlayGroup.children.length) box.union(new THREE.Box3().setFromObject(this.underlayGroup));
     if (box.isEmpty()) box.set(new THREE.Vector3(0, 0, 0), new THREE.Vector3(6000, 1000, 4000));
@@ -523,8 +549,27 @@ export class Viewer {
   resetTool() {
     this.pending = [];
     this.rubber.visible = false;
+    this.preview.visible = false;
     this.updatePrompt();
     this.requestRender();
+  }
+
+  /** Preview of multi-point tools: the plate polygon so far, or the arc through the cursor. */
+  private updatePreview(cursor: Vec3 | null) {
+    const { tool } = this.cb.getState();
+    let pts: Vec3[] = [];
+    if (tool === 'plate' && this.pending.length >= 1) pts = cursor ? [...this.pending, cursor, this.pending[0]] : [...this.pending, this.pending[0]];
+    else if (tool === 'arc' && this.pending.length === 2 && cursor) {
+      const arc = arcFrom3Points(this.pending[0], this.pending[1], cursor);
+      pts = arc ? arcPoints(arc, { maxDeviation: Math.max(1, arc.radius / 500) }) : [this.pending[0], cursor, this.pending[1]];
+    } else if (tool === 'plane3' && this.pending.length === 2 && cursor) pts = [this.pending[0], this.pending[1], cursor, this.pending[0]];
+    if (pts.length < 2) {
+      this.preview.visible = false;
+      return;
+    }
+    this.preview.geometry.dispose();
+    this.preview.geometry = new THREE.BufferGeometry().setFromPoints(pts.map(v));
+    this.preview.visible = true;
   }
 
   private updatePrompt() {
@@ -665,6 +710,7 @@ export class Viewer {
       this.marker.dataset.kind = snap.kind;
     }
     this.cb.onCursor(snap.p, snap.kind);
+    this.updatePreview(snap.p);
     if (this.pending.length) {
       const last = this.pending[this.pending.length - 1];
       const pos = this.rubber.geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -695,9 +741,18 @@ export class Viewer {
     const now = performance.now();
     const dbl = now - this.lastClick < 300;
     this.lastClick = now;
-    if (tool === 'polyline' && dbl && this.pending.length) {
+    if ((tool === 'polyline' || tool === 'plate') && dbl && this.pending.length) {
       this.finishTool();
       return;
+    }
+    // Clicking the first corner again closes a plate.
+    if (tool === 'plate' && this.pending.length >= 3) {
+      const a = this.toScreen(this.pending[0]);
+      const b = this.toScreen(snap.p);
+      if (a && b && a.distanceTo(b) < 10) {
+        this.finishTool();
+        return;
+      }
     }
     this.addPoint(snap.p);
   };
@@ -707,6 +762,21 @@ export class Viewer {
     const { tool } = this.cb.getState();
     if (this.pending.length && dist(this.pending[this.pending.length - 1], p) < 0.5) return;
     this.pending.push(p);
+    const need = TOOL_POINTS[tool];
+    if (need !== undefined) {
+      // Multi-point tools fire once they have their points (plates fire on close).
+      if (this.pending.length >= need) {
+        const pts = this.pending;
+        this.pending = [];
+        this.rubber.visible = false;
+        this.preview.visible = false;
+        this.cb.onPoints(tool, pts);
+      }
+      this.updatePreview(null);
+      this.updatePrompt();
+      this.requestRender();
+      return;
+    }
     if (this.pending.length >= 2) {
       const pts = this.pending.slice(-2);
       this.cb.onPoints(tool, pts);
@@ -724,8 +794,12 @@ export class Viewer {
   }
 
   finishTool() {
+    const { tool } = this.cb.getState();
+    const pts = this.pending;
     this.pending = [];
     this.rubber.visible = false;
+    this.preview.visible = false;
+    if (tool === 'plate' && pts.length >= 3) this.cb.onPoints(tool, pts);
     this.updatePrompt();
     this.requestRender();
   }
@@ -738,6 +812,11 @@ export class Viewer {
     const st = this.cb.getState();
     const t = text.trim();
     if (!t) return null;
+    if (/^(c|close)$/i.test(t) && st.tool === 'plate') {
+      if (this.pending.length < 3) return 'A plate needs at least three corners.';
+      this.finishTool();
+      return null;
+    }
     const rel = t.startsWith('@');
     const nums = t.replace('@', '').split(/[ ,;]+/).filter(Boolean).map(Number);
     if (nums.some((n) => !Number.isFinite(n))) return 'Could not read the coordinates.';
@@ -779,7 +858,7 @@ export class Viewer {
         const ids = o.userData.instanceIds as Id[];
         return { kind: 'connection', id: ids[h.instanceId] };
       }
-      if (o.userData.kind) return { kind: o.userData.kind, id: o.userData.id };
+      if (o.userData.kind && o.userData.id) return { kind: o.userData.kind, id: o.userData.id };
     }
     // Screen-space test for wire lines and nodes.
     const mouse = this.localXY(e);
@@ -825,6 +904,11 @@ export class Viewer {
       const b = this.project.nodes[m.end].p;
       const ok = crossing ? inside(a) || inside(b) || inside(lerp(a, b, 0.5)) : inside(a) && inside(b);
       if (ok) sel.members.push(m.id);
+    }
+    if (this.display.solids) {
+      sel.plates = Object.values(this.project.plates ?? {})
+        .filter((pl) => inside(pl.origin))
+        .map((pl) => pl.id);
     }
     if (this.display.connections && this.display.solids) {
       for (const c of Object.values(this.project.connections)) {

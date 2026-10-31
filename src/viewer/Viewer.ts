@@ -2,8 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { Id, Project, Vec3, WorkPlane } from '../core/model/types';
-import type { DerivedModel } from '../core/derive/model';
-import { planeAxes, planeToWorld, worldToPlane, lerp, dist, add, sub, scale, normalize } from '../core/model/geometry';
+import type { DerivedModel, Part } from '../core/derive/model';
+import { planeAxes, planeToWorld, worldToPlane, lerp, dist, add, sub, scale, normalize, madd } from '../core/model/geometry';
 import type { Selection, SnapSettings, Tool, ViewName } from '../state/store';
 import {
   ROLE_COLORS,
@@ -11,15 +11,63 @@ import {
   alongMatrix,
   cachedGeometries,
   disposeObject,
+  geometryForKey,
   headGeo,
-  linearPartMesh,
+  headGeoCoarse,
+  instancedEdgeMaterial,
+  instancedEdges,
+  isUnitLinearKey,
+  linearMatrix,
+  partGeometryKey,
   plateMatrix,
-  platePartGeometry,
   shankGeo,
+  shankGeoCoarse,
   v,
 } from './meshes';
 import { arcFrom3Points, arcPoints } from '../core/geometry/arc';
 import { getBolt } from '../core/library/bolts';
+import { groupColors, type ColorBy } from '../core/management/grouping';
+import { FrustumTest, SpatialIndex } from './spatial';
+
+/** Above this many parts, edges are not drawn (GPU line cost). */
+const EDGE_PART_LIMIT = 20000;
+/** Above this many parts, profiles are drawn with sharp corners and plates without holes (level of detail). */
+const COARSE_PART_LIMIT = 15000;
+/** Above this many members, mark labels are shown for the selection only. */
+const LABEL_LIMIT = 1500;
+
+/** One drawn part: where it lives in a render batch and how to pick it. */
+interface SolidItem {
+  part: Part;
+  kind: 'member' | 'connection' | 'plate';
+  /** Member id, connection id or free-plate id. */
+  id: Id;
+  role: keyof typeof ROLE_COLORS;
+  batch: RenderBatch;
+  /** Instance index (instanced) or item index (merged). */
+  slot: number;
+  matrix: THREE.Matrix4;
+  /** Local geometry (shared) for exact picking, and its edges. */
+  geometry: THREE.BufferGeometry;
+  edges: THREE.BufferGeometry;
+}
+
+interface RenderBatch {
+  kind: 'instanced' | 'merged';
+  mesh: THREE.InstancedMesh | THREE.Mesh;
+  items: SolidItem[];
+  /** merged: first vertex and vertex count per item, and the colour attribute. */
+  ranges?: [number, number][];
+  colors?: THREE.BufferAttribute;
+}
+
+interface BoltItem {
+  connectionId: Id;
+  start: Vec3;
+  dir: Vec3;
+  length: number;
+  d: number;
+}
 
 export interface PickHit {
   kind: 'member' | 'connection' | 'node' | 'plate';
@@ -33,6 +81,8 @@ export interface Display {
   references: boolean;
   underlays: boolean;
   labels: boolean;
+  /** Colour parts by role (default), erection phase, delivery batch or zone. */
+  colorBy?: ColorBy;
 }
 
 export interface ViewerCallbacks {
@@ -87,13 +137,33 @@ export class Viewer {
   readonly refGroup = new THREE.Group();
   readonly underlayGroup = new THREE.Group();
 
-  private memberObjs = new Map<Id, THREE.Mesh[]>();
-  private connObjs = new Map<Id, THREE.Mesh[]>();
-  private wireObjs = new Map<Id, THREE.Line>();
-  private plateObjs = new Map<Id, THREE.Mesh[]>();
-  private preview: THREE.Line;
-  private mats = new Map<string, THREE.Material>();
-  private selectedMat = new THREE.MeshStandardMaterial({ color: SELECT_COLOR, metalness: 0.2, roughness: 0.5 });
+  private solids: SolidItem[] = [];
+  private batches: RenderBatch[] = [];
+  private bolts: BoltItem[] = [];
+  private memberItems = new Map<Id, SolidItem[]>();
+  private connItems = new Map<Id, SolidItem[]>();
+  /** Free / bent plates and stiffeners (Project.plates): modelled objects drawn with the members. */
+  private plateItems = new Map<Id, SolidItem[]>();
+  private ownedGeoms: THREE.BufferGeometry[] = [];
+  private dirtyBatches = new Set<RenderBatch>();
+  private paintedSel = { members: new Set<Id>(), connections: new Set<Id>(), plates: new Set<Id>() };
+  private groupColor: ((key: string | undefined) => number) | null = null;
+  private tmpColor = new THREE.Color();
+  private wireIds: Id[] = [];
+  private wireSegs: [Vec3, Vec3][] = [];
+  private wireSel: THREE.LineSegments | null = null;
+  private nodeIndex: SpatialIndex | null = null;
+  private wireIndex: SpatialIndex | null = null;
+  private solidIndex: SpatialIndex | null = null;
+  private refIndex: SpatialIndex | null = null;
+  private nodeConns = new Map<Id, Id[]>();
+  private labelsBuilt = false;
+  private dm: DerivedModel | null = null;
+  private marker3d: THREE.Object3D | null = null;
+  private solidMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  private solidVcMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+  private instEdgeMat = instancedEdgeMaterial(0x1b2430, 0.55);
+  private tmpMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial());
   private edgeMat = new THREE.LineBasicMaterial({ color: 0x1b2430, transparent: true, opacity: 0.55 });
   private wireMat = new THREE.LineDashedMaterial({ color: 0x8a96a8, dashSize: 60, gapSize: 40 });
   private wireAssignedMat = new THREE.LineBasicMaterial({ color: 0x51627a });
@@ -110,6 +180,7 @@ export class Viewer {
   private pending: Vec3[] = [];
   private lastCursor: Snap | null = null;
   private rubber: THREE.Line;
+  private preview: THREE.Line;
   private marker: HTMLDivElement;
   private boxDiv: HTMLDivElement;
   private down: { x: number; y: number; button: number; shift: boolean } | null = null;
@@ -232,122 +303,277 @@ export class Viewer {
   // -------------------------------------------------------------------------
   // Model content
 
-  private mat(key: string, color: number): THREE.Material {
-    let m = this.mats.get(key);
-    if (!m) {
-      m = new THREE.MeshStandardMaterial({ color, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
-      this.mats.set(key, m);
-    }
-    return m;
-  }
-
   setModel(p: Project, dm: DerivedModel) {
     this.project = p;
+    this.dm = dm;
+    this.clearModel();
+    this.nodeList = Object.values(p.nodes).map((n) => ({ id: n.id, p: n.p }));
+    this.buildWires(p);
+    if (this.nodeList.length) {
+      const pts = new THREE.BufferGeometry().setFromPoints(this.nodeList.map((n) => v(n.p)));
+      this.wireGroup.add(new THREE.Points(pts, this.nodeMat));
+    }
+    this.buildSolids(p, dm);
+    this.buildBolts(dm, dm.parts.length > COARSE_PART_LIMIT);
+    this.buildIndexes(p);
+    this.labelsBuilt = false;
+    this.applyDisplay();
+    this.applySelection(true);
+    this.requestRender();
+  }
+
+  /** Remove model objects; dispose what this viewer created (shared profile geometries stay cached). */
+  private clearModel() {
     const keep = cachedGeometries();
     for (const g of [this.memberGroup, this.connGroup, this.wireGroup, this.labelGroup]) {
       for (const c of [...g.children]) {
         if (c instanceof CSS2DObject) c.element.remove();
-        disposeObject(c, keep, false);
+        if (c instanceof THREE.InstancedMesh) c.dispose();
+        else disposeObject(c, keep, false);
         g.remove(c);
       }
     }
-    this.memberObjs.clear();
-    this.connObjs.clear();
-    this.wireObjs.clear();
-    this.plateObjs.clear();
-    this.nodeList = Object.values(p.nodes).map((n) => ({ id: n.id, p: n.p }));
+    for (const geo of this.ownedGeoms) if (!keep.has(geo)) geo.dispose();
+    this.ownedGeoms = [];
+    this.solids = [];
+    this.batches = [];
+    this.bolts = [];
+    this.memberItems.clear();
+    this.connItems.clear();
+    this.plateItems.clear();
+    this.wireIds = [];
+    this.wireSegs = [];
+    this.wireSel = null;
+    this.paintedSel = { members: new Set(), connections: new Set(), plates: new Set() };
+  }
 
-    // Wire lines.
+  /** All wire lines in two batched line sets (with / without profile) plus a selection overlay. */
+  private buildWires(p: Project) {
+    const assigned: number[] = [];
+    const plain: number[] = [];
     for (const m of Object.values(p.members)) {
       const a = p.nodes[m.start]?.p;
       const b = p.nodes[m.end]?.p;
       if (!a || !b) continue;
-      const geo = new THREE.BufferGeometry().setFromPoints([v(a), v(b)]);
-      const line = new THREE.Line(geo, m.profile ? this.wireAssignedMat : this.wireMat);
-      if (!m.profile) line.computeLineDistances();
-      line.userData = { kind: 'member', id: m.id };
-      this.wireGroup.add(line);
-      this.wireObjs.set(m.id, line);
+      (m.profile ? assigned : plain).push(a.x, a.y, a.z, b.x, b.y, b.z);
+      this.wireIds.push(m.id);
+      this.wireSegs.push([a, b]);
     }
-    // Node dots.
-    if (this.nodeList.length) {
-      const pts = new THREE.BufferGeometry().setFromPoints(this.nodeList.map((n) => v(n.p)));
-      const dots = new THREE.Points(pts, this.nodeMat);
-      this.wireGroup.add(dots);
-    }
-
-    // Parts.
-    for (const part of dm.parts) {
-      if (part.kind === 'plate' && part.outline) {
-        const g = platePartGeometry(part);
-        const mesh = new THREE.Mesh(g.mesh, this.mat('plate', ROLE_COLORS.plate));
-        mesh.applyMatrix4(plateMatrix(part.frame));
-        const edges = new THREE.LineSegments(g.edges, this.edgeMat);
-        mesh.add(edges);
-        if (part.plateId) {
-          // Free plates are modelled objects of their own; they show with the members.
-          mesh.userData = { kind: 'plate', id: part.plateId, role: 'plate' };
-          this.memberGroup.add(mesh);
-          this.track(this.plateObjs, part.plateId, mesh);
-          continue;
-        }
-        mesh.userData = { kind: 'connection', id: part.connectionId, role: 'plate' };
-        this.connGroup.add(mesh);
-        this.track(this.connObjs, part.connectionId!, mesh);
-      } else if (part.shape) {
-        const g = linearPartMesh(part);
-        const role = part.role;
-        const mesh = new THREE.Mesh(g.mesh, this.mat(role, ROLE_COLORS[role] ?? 0x8899aa));
-        mesh.matrixAutoUpdate = false;
-        mesh.matrix.copy(g.matrix);
-        const edges = new THREE.LineSegments(g.edges, this.edgeMat);
-        mesh.add(edges);
-        if (part.kind === 'member') {
-          mesh.userData = { kind: 'member', id: part.memberId, role };
-          this.memberGroup.add(mesh);
-          this.track(this.memberObjs, part.memberId!, mesh);
-          const label = document.createElement('div');
-          label.className = 'mark-label';
-          label.textContent = part.assembly;
-          const lo = new CSS2DObject(label);
-          const mid = lerp(part.frame.origin, add(part.frame.origin, scale(part.frame.x, part.length)), 0.5);
-          lo.position.copy(v(mid));
-          this.labelGroup.add(lo);
-        } else {
-          mesh.userData = { kind: 'connection', id: part.connectionId, role };
-          this.connGroup.add(mesh);
-          this.track(this.connObjs, part.connectionId!, mesh);
-        }
-      }
-    }
-
-    // Bolts as instanced meshes.
-    const bolts = dm.bolts.flatMap((b) => b.positions.map((pos) => ({ b, pos })));
-    if (bolts.length) {
-      const shanks = new THREE.InstancedMesh(shankGeo, this.boltMat, bolts.length);
-      const heads = new THREE.InstancedMesh(headGeo, this.boltMat, bolts.length);
-      const ids: Id[] = [];
-      bolts.forEach(({ b, pos }, i) => {
-        const size = getBolt(b.size);
-        shanks.setMatrixAt(i, alongMatrix(pos, b.dir, size.d, b.length));
-        heads.setMatrixAt(i, alongMatrix(pos, b.dir, size.af, size.head));
-        shanks.setColorAt(i, new THREE.Color(b.kind === 'anchor' ? 0xb89a62 : 0xffffff));
-        ids.push(b.connectionId);
-      });
-      shanks.userData = { kind: 'connection', instanceIds: ids };
-      heads.userData = { kind: 'connection', instanceIds: ids };
-      this.connGroup.add(shanks, heads);
-    }
-
-    this.applyDisplay();
-    this.applySelection();
-    this.requestRender();
+    const mk = (arr: number[], mat: THREE.Material, dashed: boolean) => {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(arr, 3));
+      const ls = new THREE.LineSegments(geo, mat);
+      if (dashed) ls.computeLineDistances();
+      return ls;
+    };
+    if (assigned.length) this.wireGroup.add(mk(assigned, this.wireAssignedMat, false));
+    if (plain.length) this.wireGroup.add(mk(plain, this.wireMat, true));
+    this.wireSel = mk([], this.wireSelMat, false);
+    this.wireSel.renderOrder = 2;
+    this.wireGroup.add(this.wireSel);
   }
 
-  private track(map: Map<Id, THREE.Mesh[]>, id: Id, m: THREE.Mesh) {
-    const arr = map.get(id) ?? [];
-    arr.push(m);
-    map.set(id, arr);
+  /**
+   * Parts with the same geometry signature (meshes.ts partGeometryKey) are one
+   * InstancedMesh; geometries used once are merged into one batched mesh per
+   * group. Per-part colours live in instance / vertex colours, so selection
+   * and colour modes never rebuild geometry.
+   */
+  private buildSolids(p: Project, dm: DerivedModel) {
+    const edgesOn = dm.parts.length <= EDGE_PART_LIMIT;
+    const coarse = dm.parts.length > COARSE_PART_LIMIT;
+    const groups = new Map<string, { key: string; parts: Part[] }>();
+    for (const part of dm.parts) {
+      if (part.kind === 'plate' ? !part.outline?.length : !part.shape) continue;
+      const key = partGeometryKey(part, part.memberId ? p.members[part.memberId] : undefined);
+      const g = groups.get(key);
+      if (g) g.parts.push(part);
+      else groups.set(key, { key, parts: [part] });
+    }
+    const singles: { member: SolidItem[]; conn: SolidItem[] } = { member: [], conn: [] };
+    const groupOf = (kind: SolidItem['kind']) => (kind === 'connection' ? this.connGroup : this.memberGroup);
+    for (const { key, parts } of groups.values()) {
+      const geo = geometryForKey(key, parts[0], coarse);
+      if (!geo.cached) this.ownedGeoms.push(geo.mesh, geo.edges);
+      geo.mesh.computeBoundingBox();
+      const unit = isUnitLinearKey(key);
+      const items = parts.map((part) => this.solidItem(part, geo.mesh, geo.edges, unit));
+      if (parts.length === 1 && !unit) {
+        (items[0].kind === 'connection' ? singles.conn : singles.member).push(items[0]);
+        continue;
+      }
+      for (const kind of ['member', 'connection', 'plate'] as const) {
+        const its = items.filter((x) => x.kind === kind);
+        if (!its.length) continue;
+        const mesh = new THREE.InstancedMesh(geo.mesh, this.solidMat, its.length);
+        const batch: RenderBatch = { kind: 'instanced', mesh, items: its };
+        const mats = new Float32Array(its.length * 16);
+        its.forEach((it, i) => {
+          it.batch = batch;
+          it.slot = i;
+          mesh.setMatrixAt(i, it.matrix);
+          it.matrix.toArray(mats, i * 16);
+        });
+        mesh.setColorAt(0, new THREE.Color(0xffffff));
+        mesh.computeBoundingSphere();
+        this.batches.push(batch);
+        const group = groupOf(kind);
+        group.add(mesh);
+        if (edgesOn) group.add(instancedEdges(geo.edges, mats, this.instEdgeMat));
+      }
+    }
+    for (const [kind, its] of [
+      ['member', singles.member],
+      ['connection', singles.conn],
+    ] as const) {
+      if (!its.length) continue;
+      this.mergeSingles(its, kind === 'member' ? this.memberGroup : this.connGroup, edgesOn);
+    }
+  }
+
+  private solidItem(part: Part, geometry: THREE.BufferGeometry, edges: THREE.BufferGeometry, unit: boolean): SolidItem {
+    const isMember = part.kind === 'member';
+    const isPlate = !!part.plateId;
+    const matrix = part.kind === 'plate' ? plateMatrix(part.frame) : linearMatrix(part.frame, unit ? part.length : 1);
+    const it: SolidItem = {
+      part,
+      kind: isPlate ? 'plate' : isMember ? 'member' : 'connection',
+      id: (isPlate ? part.plateId : isMember ? part.memberId : part.connectionId) ?? part.ref,
+      role: part.role,
+      batch: null as unknown as RenderBatch,
+      slot: 0,
+      matrix,
+      geometry,
+      edges,
+    };
+    this.solids.push(it);
+    const map = isPlate ? this.plateItems : isMember ? this.memberItems : this.connItems;
+    const arr = map.get(it.id);
+    if (arr) arr.push(it);
+    else map.set(it.id, [it]);
+    return it;
+  }
+
+  /** Geometries used once: merged into one mesh with vertex colours (and one edge set). */
+  private mergeSingles(items: SolidItem[], group: THREE.Group, edgesOn: boolean) {
+    let vertCount = 0;
+    const parts: THREE.BufferGeometry[] = [];
+    const edgeParts: number[] = [];
+    const ranges: [number, number][] = [];
+    for (const it of items) {
+      const g = (it.geometry.index ? it.geometry.toNonIndexed() : it.geometry.clone()).applyMatrix4(it.matrix);
+      g.deleteAttribute('uv');
+      const n = g.getAttribute('position').count;
+      ranges.push([vertCount, n]);
+      vertCount += n;
+      parts.push(g);
+      if (edgesOn) {
+        const e = it.edges.clone().applyMatrix4(it.matrix);
+        const pa = e.getAttribute('position');
+        for (let i = 0; i < pa.count; i++) edgeParts.push(pa.getX(i), pa.getY(i), pa.getZ(i));
+        e.dispose();
+      }
+    }
+    const pos = new Float32Array(vertCount * 3);
+    const nrm = new Float32Array(vertCount * 3);
+    let o = 0;
+    for (const g of parts) {
+      pos.set(g.getAttribute('position').array as Float32Array, o * 3);
+      const na = g.getAttribute('normal');
+      if (na) nrm.set(na.array as Float32Array, o * 3);
+      o += g.getAttribute('position').count;
+      g.dispose();
+    }
+    const merged = new THREE.BufferGeometry();
+    merged.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    merged.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+    const colors = new THREE.BufferAttribute(new Float32Array(vertCount * 3), 3);
+    merged.setAttribute('color', colors);
+    merged.computeBoundingSphere();
+    this.ownedGeoms.push(merged);
+    const mesh = new THREE.Mesh(merged, this.solidVcMat);
+    const batch: RenderBatch = { kind: 'merged', mesh, items, ranges, colors };
+    items.forEach((it, i) => {
+      it.batch = batch;
+      it.slot = i;
+    });
+    this.batches.push(batch);
+    group.add(mesh);
+    if (edgesOn && edgeParts.length) {
+      const eg = new THREE.BufferGeometry();
+      eg.setAttribute('position', new THREE.Float32BufferAttribute(edgeParts, 3));
+      this.ownedGeoms.push(eg);
+      group.add(new THREE.LineSegments(eg, this.edgeMat));
+    }
+  }
+
+  /** Bolts as instanced meshes (already one draw call each for shanks and heads). */
+  private buildBolts(dm: DerivedModel, coarse = false) {
+    const bolts = dm.bolts.flatMap((b) => b.positions.map((pos) => ({ b, pos })));
+    if (!bolts.length) return;
+    const shanks = new THREE.InstancedMesh(coarse ? shankGeoCoarse : shankGeo, this.boltMat, bolts.length);
+    const heads = new THREE.InstancedMesh(coarse ? headGeoCoarse : headGeo, this.boltMat, bolts.length);
+    const ids: Id[] = [];
+    const color = new THREE.Color();
+    bolts.forEach(({ b, pos }, i) => {
+      const size = getBolt(b.size);
+      shanks.setMatrixAt(i, alongMatrix(pos, b.dir, size.d, b.length));
+      heads.setMatrixAt(i, alongMatrix(pos, b.dir, size.af, size.head));
+      shanks.setColorAt(i, color.setHex(b.kind === 'anchor' ? 0xb89a62 : 0xffffff));
+      ids.push(b.connectionId);
+      this.bolts.push({ connectionId: b.connectionId, start: madd(pos, b.dir, -size.head), dir: normalize(b.dir), length: b.length + size.head, d: Math.max(size.af, size.d) });
+    });
+    shanks.computeBoundingSphere();
+    heads.computeBoundingSphere();
+    shanks.userData = { kind: 'connection', instanceIds: ids };
+    heads.userData = { kind: 'connection', instanceIds: ids };
+    this.connGroup.add(shanks, heads);
+  }
+
+  /** BVHs for snapping / picking / box select (see spatial.ts). */
+  private buildIndexes(p: Project) {
+    this.nodeIndex = SpatialIndex.points(this.nodeList.map((n) => n.p));
+    this.wireIndex = SpatialIndex.segments(this.wireSegs);
+    const S = this.solids.length;
+    const bounds = new Float64Array((S + this.bolts.length) * 6);
+    const box = new THREE.Box3();
+    this.solids.forEach((it, i) => {
+      box.copy(it.geometry.boundingBox!).applyMatrix4(it.matrix);
+      bounds.set([box.min.x, box.min.y, box.min.z, box.max.x, box.max.y, box.max.z], i * 6);
+    });
+    this.bolts.forEach((b, i) => {
+      const e = madd(b.start, b.dir, b.length);
+      const r = b.d / 2;
+      bounds.set([Math.min(b.start.x, e.x) - r, Math.min(b.start.y, e.y) - r, Math.min(b.start.z, e.z) - r, Math.max(b.start.x, e.x) + r, Math.max(b.start.y, e.y) + r, Math.max(b.start.z, e.z) + r], (S + i) * 6);
+    });
+    this.solidIndex = new SpatialIndex(bounds);
+    this.nodeConns.clear();
+    for (const c of Object.values(p.connections)) {
+      const arr = this.nodeConns.get(c.node);
+      if (arr) arr.push(c.id);
+      else this.nodeConns.set(c.node, [c.id]);
+    }
+  }
+
+  /** Mark labels: all members up to LABEL_LIMIT, else only the selected ones. */
+  private buildLabels() {
+    for (const c of [...this.labelGroup.children]) {
+      if (c instanceof CSS2DObject) c.element.remove();
+      this.labelGroup.remove(c);
+    }
+    this.labelsBuilt = true;
+    if (!this.dm || !this.display.labels) return;
+    const members = this.dm.parts.filter((pt) => pt.kind === 'member');
+    const sel = new Set(this.selection.members);
+    const list = members.length <= LABEL_LIMIT ? members : members.filter((pt) => sel.has(pt.memberId!));
+    for (const part of list) {
+      const label = document.createElement('div');
+      label.className = 'mark-label';
+      label.textContent = part.assembly;
+      const lo = new CSS2DObject(label);
+      lo.position.copy(v(lerp(part.frame.origin, add(part.frame.origin, scale(part.frame.x, part.length)), 0.5)));
+      this.labelGroup.add(lo);
+    }
   }
 
   setSelection(sel: Selection) {
@@ -355,35 +581,91 @@ export class Viewer {
     this.applySelection();
   }
 
-  private applySelection() {
+  private itemColor(it: SolidItem, selected: boolean): number {
+    if (selected) return SELECT_COLOR;
+    if (this.groupColor) {
+      const mode = this.display.colorBy;
+      const key = mode === 'phase' ? it.part.phase : mode === 'batch' ? it.part.batch : it.part.zone;
+      return this.groupColor(key);
+    }
+    return ROLE_COLORS[it.role] ?? 0x8899aa;
+  }
+
+  private paint(it: SolidItem, hex: number) {
+    const b = it.batch;
+    if (!b) return;
+    this.tmpColor.setHex(hex);
+    if (b.kind === 'instanced') {
+      (b.mesh as THREE.InstancedMesh).setColorAt(it.slot, this.tmpColor);
+      this.dirtyBatches.add(b);
+    } else {
+      const [start, n] = b.ranges![it.slot];
+      const arr = b.colors!.array as Float32Array;
+      const c = this.tmpColor;
+      for (let i = start; i < start + n; i++) {
+        arr[i * 3] = c.r;
+        arr[i * 3 + 1] = c.g;
+        arr[i * 3 + 2] = c.b;
+      }
+      this.dirtyBatches.add(b);
+    }
+  }
+
+  private flushPaint() {
+    for (const b of this.dirtyBatches) {
+      if (b.kind === 'instanced') {
+        const m = b.mesh as THREE.InstancedMesh;
+        if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      } else b.colors!.needsUpdate = true;
+    }
+    this.dirtyBatches.clear();
+  }
+
+  /** Colour items; with `all` every part is repainted (model or colour mode change), else only selection changes. */
+  private applySelection(all = false) {
     const sm = new Set(this.selection.members);
     const sc = new Set(this.selection.connections);
-    for (const [id, meshes] of this.memberObjs) {
-      for (const m of meshes) {
-        const role = m.userData.role as keyof typeof ROLE_COLORS;
-        m.material = sm.has(id) ? this.selectedMat : this.mat(role, ROLE_COLORS[role] ?? 0x8899aa);
-      }
-    }
-    for (const [id, meshes] of this.connObjs) {
-      for (const m of meshes) {
-        const role = m.userData.role as keyof typeof ROLE_COLORS;
-        m.material = sc.has(id) ? this.selectedMat : this.mat(role, ROLE_COLORS[role] ?? 0xc9a46a);
-      }
-    }
     const sp = new Set(this.selection.plates ?? []);
-    for (const [id, meshes] of this.plateObjs) {
-      for (const m of meshes) m.material = sp.has(id) ? this.selectedMat : this.mat('plate', ROLE_COLORS.plate);
+    const prev = this.paintedSel;
+    if (all) {
+      for (const it of this.solids) this.paint(it, this.itemColor(it, (it.kind === 'member' ? sm : it.kind === 'plate' ? sp : sc).has(it.id)));
+    } else {
+      const touch = (ids: Set<Id>, map: Map<Id, SolidItem[]>, selSet: Set<Id>) => {
+        for (const id of ids) for (const it of map.get(id) ?? []) this.paint(it, this.itemColor(it, selSet.has(id)));
+      };
+      touch(new Set([...prev.members, ...sm]), this.memberItems, sm);
+      touch(new Set([...prev.connections, ...sc]), this.connItems, sc);
+      touch(new Set([...prev.plates, ...sp]), this.plateItems, sp);
     }
-    for (const [id, line] of this.wireObjs) {
-      const m = this.project?.members[id];
-      line.material = sm.has(id) ? this.wireSelMat : m?.profile ? this.wireAssignedMat : this.wireMat;
+    this.flushPaint();
+    this.paintedSel = { members: sm, connections: sc, plates: sp };
+    // Selected wire lines as an overlay.
+    if (this.wireSel && this.project) {
+      const pts: number[] = [];
+      for (const id of sm) {
+        const m = this.project.members[id];
+        const a = m && this.project.nodes[m.start]?.p;
+        const b = m && this.project.nodes[m.end]?.p;
+        if (a && b) pts.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      }
+      this.wireSel.geometry.dispose();
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      this.wireSel.geometry = g;
     }
+    if (this.display.labels && this.dm && this.dm.parts.length > LABEL_LIMIT) this.labelsBuilt = false;
+    if (this.display.labels && !this.labelsBuilt) this.buildLabels();
     this.requestRender();
   }
 
   setDisplay(d: Display) {
+    const recolour = (d.colorBy ?? 'role') !== (this.display.colorBy ?? 'role');
+    const labels = d.labels !== this.display.labels;
     this.display = d;
+    if (labels) this.labelsBuilt = false;
     this.applyDisplay();
+    if (recolour) this.applySelection(true);
+    else if (labels) this.applySelection();
   }
 
   private applyDisplay() {
@@ -394,6 +676,8 @@ export class Viewer {
     this.refGroup.visible = d.references;
     this.underlayGroup.visible = d.underlays;
     this.labelGroup.visible = d.labels;
+    this.groupColor = this.project && d.colorBy && d.colorBy !== 'role' ? groupColors(this.project, d.colorBy) : null;
+    if (d.labels && !this.labelsBuilt) this.buildLabels();
     for (const c of this.labelGroup.children) if (c instanceof CSS2DObject) c.element.style.display = d.labels ? '' : 'none';
     this.requestRender();
   }
@@ -401,6 +685,73 @@ export class Viewer {
   /** Points that drawing tools can snap to on reference geometry (e.g. DXF linework). */
   setReferencePoints(pts: Vec3[]) {
     this.refPoints = pts;
+    this.refIndex = pts.length ? SpatialIndex.points(pts) : null;
+  }
+
+  /** Aim the camera at a point (e.g. a clash) from the current viewing direction. */
+  focusPoint(p: Vec3, distance = 2500) {
+    const target = v(p);
+    if (this.camera === this.persp) {
+      const dir = new THREE.Vector3().subVectors(this.persp.position, this.controlsP.target).normalize();
+      if (dir.lengthSq() < 1e-9) dir.set(-0.55, -0.7, 0.45).normalize();
+      this.controlsP.target.copy(target);
+      this.persp.position.copy(target).addScaledVector(dir, distance);
+      this.controlsP.update();
+    } else {
+      const delta = new THREE.Vector3().subVectors(target, this.controlsO.target);
+      this.controlsO.target.add(delta);
+      this.ortho.position.add(delta);
+      const half = (this.ortho.top - this.ortho.bottom) / 2;
+      this.ortho.zoom = Math.max(0.01, half / distance);
+      this.ortho.updateProjectionMatrix();
+      this.controlsO.update();
+    }
+    this.requestRender();
+  }
+
+  /** Show (or hide with null) a marker at a point, e.g. the active clash. */
+  setMarker(p: Vec3 | null, color = 0xff3b30) {
+    if (this.marker3d) {
+      this.helperGroup.remove(this.marker3d);
+      disposeObject(this.marker3d);
+      this.marker3d = null;
+    }
+    if (p) {
+      const g = new THREE.Group();
+      const s = 120;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(-s, 0, 0), new THREE.Vector3(s, 0, 0),
+        new THREE.Vector3(0, -s, 0), new THREE.Vector3(0, s, 0),
+        new THREE.Vector3(0, 0, -s), new THREE.Vector3(0, 0, s),
+      ]);
+      const lines = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color, depthTest: false }));
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(25, 16, 12), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.85 }));
+      lines.renderOrder = ball.renderOrder = 11;
+      g.add(lines, ball);
+      g.position.copy(v(p));
+      this.marker3d = g;
+      this.helperGroup.add(g);
+    }
+    this.requestRender();
+  }
+
+  /** Frustum around a screen point (pixels relative to the canvas) for index queries. */
+  private nearFrustum(mouse: THREE.Vector2, r: number): FrustumTest {
+    const el = this.renderer.domElement;
+    const w = el.clientWidth || 1;
+    const h = el.clientHeight || 1;
+    return FrustumTest.fromNdcRect(this.camera, ((mouse.x - r) / w) * 2 - 1, -((mouse.y + r) / h) * 2 + 1, ((mouse.x + r) / w) * 2 - 1, -((mouse.y - r) / h) * 2 + 1);
+  }
+
+  /** Exact ray test of one part: distance along the ray, or null. */
+  private raycastItem(rc: THREE.Raycaster, it: SolidItem): number | null {
+    this.tmpMesh.geometry = it.geometry;
+    this.tmpMesh.matrixWorld.copy(it.matrix);
+    const hits: THREE.Intersection[] = [];
+    this.tmpMesh.raycast(rc, hits);
+    let best: number | null = null;
+    for (const h of hits) if (best === null || h.distance < best) best = h.distance;
+    return best;
   }
 
   // -------------------------------------------------------------------------
@@ -483,7 +834,12 @@ export class Viewer {
     const box = new THREE.Box3();
     for (const n of this.nodeList) box.expandByPoint(v(n.p));
     // Free plates have no nodes: include them through their placed geometry.
-    for (const meshes of this.plateObjs.values()) for (const m of meshes) box.union(new THREE.Box3().setFromObject(m));
+    for (const items of this.plateItems.values()) {
+      for (const it of items) {
+        it.geometry.computeBoundingBox();
+        if (it.geometry.boundingBox) box.union(it.geometry.boundingBox.clone().applyMatrix4(it.matrix));
+      }
+    }
     if (this.display.references && this.refGroup.children.length) box.union(new THREE.Box3().setFromObject(this.refGroup));
     if (this.underlayGroup.children.length) box.union(new THREE.Box3().setFromObject(this.underlayGroup));
     if (box.isEmpty()) box.set(new THREE.Vector3(0, 0, 0), new THREE.Vector3(6000, 1000, 4000));
@@ -628,16 +984,15 @@ export class Viewer {
         best = { p, kind };
       }
     };
-    if (s.endpoint) for (const n of this.nodeList) consider(n.p, 'end', 12);
+    if (s.endpoint) this.nodeIndex?.frustum(this.nearFrustum(mouse, 12), (i) => void consider(this.nodeList[i].p, 'end', 12));
     if (s.midpoint && this.project) {
-      for (const m of Object.values(this.project.members)) {
-        const a = this.project.nodes[m.start]?.p;
-        const b = this.project.nodes[m.end]?.p;
-        if (a && b) consider(lerp(a, b, 0.5), 'mid', 10);
-      }
+      this.wireIndex?.frustum(this.nearFrustum(mouse, 10), (i) => {
+        const [a, b] = this.wireSegs[i];
+        consider(lerp(a, b, 0.5), 'mid', 10);
+      });
     }
     if (s.reference) {
-      for (const p of this.refPoints) consider(p, 'ref', 10);
+      this.refIndex?.frustum(this.nearFrustum(mouse, 10), (i) => void consider(this.refPoints[i], 'ref', 10));
       if (!best && this.refGroup.visible && this.refGroup.children.length) {
         const hits = this.rayAt(e).intersectObject(this.refGroup, true);
         const h = hits.find((x) => x.face);
@@ -846,44 +1201,57 @@ export class Viewer {
 
   private pick(e: PointerEvent): PickHit | null {
     const rc = this.rayAt(e);
-    const targets: THREE.Object3D[] = [];
-    if (this.memberGroup.visible) targets.push(this.memberGroup);
-    if (this.connGroup.visible) targets.push(this.connGroup);
-    const hits = rc.intersectObjects(targets, true);
-    for (const h of hits) {
-      let o: THREE.Object3D | null = h.object;
-      if (o instanceof THREE.LineSegments) o = o.parent;
-      if (!o) continue;
-      if (o instanceof THREE.InstancedMesh && h.instanceId !== undefined) {
-        const ids = o.userData.instanceIds as Id[];
-        return { kind: 'connection', id: ids[h.instanceId] };
+    const wantMembers = this.memberGroup.visible;
+    const wantConns = this.connGroup.visible;
+    let best: { t: number; hit: PickHit } | null = null;
+    const S = this.solids.length;
+    // Solids: BVH candidates along the ray, exact test on each, nearest wins.
+    this.solidIndex?.ray(rc.ray, Infinity, (i, tEnter) => {
+      if (best && tEnter > best.t) return best.t;
+      let t: number | null = null;
+      let hit: PickHit;
+      if (i < S) {
+        const it = this.solids[i];
+        if (it.kind === 'connection' ? !wantConns : !wantMembers) return;
+        t = this.raycastItem(rc, it);
+        hit = { kind: it.kind, id: it.id };
+      } else {
+        const b = this.bolts[i - S];
+        if (!wantConns) return;
+        t = rayCylinderBox(rc.ray, b);
+        hit = { kind: 'connection', id: b.connectionId };
       }
-      if (o.userData.kind && o.userData.id) return { kind: o.userData.kind, id: o.userData.id };
-    }
-    // Screen-space test for wire lines and nodes.
+      if (t !== null && (!best || t < best.t)) best = { t, hit };
+      return best?.t;
+    });
+    const solidHit = best as { t: number; hit: PickHit } | null;
+    if (solidHit) return solidHit.hit;
+    // Screen-space test for wire lines and nodes (candidates from the indexes).
     const mouse = this.localXY(e);
-    let best: PickHit | null = null;
+    let near: PickHit | null = null;
     let bestD = 8;
-    for (const n of this.nodeList) {
+    this.nodeIndex?.frustum(this.nearFrustum(mouse, 7), (i) => {
+      const n = this.nodeList[i];
       const sp = this.toScreen(n.p);
       if (sp && sp.distanceTo(mouse) < 7 && sp.distanceTo(mouse) < bestD) {
         bestD = sp.distanceTo(mouse) - 2;
-        best = { kind: 'node', id: n.id };
+        near = { kind: 'node', id: n.id };
       }
-    }
+    });
     if (this.wireGroup.visible && this.project) {
-      for (const m of Object.values(this.project.members)) {
-        const a = this.toScreen(this.project.nodes[m.start].p);
-        const b = this.toScreen(this.project.nodes[m.end].p);
-        if (!a || !b) continue;
+      this.wireIndex?.frustum(this.nearFrustum(mouse, 8), (i) => {
+        const [pa, pb] = this.wireSegs[i];
+        const a = this.toScreen(pa);
+        const b = this.toScreen(pb);
+        if (!a || !b) return;
         const d = segDist2(mouse, a, b);
         if (d < bestD) {
           bestD = d;
-          best = { kind: 'member', id: m.id };
+          near = { kind: 'member', id: this.wireIds[i] };
         }
-      }
+      });
     }
-    return best;
+    return near;
   }
 
   private boxSelect(x0: number, y0: number, x1: number, y1: number, additive: boolean) {
@@ -898,23 +1266,25 @@ export class Viewer {
       const s = this.toScreen(p);
       return !!s && s.x >= minX && s.x <= maxX && s.y >= minY && s.y <= maxY;
     };
+    const w = r.width || 1;
+    const h = r.height || 1;
+    const f = FrustumTest.fromNdcRect(this.camera, (minX / w) * 2 - 1, -(maxY / h) * 2 + 1, (maxX / w) * 2 - 1, -(minY / h) * 2 + 1);
     const sel: Selection = { members: [], nodes: [], connections: [] };
-    for (const m of Object.values(this.project.members)) {
-      const a = this.project.nodes[m.start].p;
-      const b = this.project.nodes[m.end].p;
+    this.wireIndex?.frustum(f, (i) => {
+      const [a, b] = this.wireSegs[i];
       const ok = crossing ? inside(a) || inside(b) || inside(lerp(a, b, 0.5)) : inside(a) && inside(b);
-      if (ok) sel.members.push(m.id);
-    }
+      if (ok) sel.members.push(this.wireIds[i]);
+    });
     if (this.display.solids) {
       sel.plates = Object.values(this.project.plates ?? {})
         .filter((pl) => inside(pl.origin))
         .map((pl) => pl.id);
     }
     if (this.display.connections && this.display.solids) {
-      for (const c of Object.values(this.project.connections)) {
-        const n = this.project.nodes[c.node];
-        if (n && inside(n.p)) sel.connections.push(c.id);
-      }
+      this.nodeIndex?.frustum(f, (i) => {
+        const n = this.nodeList[i];
+        if (inside(n.p)) for (const c of this.nodeConns.get(n.id) ?? []) sel.connections.push(c);
+      });
     }
     this.cb.onBoxSelect(sel, additive);
   }
@@ -925,6 +1295,20 @@ export class Viewer {
     this.camera.getWorldDirection(d);
     return { x: d.x, y: d.y, z: d.z };
   }
+}
+
+/** Ray distance to a bolt's bounding box (axis along the bolt), or null. */
+function rayCylinderBox(ray: THREE.Ray, b: BoltItem): number | null {
+  const x = v(b.dir);
+  const helper = Math.abs(x.z) < 0.9 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(1, 0, 0);
+  const y = new THREE.Vector3().crossVectors(helper, x).normalize();
+  const z = new THREE.Vector3().crossVectors(x, y);
+  const m = new THREE.Matrix4().makeBasis(x, y, z).setPosition(v(b.start));
+  const inv = m.clone().invert();
+  const local = ray.clone().applyMatrix4(inv);
+  const r = b.d / 2;
+  const hit = local.intersectBox(new THREE.Box3(new THREE.Vector3(0, -r, -r), new THREE.Vector3(b.length, r, r)), new THREE.Vector3());
+  return hit ? hit.applyMatrix4(m).distanceTo(ray.origin) : null;
 }
 
 function segDist2(p: THREE.Vector2, a: THREE.Vector2, b: THREE.Vector2): number {

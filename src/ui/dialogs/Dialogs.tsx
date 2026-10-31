@@ -11,6 +11,7 @@ import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
 import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialogs';
 import { SurveyDialog } from './MovementDialogs';
 import { ModellingDialogs } from './ModellingDialogs';
+import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from './ManagementDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -36,6 +37,14 @@ export function Dialogs() {
       return <CustomConnectionDialog onClose={close} />;
     case 'survey':
       return <SurveyDialog onClose={close} />;
+    case 'phases':
+      return <PhasesDialog onClose={close} />;
+    case 'dwgInfo':
+      return <DwgInfoDialog onClose={close} />;
+    case 'ifcSteel':
+      return <IfcSteelDialog onClose={close} />;
+    case 'panelLayout':
+      return <PanelLayoutDialog onClose={close} />;
     default:
       return <ModellingDialogs dialog={dialog} onClose={close} />;
   }

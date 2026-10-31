@@ -10,6 +10,8 @@ import { Segmented } from './widgets';
 import type { Vec3 } from '../core/model/types';
 import { WorkPlaneControl } from './dialogs/ModellingDialogs';
 import { disposeObject } from '../viewer/meshes';
+import { filterSelection } from '../core/management/grouping';
+import { ColorByControl, SelectFilterChip } from './dialogs/ManagementDialogs';
 
 let viewerInstance: Viewer | null = null;
 export const getViewer = () => viewerInstance;
@@ -41,9 +43,14 @@ export function ViewportPanel() {
           return;
         }
         const key = hit.kind === 'member' ? 'members' : hit.kind === 'connection' ? 'connections' : hit.kind === 'plate' ? 'plates' : 'nodes';
-        s.select({ [key]: [hit.id] }, additive);
+        const picked = filterSelection(s.project, { members: [], nodes: [], connections: [], [key]: [hit.id] }, s.selectFilter);
+        if (!picked.members.length && !picked.connections.length && !picked.nodes.length && !picked.plates?.length) return;
+        s.select(picked, additive);
       },
-      onBoxSelect: (sel, additive) => useStore.getState().select(sel, additive),
+      onBoxSelect: (sel, additive) => {
+        const s = useStore.getState();
+        s.select(filterSelection(s.project, sel, s.selectFilter), additive);
+      },
       onPoints: (t, pts) => handleToolPoints(t, pts),
       onCursor: (p) => useStore.setState({ cursor: p }),
       onPrompt: (text) => useStore.setState({ prompt: text }),
@@ -112,6 +119,8 @@ export function ViewportPanel() {
       <div className="viewport-overlay top-right">
         <WorkPlaneControl />
         <DisplayToggles />
+        <ColorByControl />
+        <SelectFilterChip />
       </div>
       <div className="viewport-overlay bottom-left nav-hint">Right-drag orbit · Middle-drag or Shift+right-drag pan · Wheel zoom</div>
     </div>
@@ -121,7 +130,7 @@ export function ViewportPanel() {
 function DisplayToggles() {
   const display = useStore((s) => s.display);
   const set = useStore((s) => s.set);
-  const t = (k: keyof typeof display, label: string) => (
+  const t = (k: Exclude<keyof typeof display, 'colorBy'>, label: string) => (
     <button className={`chip ${display[k] ? 'on' : ''}`} onClick={() => set({ display: { ...display, [k]: !display[k] } })}>
       {label}
     </button>

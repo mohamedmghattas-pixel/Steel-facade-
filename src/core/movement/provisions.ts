@@ -104,7 +104,29 @@ interface ConnIndex {
 }
 const indexCache = new WeakMap<Record<Id, Connection>, ConnIndex>();
 
+/**
+ * Validating the cached index walks every connection, so it is done once per
+ * derivation pass (and per synchronous task otherwise), not once per bracket —
+ * per-bracket validation made large facades quadratic.
+ */
+let passIndex: { conns: Record<Id, Connection>; idx: ConnIndex } | null = null;
+
+/** Start of a derivation pass: the next lookup re-validates the index. */
+export function beginConnIndexPass() {
+  passIndex = null;
+}
+
 function connIndex(p: Project): ConnIndex {
+  if (passIndex && passIndex.conns === p.connections) return passIndex.idx;
+  const idx = validatedConnIndex(p);
+  passIndex = { conns: p.connections, idx };
+  queueMicrotask(() => {
+    passIndex = null;
+  });
+  return idx;
+}
+
+function validatedConnIndex(p: Project): ConnIndex {
   const conns = p.connections;
   const keys = Object.keys(conns);
   const hit = indexCache.get(conns);

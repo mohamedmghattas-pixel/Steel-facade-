@@ -4,6 +4,7 @@ import { createProject } from '../core/model/ops';
 import { deriveModel, type DerivedModel } from '../core/derive/model';
 import { loadAutosave, migrateProject } from './storage';
 import { registerProfiles, unregisterProfiles, type ProfileDef } from '../core/library/profiles';
+import type { ColorBy, GroupFilter } from '../core/management/grouping';
 
 /** Keep the global profile catalogue in step with the project's custom profiles. */
 let registered = new Set<string>();
@@ -22,7 +23,9 @@ syncCustomProfiles(initialProject);
 export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure' | 'plate' | 'arc' | 'plane3';
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
-export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'fabrication' | 'survey';
+export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'fabrication' | 'survey' | 'clashes';
+/** Dialogs of the model-management area (ui/dialogs/ManagementDialogs.tsx). */
+export type ManagementDialogName = 'phases' | 'dwgInfo' | 'ifcSteel' | 'panelLayout';
 export type DialogName =
   | null
   | 'facadeGrid'
@@ -38,7 +41,8 @@ export type DialogName =
   | 'stiffeners'
   | 'bentPlate'
   | 'arcMembers'
-  | 'curvedFacade';
+  | 'curvedFacade'
+  | ManagementDialogName;
 
 export interface Selection {
   members: Id[];
@@ -71,7 +75,9 @@ interface State {
   snap: SnapSettings;
   activeProfile: string | null;
   activeRole: MemberRole;
-  display: { solids: boolean; wire: boolean; connections: boolean; references: boolean; underlays: boolean; labels: boolean };
+  display: { solids: boolean; wire: boolean; connections: boolean; references: boolean; underlays: boolean; labels: boolean; colorBy: ColorBy };
+  /** Only members (and their connections) in this phase / zone / batch can be picked or box-selected. */
+  selectFilter: GroupFilter | null;
   viewRequest: { name: ViewName; n: number };
   zoomRequest: number;
   sidePanel: SidePanel;
@@ -118,7 +124,8 @@ export const useStore = create<State>((set, get) => ({
   snap: { endpoint: true, midpoint: true, intersection: true, grid: true, reference: true, ortho: false },
   activeProfile: 'SHS 100x100x5',
   activeRole: 'mullion',
-  display: { solids: true, wire: true, connections: true, references: true, underlays: true, labels: false },
+  display: { solids: true, wire: true, connections: true, references: true, underlays: true, labels: false, colorBy: 'role' },
+  selectFilter: null,
   viewRequest: { name: '3d', n: 0 },
   zoomRequest: 0,
   sidePanel: 'properties',

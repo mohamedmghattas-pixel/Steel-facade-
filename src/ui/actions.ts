@@ -34,6 +34,7 @@ import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
 import { parseProfileCsv, profileDefsToCsv, type ProfileDef } from '../core/library/profiles';
+import { importDrawingFile } from './managementActions';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -220,10 +221,9 @@ async function calibrate(a: Vec3, b: Vec3) {
 // ---------------------------------------------------------------------------
 // Imports
 
+/** Accepts .dxf and .dwg: DWG files get conversion guidance (or a registered converter) instead of a parse error. */
 export async function importDxf() {
-  const f = await pickFile('.dxf');
-  if (!f) return;
-  st().set({ pendingDxf: { name: f.name, text: await f.text() }, dialog: 'dxfImport' });
+  await importDrawingFile();
 }
 
 export async function importIfcReference() {

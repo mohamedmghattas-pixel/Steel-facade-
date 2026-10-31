@@ -12,6 +12,7 @@ import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
 import { FabricationView, PaintSummary, PlateCncButtons, StockEditor } from './FabricationPanel';
 import { SurveyView } from './dialogs/MovementDialogs';
+import { ClashesView } from './dialogs/ManagementDialogs';
 
 export function OutputsPanel() {
   const outputs = useStore((s) => s.outputs);
@@ -23,6 +24,7 @@ export function OutputsPanel() {
     { value: 'checks', label: 'Checks' },
     { value: 'fabrication', label: 'Fabrication' },
     { value: 'survey', label: 'Survey' },
+    { value: 'clashes', label: 'Clashes' },
   ];
   return (
     <section className="outputs" aria-label="Outputs">
@@ -46,6 +48,7 @@ export function OutputsPanel() {
         {outputs.tab === 'checks' && <ChecksView />}
         {outputs.tab === 'fabrication' && <FabricationView />}
         {outputs.tab === 'survey' && <SurveyView />}
+        {outputs.tab === 'clashes' && <ClashesView />}
       </div>
     </section>
   );

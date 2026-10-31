@@ -53,6 +53,10 @@ export interface Material {
   aliases?: string[];
 }
 
+// Thermal expansion α (used for movement joints, see core/movement): carbon steel
+// 12e-6 /K per EN 1993-1-1 3.2.6 (T ≤ 100 °C); austenitic stainless 16e-6 /K and
+// duplex 13e-6 /K per EN 1993-1-4 / EN 10088-1 (20–100 °C); aluminium 23e-6 /K per
+// EN 1999-1-1 (material constants, 3.2.5).
 const CARBON = { density: 7850, E: 210000, G: 81000, nu: 0.3, alpha: 12e-6, category: 'Steel' as const };
 // AISC: E = 29 000 ksi, G = 11 200 ksi, α = 6.5e-6 /°F
 const US_CARBON = { density: 7850, E: 199948, G: 77221, nu: 0.3, alpha: 11.7e-6, category: 'Steel' as const };
@@ -271,6 +275,11 @@ export function getMaterial(name: string): Material {
 export function findMaterial(name: string | null | undefined): Material | undefined {
   if (!name) return undefined;
   return byName.get(name) ?? byKey.get(key(name));
+}
+
+/** Linear thermal expansion coefficient α of a material, 1/K (S355 fallback: 12e-6). */
+export function thermalExpansion(material: string): number {
+  return getMaterial(material).alpha;
 }
 
 /** Scale a carbon-steel mass to the material's density. */

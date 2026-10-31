@@ -254,3 +254,6 @@ export function sheetsToXlsx(sheets: XlsxSheet[]): Uint8Array {
   ];
   return zip(files);
 }
+
+/** Alias kept for callers written against the movement/survey reports. */
+export const xlsxWorkbook = (sheets: XlsxSheet[]): Uint8Array => sheetsToXlsx(sheets);

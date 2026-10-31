@@ -28,6 +28,7 @@ import {
 } from './tables';
 import { AISC, EC3, EN1090, ruleId } from './rules';
 import { codeForProject, isImperialProject } from './project';
+import { movementChecks } from '../movement/checks';
 
 type Raw = Omit<CheckResult, 'id'>;
 
@@ -101,6 +102,11 @@ export function runCodeChecks(p: Project, dm: DerivedModel, code: DesignCode = c
   }
   weldChecks(ctx);
   coatingChecks(ctx);
+  try {
+    ctx.raw.push(...movementChecks(p, dm));
+  } catch (e) {
+    ctx.raw.push({ rule: 'move.slot', severity: 'info', message: `Could not run the movement checks: ${(e as Error).message}`, clause: '—' });
+  }
   if (code === 'AISC360' && ctx.hasSlots) {
     ctx.raw.push({
       rule: 'aisc.thermalHoles',

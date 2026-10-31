@@ -14,6 +14,7 @@ import { dist } from '../core/model/geometry';
 import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
 import { askConfirm } from './askState';
+import { ConnectionMovementInfo, MovementSettingsSection } from './dialogs/MovementDialogs';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -242,6 +243,7 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
           {ps.kind === 'bool' && <input type="checkbox" checked={!!v[ps.key]} onChange={(e) => setParam(ps.key, e.target.checked)} />}
         </Field>
       ))}
+      <ConnectionMovementInfo id={c.id} />
       <div className="btn-row">
         <button className="link-btn" onClick={() => apply('Reset connection', (p) => peers.forEach((x) => void (p.connections[x.id].params = c.type === 'custom' ? { template: c.params.template } : {})))}>
           Reset to defaults
@@ -375,6 +377,7 @@ function ProjectProps() {
       >
         + Add rule
       </button>
+      <MovementSettingsSection />
       <h4>Cut optimisation</h4>
       <Field label="Stock bar lengths" hint="mm, comma separated">
         <TextInput

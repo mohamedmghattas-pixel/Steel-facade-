@@ -334,6 +334,20 @@ Sources: [Portland Bolt: A490](https://www.portlandbolt.com/technical/faqs/can-a
 - A hole in an RHS wall must stay clear of the corner radius:
   |offset| + d0/2 ≤ (wall width)/2 − outer radius.
 
+### Movement, tolerances and survey (`move.*`)
+
+Defined in `src/core/movement/rules.ts`, checked by `movementChecks` (called from
+`runCodeChecks`); method, formulas and limits in [MOVEMENT.md](MOVEMENT.md).
+
+- `move.thermal` (**unconfirmed**: values as known from the code texts, not re-checked online): ΔL = α·ΔT·L with α = 12×10⁻⁶ /K for carbon steel
+  (EN 1993-1-1 3.2.6), 16×10⁻⁶ /K austenitic stainless (EN 1993-1-4), 23×10⁻⁶ /K aluminium
+  (EN 1999-1-1). Info line with the range and the largest ΔL.
+- `move.slot`, `move.packing`, `move.gap`, `move.drift`, `move.restraint`, `move.thermalEnd`
+  (**guidance**, typical practice): a slot, packing range or stack-joint gap smaller than the
+  tolerance stack plus movement it has to absorb. Warnings.
+- `move.survey` (**guidance**): a surveyed slab-edge deviation that the bracket's remaining
+  adjustability cannot absorb. Error (the bracket cannot be installed as detailed).
+
 ---
 
 ## How `runCodeChecks` applies the rules

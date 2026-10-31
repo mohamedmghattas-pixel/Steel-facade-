@@ -1,6 +1,9 @@
 import type { Project } from '../core/model/types';
 import { defaultDrawingSet, defaultSettings } from '../core/model/ops';
 
+import { zip } from '../core/io/zip';
+import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
+
 const KEY = 'facadesteel.autosave.v1';
 
 export function loadAutosave(): Project | null {
@@ -92,6 +95,14 @@ export async function deleteBlob(key: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export function download(name: string, data: string | Uint8Array | Blob, mime = 'application/octet-stream') {
+  if (inClaudeHost()) {
+    void hostDownload(name, data, mime);
+    return;
+  }
+  browserDownload(name, data, mime);
+}
+
+function browserDownload(name: string, data: string | Uint8Array | Blob, mime: string) {
   const blob = data instanceof Blob ? data : new Blob([data as BlobPart], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -101,6 +112,36 @@ export function download(name: string, data: string | Uint8Array | Blob, mime = 
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+/**
+ * Inside a claude.ai artifact the frame cannot start downloads; the host's
+ * `downloads` capability saves the file after the viewer confirms. Formats the
+ * host does not accept (IFC, DXF, NC…) are delivered inside a .zip.
+ */
+async function hostDownload(name: string, data: string | Uint8Array | Blob, mime: string) {
+  const notify = async (text: string, kind: 'info' | 'error') => (await import('./store')).useStore.getState().notify(text, kind);
+  const host = await hostCapability<HostDownloads>('downloads');
+  if (!host) {
+    browserDownload(name, data, mime);
+    return;
+  }
+  let filename = name;
+  let payload: string | Blob | Uint8Array = data;
+  if (!HOST_SAVE_EXTENSIONS.has(extensionOf(name))) {
+    const bytes = data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data;
+    payload = zip([{ name, data: bytes }]);
+    filename = `${name}.zip`;
+  }
+  try {
+    const r = await host.save({ filename, data: payload });
+    if (r.status === 'saved' && filename !== name) void notify(`Saved ${filename} — unzip it to get ${name}.`, 'info');
+  } catch (e) {
+    const code = (e as { code?: string })?.code;
+    if (code === 'declined') return;
+    const why = code === 'rate_limited' ? 'another save is still waiting for your answer' : code === 'too_large' ? 'the file is too large for this view' : 'saving files is not available in this view';
+    void notify(`Could not save ${filename}: ${why}.`, 'error');
+  }
 }
 
 export function pickFile(accept: string): Promise<File | null> {

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '../state/store';
 import type { AssistantSession, Effort } from '../assistant/agent';
+import type { HostAssistantSession } from '../assistant/hostAgent';
+import { hostCapability, inClaudeHost, type HostSample } from '../platform/claudeHost';
 import { Icon } from './icons';
 import { Segmented } from './widgets';
 
@@ -37,7 +39,7 @@ const write = (k: string, v: string) => {
   }
 };
 
-let session: AssistantSession | null = null;
+let session: AssistantSession | HostAssistantSession | null = null;
 let sessionKey = '';
 let history: Item[] = [];
 
@@ -86,7 +88,9 @@ export function AssistantPanel() {
   const [items, setItems] = useState<Item[]>(history);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [showKey, setShowKey] = useState(!read(KEY_STORE));
+  // Inside claude.ai the page cannot call the API; it asks Claude through the host instead.
+  const [host, setHost] = useState<HostSample | null | undefined>(inClaudeHost() ? undefined : null);
+  const [showKey, setShowKey] = useState(!inClaudeHost() && !read(KEY_STORE));
   const [usage, setUsage] = useState({ input: 0, output: 0, cacheRead: 0 });
   const abort = useRef<AbortController | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -100,6 +104,16 @@ export function AssistantPanel() {
   useEffect(() => {
     if (focusReq) inputRef.current?.focus();
   }, [focusReq]);
+  useEffect(() => {
+    if (!inClaudeHost()) return;
+    let live = true;
+    void hostCapability<HostSample>('sample').then((s) => live && setHost(s));
+    return () => {
+      live = false;
+    };
+  }, []);
+  const hosted = inClaudeHost();
+  const ready = hosted ? !!host : !!apiKey;
 
   const push = (it: Item) => setItems((prev) => [...prev, it]);
   const patchLast = (fn: (it: Item) => Item | null) =>
@@ -113,7 +127,11 @@ export function AssistantPanel() {
   const send = async (text: string) => {
     const t = text.trim();
     if (!t || busy) return;
-    if (!apiKey) {
+    if (hosted && !host) {
+      push({ kind: 'notice', text: host === undefined ? 'Connecting to Claude… try again in a moment.' : 'Claude is not available to this page in this view.', error: host === null });
+      return;
+    }
+    if (!hosted && !apiKey) {
       setShowKey(true);
       return;
     }
@@ -123,10 +141,15 @@ export function AssistantPanel() {
     const ctrl = new AbortController();
     abort.current = ctrl;
     try {
-      const { AssistantSession } = await import('../assistant/agent');
-      const fp = `${apiKey}|${effort}`;
+      const fp = hosted ? `host|${effort}` : `${apiKey}|${effort}`;
       if (!session || sessionKey !== fp) {
-        session = new AssistantSession(apiKey, undefined, effort);
+        if (hosted) {
+          const { HostAssistantSession } = await import('../assistant/hostAgent');
+          session = new HostAssistantSession(host!, effort);
+        } else {
+          const { AssistantSession } = await import('../assistant/agent');
+          session = new AssistantSession(apiKey, undefined, effort);
+        }
         sessionKey = fp;
       }
       let streaming = false;
@@ -155,8 +178,8 @@ export function AssistantPanel() {
         ctrl.signal,
       );
     } catch (e) {
-      const { describeError } = await import('../assistant/agent');
-      push({ kind: 'notice', text: describeError(e), error: true });
+      const text = hosted ? (await import('../assistant/hostAgent')).describeHostError(e) : (await import('../assistant/agent')).describeError(e);
+      push({ kind: 'notice', text, error: text !== 'Stopped.' });
     } finally {
       setBusy(false);
       abort.current = null;
@@ -186,9 +209,11 @@ export function AssistantPanel() {
           }}
         />
         <div className="grow" />
-        <button className="icon-btn" title="API key" onClick={() => setShowKey(!showKey)}>
-          <Icon name="bolt" size={16} />
-        </button>
+        {!hosted && (
+          <button className="icon-btn" title="API key" onClick={() => setShowKey(!showKey)}>
+            <Icon name="bolt" size={16} />
+          </button>
+        )}
         <button className="icon-btn" title="New conversation" onClick={clear} disabled={busy}>
           <Icon name="plus" size={16} />
         </button>
@@ -243,6 +268,13 @@ export function AssistantPanel() {
             <p>
               Tell FacadeSteel what to do — it edits the model, connections, settings and drawings for you. Every change can be undone with Ctrl+Z.
             </p>
+            {hosted && (
+              <p className="muted">
+                {host === null
+                  ? 'Claude is not available to this page in this view.'
+                  : 'Running inside claude.ai: the assistant uses your Claude account — no API key needed. Claude asks once for permission.'}
+              </p>
+            )}
             {SUGGESTIONS.map((s) => (
               <button key={s} className="suggestion" onClick={() => void send(s)} disabled={busy}>
                 {s}
@@ -278,7 +310,7 @@ export function AssistantPanel() {
           ref={inputRef}
           value={input}
           rows={3}
-          placeholder={apiKey ? 'Ask or instruct… (Enter to send, Shift+Enter for a new line)' : 'Add your Anthropic API key to start'}
+          placeholder={ready ? 'Ask or instruct… (Enter to send, Shift+Enter for a new line)' : hosted ? 'Connecting to Claude…' : 'Add your Anthropic API key to start'}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation();

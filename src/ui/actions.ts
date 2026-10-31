@@ -21,6 +21,7 @@ import { dist, sub, worldToPlane } from '../core/model/geometry';
 import { autoConnect, CONNECTIONS } from '../core/connections/registry';
 import type { ConnectionType } from '../core/model/types';
 import { derived, useStore, type Tool } from '../state/store';
+import { askConfirm, askText } from './askState';
 import { download, migrateProject, pickFile, putBlob, deleteBlob, safeName } from '../state/storage';
 import { exportIfc } from '../core/io/ifcExport';
 import { exportDstvAll } from '../core/fabrication/dstv';
@@ -39,8 +40,8 @@ const fileBase = () => safeName(st().project.info.name);
 // ---------------------------------------------------------------------------
 // Project files
 
-export function newProject() {
-  if (Object.keys(st().project.members).length && !confirm('Start a new project? Unsaved changes are kept only in the undo history of this session.')) return;
+export async function newProject() {
+  if (Object.keys(st().project.members).length && !(await askConfirm('Start a new project? Unsaved changes are kept only in the undo history of this session.', { title: 'New project', ok: 'Start new project' }))) return;
   st().replaceProject(createProject());
   st().set({ viewRequest: { name: '3d', n: Date.now() } });
 }
@@ -179,21 +180,22 @@ export function handleToolPoints(tool: Tool, pts: Vec3[]) {
     const d = sub(b, a);
     notify(`Distance ${dist(a, b).toFixed(1)} mm  (dx ${d.x.toFixed(1)}, dy ${d.y.toFixed(1)}, dz ${d.z.toFixed(1)})`);
   } else if (tool === 'calibrate') {
-    calibrate(a, b);
+    void calibrate(a, b);
   }
 }
 
-function calibrate(a: Vec3, b: Vec3) {
+async function calibrate(a: Vec3, b: Vec3) {
   const s = st();
   const u = s.project.underlays.find((x) => x.id === s.calibrateTarget);
   if (!u) return notify('Choose an underlay to calibrate in the Model panel.', 'error');
   const pa = worldToPlane(u.plane, a);
   const pb = worldToPlane(u.plane, b);
   const measured = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-  const real = Number(prompt(`Measured ${measured.toFixed(1)} mm on the underlay. Enter the real distance between the two points (mm):`, measured.toFixed(0)));
-  if (!Number.isFinite(real) || real <= 0) return;
+  const answer = await askText(`Measured ${measured.toFixed(1)} mm on the underlay. Enter the real distance between the two points (mm):`, measured.toFixed(0), { title: 'Calibrate underlay' });
+  const real = Number(answer);
+  if (answer === null || !Number.isFinite(real) || real <= 0) return;
   const k = real / measured;
-  const where = prompt('Optional: work-plane coordinates of the FIRST point after scaling, as "u,v" (leave empty to keep it in place):', '');
+  const where = await askText('Optional: work-plane coordinates of the FIRST point after scaling, as "u,v" (leave empty to keep it in place):', '', { title: 'Calibrate underlay' });
   s.apply('Calibrate underlay', (p) => {
     const t = p.underlays.find((x) => x.id === u.id)!;
     // Scale about the first point so it stays put.

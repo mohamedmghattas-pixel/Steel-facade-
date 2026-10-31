@@ -8,6 +8,7 @@ import { StatusBar } from './StatusBar';
 import { SidePanel } from './SidePanel';
 import { OutputsPanel } from './OutputsPanel';
 import { Dialogs } from './dialogs/Dialogs';
+import { AskDialog } from './ask';
 import { deleteSelection, setTool } from './actions';
 
 export function App() {
@@ -34,6 +35,7 @@ export function App() {
       <SidePanel />
       <StatusBar />
       <Dialogs />
+      <AskDialog />
       {toast && <Toast key={toast.n} text={toast.text} kind={toast.kind} />}
     </div>
   );

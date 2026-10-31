@@ -5,8 +5,28 @@ A browser-based steel detailing tool for **facade secondary steel**: the bracket
 Everything runs in the browser. There is no server: projects autosave to the browser and can be saved and opened as `.json` files.
 
 **Talk to it.** The **Assistant** tab (or press `/`) lets you operate the whole application in plain language. For example: "create a 4-bay, 2-storey facade with SHS 100 mullions", "put end plates on the selected rails", "check edge distances and fix them", "issue all drawings for approval".
-- It runs on Claude (`claude-opus-5-5`) with your own Anthropic API key, which is stored only in your browser.
+- In a normal browser tab it runs on Claude (`claude-opus-5-5`) with your own Anthropic API key, which is stored only in your browser.
+- Opened as a claude.ai artifact, it uses the viewer's own Claude account instead, with no key needed.
 - Every change it makes can be undone like a normal edit.
+
+## Run it
+
+**On your own computer (all features).** Install [Node.js](https://nodejs.org) 22 or newer, then:
+
+```bash
+git clone https://github.com/mohamedmghattas-pixel/Steel-facade-.git
+cd Steel-facade-
+npm install
+npm run dev        # then open http://localhost:5173
+```
+
+You can also download the repository as a ZIP (GitHub → Code → Download ZIP), unzip it, and run the last two commands in that folder.
+
+**As a claude.ai artifact.** `npm run build` produces `dist/`, which can be published as a multi-file artifact with the `downloads` and `sample` capabilities:
+- Exports are saved through the viewer's confirmation. Formats claude.ai does not accept (IFC, DXF) arrive inside a `.zip`.
+- The assistant runs on the viewer's Claude account.
+
+**GitHub Pages.** See *Development* below.
 
 ## Workflow
 
@@ -63,7 +83,9 @@ npm test           # unit tests (Vitest)
 npm run build      # type-check + production build into dist/
 ```
 
-`.github/workflows/deploy.yml` runs the tests and build on every push and pull request. Pushes to `main` are also published to GitHub Pages once Pages is enabled with the source set to *GitHub Actions*.
+`.github/workflows/deploy.yml` runs the tests and build on every push and pull request. Pushes to `main` are also published to GitHub Pages once two settings are in place:
+- Pages is enabled with the source set to *GitHub Actions*.
+- The `github-pages` environment (Settings → Environments) allows deployments from `main`.
 
 ## Architecture
 

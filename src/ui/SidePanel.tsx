@@ -13,6 +13,7 @@ import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
 import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
+import { askConfirm } from './askState';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -540,7 +541,7 @@ function LibraryPanel() {
         <button
           className="link-btn"
           disabled={!customCount}
-          onClick={() => confirm('Remove all custom profiles from this project?') && useStore.getState().apply('Remove custom profiles', (p) => void (p.library.profiles = []))}
+          onClick={async () => (await askConfirm('Remove all custom profiles from this project?', { title: 'Custom profiles', ok: 'Remove' })) && useStore.getState().apply('Remove custom profiles', (p) => void (p.library.profiles = []))}
         >
           Remove all
         </button>

@@ -20,7 +20,7 @@ import {
 } from '../core/model/ops';
 import { handleModellingPoints } from './dialogs/modellingActions';
 import { dist, sub, worldToPlane } from '../core/model/geometry';
-import { autoConnect, CONNECTIONS } from '../core/connections/registry';
+import { APPLY_END, applyConnection, autoConnect, CONNECTIONS } from '../core/connections/registry';
 import type { ConnectionType } from '../core/model/types';
 import { derived, useStore, type Tool } from '../state/store';
 import { askConfirm, askText } from './askState';
@@ -132,6 +132,16 @@ export function addConnectionFromSelection(type: ConnectionType) {
     if (!ms.length) return notify(`${def.label}: select the supported member (and optionally a node).`, 'error');
     const m = ms[0];
     secondary = [m.id];
+    if (!node && APPLY_END[type]) {
+      // Types with their own placement rule (upper end, free ends …) go where Apply would put them.
+      let ids: string[] = [];
+      st().apply(`Add ${def.label}`, (p) => {
+        ids = applyConnection(p, [m.id], { type, params: {} });
+      });
+      if (!ids.length) return notify(`${def.label}: no suitable end on the selected member — pick a node as well.`, 'error');
+      st().select({ connections: ids });
+      return;
+    }
     if (!node) {
       const a = project.nodes[m.start].p;
       const b = project.nodes[m.end].p;

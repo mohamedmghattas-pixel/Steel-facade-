@@ -8,5 +8,6 @@ import { movementModule } from './movement';
 import { modellingModule } from './modelling';
 import { drawingsModule } from './drawings';
 import { managementModule } from './management';
+import { connectionsModule } from './connections';
 
-export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule];
+export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule];

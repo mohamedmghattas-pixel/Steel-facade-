@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../../state/store';
 import { Field, Modal, NumberInput, Segmented, Select, TextInput } from '../widgets';
-import { CONNECTION_LIST, CONNECTIONS, applyConnection } from '../../core/connections/registry';
+import { CONNECTIONS, applyConnection } from '../../core/connections/registry';
+import { CATALOG } from '../../core/connections/catalog';
+import { ConnectionPreviewView, ParamEditor, TypeSelect, openConnectionLibrary, specsFor } from '../ConnectionLibrary';
 import { VAR_HELP, exampleTemplates } from '../../core/connections/custom';
 import { evalExpr } from '../../core/connections/expr';
 import { BOLT_SIZES } from '../../core/library/bolts';
 import { newId } from '../../core/model/ops';
 import type { ConnectionType, CustomPlate, CustomTemplate, ParamValue } from '../../core/model/types';
 
-/** Apply one connection type (with parameters / preset / template) to every relevant end of the selected members. */
+/** Apply one connection type (with parameters / preset / template) to every relevant end of the selected members, with a live preview. */
 export function ApplyConnectionDialog({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const sel = useStore((s) => s.selection.members);
@@ -19,15 +21,17 @@ export function ApplyConnectionDialog({ onClose }: { onClose: () => void }) {
   const [presetId, setPresetId] = useState('');
   const [replace, setReplace] = useState(false);
   const [params, setParams] = useState<Record<string, ParamValue>>({});
+  const [onSel, setOnSel] = useState(true);
   const def = CONNECTIONS[type];
   const tpl = project.library.templates.find((t) => t.id === template);
-  const specs = type === 'custom' ? (tpl?.params ?? []).map((p) => ({ key: p.key, label: p.label || p.key, kind: 'number' as const, default: p.default, unit: 'mm' })) : def.params;
   const presets = project.library.presets.filter((p) => p.type === type);
+  const preset = presets.find((p) => p.id === presetId);
+  const all: Record<string, ParamValue> = { ...(preset?.params ?? {}), ...params, ...(type === 'custom' ? { template } : {}) };
+  const specs = specsFor(type, all, project).filter((s) => s.kind !== 'template');
+  const cat = CATALOG[type];
 
   const run = () => {
     let ids: string[] = [];
-    const preset = presets.find((p) => p.id === presetId);
-    const all = { ...(preset?.params ?? {}), ...params, ...(type === 'custom' ? { template } : {}) };
     apply(`Apply ${def.label}`, (p) => {
       ids = applyConnection(p, sel, { type, params: all, replace });
     });
@@ -43,72 +47,73 @@ export function ApplyConnectionDialog({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span className="muted">{sel.length} member{sel.length === 1 ? '' : 's'} selected</span>
-          <button className="primary-btn" disabled={!sel.length || (type === 'custom' && !tpl)} onClick={run}>
-            Apply
-          </button>
+          <div className="btn-row">
+            <button
+              className="secondary-btn"
+              onClick={() => {
+                onClose();
+                openConnectionLibrary({ type, params: all });
+              }}
+            >
+              Browse library…
+            </button>
+            <button className="primary-btn" disabled={!sel.length || (type === 'custom' && !tpl)} onClick={run}>
+              Apply
+            </button>
+          </div>
         </>
       }
     >
       <p className="muted">
-        Joints go on every end where a selected member meets another member; base plates go on the lower end; slab brackets follow the mullion rules; splice plates go
-        between collinear members.
+        Joints go on every end where a selected member meets another member; base plates go on the lower end; slab and facade brackets follow the mullion rules;
+        splices go between collinear members; end caps and wall fixings on free ends.
       </p>
-      <div className="row2">
-        <Field label="Connection type">
-          <Select<ConnectionType>
-            value={type}
-            options={CONNECTION_LIST.map((c) => ({ value: c.type, label: c.label }))}
-            onChange={(v) => {
-              setType(v);
-              setParams({});
-              setPresetId('');
-            }}
-          />
-        </Field>
-        {type === 'custom' ? (
-          <Field label="Template">
-            <Select
-              value={template}
-              options={project.library.templates.map((t) => ({ value: t.id, label: t.name }))}
-              onChange={(v) => {
-                setTemplate(v);
-                setParams({});
-              }}
-            />
-          </Field>
-        ) : (
-          <Field label="Preset">
-            <Select value={presetId} options={[{ value: '', label: '— defaults —' }, ...presets.map((p) => ({ value: p.id, label: p.name }))]} onChange={setPresetId} />
-          </Field>
-        )}
+      <div className="ac-split">
+        <div>
+          <div className="row2">
+            <Field label="Connection type">
+              <TypeSelect
+                value={type}
+                onChange={(v) => {
+                  setType(v);
+                  setParams({});
+                  setPresetId('');
+                }}
+              />
+            </Field>
+            {type === 'custom' ? (
+              <Field label="Template">
+                <Select
+                  value={template}
+                  options={project.library.templates.map((t) => ({ value: t.id, label: t.name }))}
+                  onChange={(v) => {
+                    setTemplate(v);
+                    setParams({});
+                  }}
+                />
+              </Field>
+            ) : (
+              <Field label="Preset">
+                <Select value={presetId} options={[{ value: '', label: '— defaults —' }, ...presets.map((p) => ({ value: p.id, label: p.name }))]} onChange={setPresetId} />
+              </Field>
+            )}
+          </div>
+          <p className="muted">{cat.summary}</p>
+          {type === 'custom' && !project.library.templates.length && <p className="warning">No custom templates yet — create one in Joints → Custom connections.</p>}
+          <ParamEditor specs={specs} values={all} keyParams={cat.keyParams} onChange={(k, v) => setParams({ ...params, [k]: v })} />
+          <label className="check">
+            <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> Replace connections already on those member ends
+          </label>
+        </div>
+        <div>
+          {sel.length > 0 && (
+            <label className="check">
+              <input type="checkbox" checked={onSel} onChange={(e) => setOnSel(e.target.checked)} /> Preview on my selection
+            </label>
+          )}
+          <ConnectionPreviewView spec={{ type, params: all, on: onSel && sel.length ? 'members' : 'typical', memberIds: sel }} height={300} />
+        </div>
       </div>
-      {type === 'custom' && !project.library.templates.length && <p className="warning">No custom templates yet — create one in Joints → Custom connections.</p>}
-      <div className="prefix-grid">
-        {specs
-          .filter((s) => s.kind === 'number')
-          .map((s) => (
-            <Field key={s.key} label={s.label}>
-              <NumberInput value={(params[s.key] as number) ?? (s.default as number)} unit={s.unit} onChange={(v) => setParams({ ...params, [s.key]: v })} />
-            </Field>
-          ))}
-        {specs
-          .filter((s) => s.kind === 'bolt')
-          .map((s) => (
-            <Field key={s.key} label={s.label}>
-              <Select value={String(params[s.key] ?? s.default)} options={BOLT_SIZES.map((b) => b.name)} onChange={(v) => setParams({ ...params, [s.key]: v })} />
-            </Field>
-          ))}
-        {specs
-          .filter((s) => s.kind === 'select')
-          .map((s) => (
-            <Field key={s.key} label={s.label}>
-              <Select value={String(params[s.key] ?? s.default)} options={'options' in s ? (s.options ?? []) : []} onChange={(v) => setParams({ ...params, [s.key]: v })} />
-            </Field>
-          ))}
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} /> Replace connections already on those member ends
-      </label>
     </Modal>
   );
 }
@@ -173,6 +178,7 @@ export function CustomConnectionDialog({ onClose }: { onClose: () => void }) {
   const [draft, setDraft] = useState<CustomTemplate>(() => structuredClone(project.library.templates[0] ?? blankTemplate()));
   const errors = useMemo(() => formulaErrors(draft), [draft]);
   const saved = project.library.templates.some((t) => t.id === draft.id);
+  const [previewSel, setPreviewSel] = useState(true);
 
   const save = () => {
     apply('Save custom connection', (p) => {
@@ -263,6 +269,20 @@ export function CustomConnectionDialog({ onClose }: { onClose: () => void }) {
       <Field label="Description">
         <TextInput value={draft.description} onChange={(v) => setDraft({ ...draft, description: v })} />
       </Field>
+      <div className="sp-preview">
+        <div className="row-inline">
+          <h4 style={{ margin: 0 }}>Live preview</h4>
+          {sel.length > 0 && (
+            <label className="check" style={{ margin: 0 }}>
+              <input type="checkbox" checked={previewSel} onChange={(e) => setPreviewSel(e.target.checked)} /> on my selection
+            </label>
+          )}
+        </div>
+        <ConnectionPreviewView
+          spec={{ type: 'custom', params: { template: draft.id }, on: previewSel && sel.length ? 'members' : 'typical', memberIds: sel, templates: [draft] }}
+          height={260}
+        />
+      </div>
       <p className="muted">{VAR_HELP} Frame: u along the secondary away from the main face (or node), v across, w up.</p>
       <h4>Parameters</h4>
       {draft.params.map((prm, i) => (

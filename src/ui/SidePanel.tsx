@@ -13,6 +13,7 @@ import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
 import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
+import { ConnectionPreviewView, openConnectionLibrary } from './ConnectionLibrary';
 import { askConfirm } from './askState';
 import { ConnectionMovementInfo, MovementSettingsSection } from './dialogs/MovementDialogs';
 import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
@@ -195,6 +196,7 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
   const set = useStore((s) => s.set);
   const c = project.connections[id];
   const [presetName, setPresetName] = useState('');
+  const [showPreview, setShowPreview] = useState(true);
   if (!c) return null;
   const def = CONNECTIONS[c.type];
   const v = resolveParams(c, project);
@@ -232,6 +234,19 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
         </span>
         <span>{out?.bolts.reduce((s, b) => s + b.positions.length, 0) ?? 0} bolts/anchors</span>
         <span>{kg(parts.reduce((s, pt) => s + pt.mass, 0))}</span>
+      </div>
+      {showPreview && (
+        <div className="sp-preview">
+          <ConnectionPreviewView spec={{ type: c.type, params: c.params, on: 'connection', connectionId: c.id }} height={220} />
+        </div>
+      )}
+      <div className="btn-row">
+        <button className="link-btn" onClick={() => setShowPreview(!showPreview)}>
+          {showPreview ? 'Hide 3D preview' : 'Show 3D preview'}
+        </button>
+        <button className="link-btn" onClick={() => openConnectionLibrary({ type: c.type, params: { ...c.params } })} title="Edit with the live preview in the connection library, then update this connection">
+          Open in library…
+        </button>
       </div>
       {specs.map((ps) => (
         <Field key={ps.key} label={ps.label}>

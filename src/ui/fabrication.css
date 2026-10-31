@@ -1,0 +1,110 @@
+/* Fabrication tab, stock editor (cut optimisation) */
+.fab {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 10px;
+  align-content: start;
+}
+.fab-card {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  font-size: 12px;
+  min-width: 0;
+}
+.fab-card h4 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+.fab-card p {
+  margin: 4px 0 6px;
+}
+.fab-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: 6px 0;
+}
+.fab-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+}
+.fab-inline .num-input {
+  width: 92px;
+}
+.fab-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+}
+.fab-card select {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+}
+.fab-table td,
+.fab-table th {
+  padding: 3px 6px;
+}
+.fab-table input[type='text'] {
+  width: 100%;
+  min-width: 70px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+}
+.fab-table .num-input {
+  width: 80px;
+}
+.fab-flags {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 110px;
+  overflow: auto;
+}
+.fab-flags li {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  padding: 2px 0;
+}
+.fab-flags li.warn {
+  color: var(--warn);
+}
+.fab-flags li.err {
+  color: var(--err);
+}
+.fab-stock {
+  border-bottom: 1px solid var(--line);
+}
+.fab-stock-table {
+  max-height: 180px;
+  overflow: auto;
+  padding: 0 10px 8px;
+}
+.fab-stock-table td {
+  padding: 2px 6px;
+}
+.fab-stock-table input[type='text'] {
+  width: 100%;
+  min-width: 90px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+}
+.fab-stock-table .num-input {
+  width: 90px;
+}

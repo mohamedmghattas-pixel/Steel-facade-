@@ -417,6 +417,8 @@ export interface ProjectSettings {
   galvBath: { length: number; width: number; depth: number };
   /** Stock on hand for nesting; qty -1 = unlimited. Empty = use stockLengths. */
   stock: StockItem[];
+  /** Fabrication outputs (labels, CNC DXF, paint, dip checks); missing keys use defaults (core/fabrication/settings). */
+  fabrication?: Partial<FabricationSettings>;
 }
 
 export interface StockItem {
@@ -424,6 +426,34 @@ export interface StockItem {
   length: number;
   qty: number;
   material?: string;
+}
+
+export type LabelLayout = 'a4-3x8' | 'a4-2x7' | 'thermal-100x50';
+
+export interface PaintCoat {
+  name: string;
+  /** Dry film thickness, µm. */
+  dft: number;
+  /** Volume solids, %. */
+  solids: number;
+}
+
+export interface FabricationSettings {
+  /** Write the part mark on a MARKING layer in plate DXF (ink-jet / etch marking). */
+  dxfMarking: boolean;
+  /** Marking text height, mm. */
+  markHeight: number;
+  /** Laser / plasma kerf added to the plate spacing when nesting, mm. */
+  plateKerf: number;
+  labelLayout: LabelLayout;
+  /** One label per physical piece or one per unique mark. */
+  labelPer: 'piece' | 'mark';
+  /** Free space kept in the galvanizing bath on every dimension, mm. */
+  galvClearance: number;
+  /** Coating system for painted parts (paint and HDG + paint). */
+  paintCoats: PaintCoat[];
+  /** Application loss, % (0 = theoretical consumption). */
+  paintLoss: number;
 }
 
 // ---------------------------------------------------------------------------

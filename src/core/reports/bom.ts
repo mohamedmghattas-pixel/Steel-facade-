@@ -165,13 +165,35 @@ export function bomToXlsx(b: BomTables, p: Project): Uint8Array {
     ['Assemblies', b.totals.assemblies],
     ['Bolts and anchors', b.totals.bolts],
   ];
-  const sheets: { name: string; rows: Row[] }[] = [
+  return sheetsToXlsx([
     { name: 'Summary', rows: summary },
     { name: 'Parts', rows: b.parts },
     { name: 'Assemblies', rows: b.assemblies },
     { name: 'Profiles', rows: b.profiles },
     { name: 'Bolts', rows: b.bolts },
-  ];
+  ]);
+}
+
+export interface XlsxSheet {
+  name: string;
+  rows: Row[];
+}
+
+/** Excel sheet names: ≤ 31 characters, none of []:*?/\ and unique within the workbook. */
+function sheetNames(sheets: XlsxSheet[]): string[] {
+  const used = new Set<string>();
+  return sheets.map((s, i) => {
+    const base = (s.name.replace(/[[\]:*?/\\]/g, '-').trim() || `Sheet${i + 1}`).slice(0, 31);
+    let name = base;
+    for (let n = 2; used.has(name.toLowerCase()); n++) name = `${base.slice(0, 31 - String(n).length - 1)}~${n}`;
+    used.add(name.toLowerCase());
+    return name;
+  });
+}
+
+/** A multi-sheet XLSX workbook; the first row of every sheet is a bold, frozen header. */
+export function sheetsToXlsx(sheets: XlsxSheet[]): Uint8Array {
+  const names = sheetNames(sheets);
   const ns = 'http://schemas.openxmlformats.org';
   const files: { name: string; data: string }[] = [
     {
@@ -201,7 +223,7 @@ export function bomToXlsx(b: BomTables, p: Project): Uint8Array {
       data:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
         `<workbook xmlns="${ns}/spreadsheetml/2006/main" xmlns:r="${ns}/officeDocument/2006/relationships"><sheets>` +
-        sheets.map((s, i) => `<sheet name="${xmlEsc(s.name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
+        names.map((name, i) => `<sheet name="${xmlEsc(name)}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('') +
         '</sheets></workbook>',
     },
     {

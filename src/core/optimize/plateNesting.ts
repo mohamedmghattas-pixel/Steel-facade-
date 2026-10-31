@@ -5,6 +5,7 @@
  */
 import type { Project } from '../model/types';
 import type { DerivedModel } from '../derive/model';
+import { fabSettings } from '../fabrication/settings';
 
 export interface Placement {
   mark: string;
@@ -147,8 +148,13 @@ function nestOnSheet(items: Item[], W: number, H: number, spacing: number): { sh
   };
 }
 
-export function nestPlates(p: Project, dm: DerivedModel): PlateGroup[] {
-  const spacing = Math.max(0, p.settings.plateSpacing);
+/**
+ * Nest every plate part. The gap between parts is the plate spacing plus the
+ * cutting kerf (fabrication setting, or `opts.kerf`).
+ */
+export function nestPlates(p: Project, dm: DerivedModel, opts: { kerf?: number } = {}): PlateGroup[] {
+  const kerf = Math.max(0, opts.kerf ?? fabSettings(p).plateKerf);
+  const spacing = Math.max(0, p.settings.plateSpacing) + kerf;
   const sheets = p.settings.plateSheets.filter((s) => s.w > 0 && s.h > 0);
   const groups = new Map<string, { thickness: number; material: string; items: Item[] }>();
   for (const pt of dm.parts) {

@@ -72,11 +72,18 @@ export class DxfWriter {
     return this;
   }
 
-  polyline(pts: { x: number; y: number }[], closed = false, layer = '0'): this {
+  /**
+   * 2D polyline. A vertex `bulge` (tan of a quarter of the included angle,
+   * positive = counter-clockwise) makes the segment to the next vertex an arc.
+   */
+  polyline(pts: { x: number; y: number; bulge?: number }[], closed = false, layer = '0'): this {
     if (pts.length < 2) return this;
     this.ensure(layer);
     this.push(0, 'POLYLINE', 8, layer, 66, '1', 10, 0, 20, 0, 30, 0, 70, closed ? '1' : '0');
-    for (const p of pts) this.push(0, 'VERTEX', 8, layer, 10, p.x, 20, p.y, 30, 0);
+    for (const p of pts) {
+      this.push(0, 'VERTEX', 8, layer, 10, p.x, 20, p.y, 30, 0);
+      if (p.bulge) this.push(42, p.bulge);
+    }
     this.push(0, 'SEQEND', 8, layer);
     return this;
   }

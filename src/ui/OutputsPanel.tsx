@@ -9,6 +9,7 @@ import { drawingsFor, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfc
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
+import { FabricationView, PaintSummary, PlateCncButtons, StockEditor } from './FabricationPanel';
 
 export function OutputsPanel() {
   const outputs = useStore((s) => s.outputs);
@@ -18,6 +19,7 @@ export function OutputsPanel() {
     { value: 'nesting', label: 'Cut optimisation' },
     { value: 'drawings', label: 'Drawings' },
     { value: 'checks', label: 'Checks' },
+    { value: 'fabrication', label: 'Fabrication' },
   ];
   return (
     <section className="outputs" aria-label="Outputs">
@@ -39,6 +41,7 @@ export function OutputsPanel() {
         {outputs.tab === 'nesting' && <NestingView />}
         {outputs.tab === 'drawings' && <DrawingsView />}
         {outputs.tab === 'checks' && <ChecksView />}
+        {outputs.tab === 'fabrication' && <FabricationView />}
       </div>
     </section>
   );
@@ -100,6 +103,7 @@ function BomView() {
         <span className="total">
           Total {kg(bom.totals.weight)} · {bom.totals.surface.toFixed(1)} m² surface
         </span>
+        <PaintSummary />
         <div className="grow" />
         <button className="secondary-btn" onClick={() => exportBom('xlsx')}>
           <Icon name="export" size={15} /> XLSX
@@ -133,7 +137,14 @@ function NestingView() {
         <span className="muted">
           Stock {project.settings.stockLengths.join(' / ')} mm · kerf {project.settings.kerf} mm · end trim {project.settings.endTrim} mm — change in Project settings
         </span>
+        {mode === 'plates' && (
+          <>
+            <div className="grow" />
+            <PlateCncButtons />
+          </>
+        )}
       </div>
+      {mode === 'bars' && <StockEditor />}
       {mode === 'bars' && (
         <div className="nest-groups">
           {!bars.length && <p className="muted pad">No linear parts to nest.</p>}
@@ -144,7 +155,9 @@ function NestingView() {
                 <span className="badge">{(g.efficiency * 100).toFixed(1)}% used</span>
               </h4>
               <p className="muted">
-                {g.pieces} pieces · net {(g.netLength / 1000).toFixed(2)} m · buy {g.purchase.map((x) => `${x.qty} × ${x.stock / 1000} m`).join(' + ')}
+                {g.pieces} pieces · net {(g.netLength / 1000).toFixed(2)} m
+                {g.fromStock.length > 0 && ` · from stock ${g.fromStock.map((x) => `${x.qty} × ${x.stock / 1000} m`).join(' + ')}`}
+                {` · buy ${g.purchase.length ? g.purchase.map((x) => `${x.qty} × ${x.stock / 1000} m`).join(' + ') : 'nothing'}`}
               </p>
               {g.unplaced.length > 0 && (
                 <p className="warning">
@@ -153,8 +166,11 @@ function NestingView() {
               )}
               <div className="bars">
                 {g.bars.map((b, i) => (
-                  <div className="bar" key={i} title={`Bar ${i + 1}: ${b.stock} mm, waste ${Math.round(b.waste)} mm`}>
-                    <span className="bar-label">{b.stock}</span>
+                  <div className="bar" key={i} title={`Bar ${i + 1}: ${b.stock} mm ${b.source === 'stock' ? 'from stock on hand' : 'to buy'}, waste ${Math.round(b.waste)} mm`}>
+                    <span className="bar-label">
+                      {b.source === 'stock' ? '◆ ' : ''}
+                      {b.stock}
+                    </span>
                     <div className="bar-track">
                       {b.cuts.map((c, j) => (
                         <span key={j} className="cut" style={{ width: `${(c.length / b.stock) * 100}%` }} title={`${c.mark} — ${Math.round(c.length)} mm`}>

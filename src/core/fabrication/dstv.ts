@@ -9,6 +9,8 @@ import { bbox2 } from '../model/geometry';
 import { getProfile } from '../library/profiles';
 import type { Shape } from '../library/shapes';
 import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
+import { flatPlate, markPosition } from './plateDxf';
+import { fabSettings } from './settings';
 
 const f = (n: number, w = 10) => n.toFixed(2).padStart(w);
 const line = (s: string | number) => `  ${s}`;
@@ -75,7 +77,21 @@ function holeLine(face: string, x: number, y: number, d: number, slot?: number, 
   return s;
 }
 
-export function partToDstv(part: Part, qty: number, p: Project): string {
+export interface DstvOptions {
+  /** Write an SI (marking) block with the part mark — plates only. */
+  marking?: boolean;
+  markHeight?: number;
+}
+
+/**
+ * SI block line: face, x (with reference letter), y, angle, letter height + "r" + text.
+ * Check the reference-letter convention against the machine post-processor.
+ */
+function siLine(x: number, y: number, angle: number, h: number, text: string): string {
+  return `  v${f(x)}o${f(y)}${f(angle)}${String(Math.round(h)).padStart(4)}r${text.replace(/\s+/g, '')}`;
+}
+
+export function partToDstv(part: Part, qty: number, p: Project, opts: DstvOptions = {}): string {
   const out: string[] = [];
   const isPlate = part.kind === 'plate';
   const prof = isPlate ? undefined : getProfile(part.profile);
@@ -139,6 +155,13 @@ export function partToDstv(part: Part, qty: number, p: Project): string {
       out.push('BO');
       for (const h of holes) out.push(holeLine('v', h.x - bb.minX, h.y - bb.minY, h.d, h.slot, h.angle));
     }
+    if (opts.marking) {
+      const pos = markPosition(flatPlate(part), part.mark, opts.markHeight ?? 10);
+      if (pos) {
+        out.push('SI');
+        out.push(siLine(pos.x, pos.y, 0, pos.h, part.mark));
+      }
+    }
   } else if (part.holes.length && shape) {
     const [h, b] = [prof?.h ?? height, prof?.b ?? flangeW];
     out.push('BO');
@@ -152,6 +175,15 @@ export function partToDstv(part: Part, qty: number, p: Project): string {
 }
 
 /** One NC1 file per unique part mark. */
-export function exportDstvAll(p: Project, dm: DerivedModel): { name: string; content: string }[] {
-  return uniqueParts(dm).map(({ part, qty }) => ({ name: `${part.mark}.nc1`, content: partToDstv(part, qty, p) }));
+export function exportDstvAll(p: Project, dm: DerivedModel, opts: DstvOptions = {}): { name: string; content: string }[] {
+  return uniqueParts(dm).map(({ part, qty }) => ({ name: `${part.mark}.nc1`, content: partToDstv(part, qty, p, opts) }));
+}
+
+/** NC1 files for plate parts only (profile code B, AK contour, BO holes/slots, SI marking), one per unique mark. */
+export function exportDstvPlates(p: Project, dm: DerivedModel): { name: string; content: string }[] {
+  const s = fabSettings(p);
+  const opts: DstvOptions = { marking: s.dxfMarking, markHeight: s.markHeight };
+  return uniqueParts(dm)
+    .filter(({ part }) => part.kind === 'plate' && part.outline?.length)
+    .map(({ part, qty }) => ({ name: `${part.mark}.nc1`, content: partToDstv(part, qty, p, opts) }));
 }

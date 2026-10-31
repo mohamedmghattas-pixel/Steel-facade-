@@ -15,6 +15,7 @@ import {
   openProjectFile,
   saveProjectFile,
 } from './actions';
+import { exportGalvanizing, exportLabels, exportMis, exportNestedDxf, exportPackingLists, exportPaint, exportPlateDxf, exportPlateNc } from './fabricationActions';
 
 interface Item {
   label: string;
@@ -43,7 +44,7 @@ function Menu({ label, icon, items }: { label: string; icon: string; items: (Ite
               <hr key={i} />
             ) : (
               <button
-                key={it.label}
+                key={`${it.label}|${it.hint ?? ''}`}
                 role="menuitem"
                 onClick={() => {
                   setOpen(false);
@@ -110,6 +111,16 @@ export function TopBar() {
           { label: 'Drawings', hint: 'PDF', run: () => void exportDrawingsPdf() },
           { label: 'Drawings', hint: 'DXF (zip)', run: () => exportDrawingsDxf() },
           { label: 'CNC files', hint: 'DSTV NC1 (zip)', run: exportNc },
+          '-',
+          { label: 'Plate DXF per part', hint: 'laser / plasma (zip)', run: exportPlateDxf },
+          { label: 'Nested plate sheets', hint: 'DXF (zip)', run: exportNestedDxf },
+          { label: 'Plate NC1', hint: 'DSTV (zip)', run: exportPlateNc },
+          { label: 'Part labels', hint: 'PDF, QR + Code 128', run: () => void exportLabels() },
+          { label: 'Packing lists', hint: 'XLSX', run: () => void exportPackingLists('xlsx') },
+          { label: 'Packing lists', hint: 'PDF', run: () => void exportPackingLists('pdf') },
+          { label: 'Galvanizing list', hint: 'XLSX', run: exportGalvanizing },
+          { label: 'Paint areas', hint: 'XLSX', run: exportPaint },
+          { label: 'Export for MIS/ERP', hint: 'JSON + CSV + IFC (zip)', run: exportMis },
         ]}
       />
       <div className="sep" />

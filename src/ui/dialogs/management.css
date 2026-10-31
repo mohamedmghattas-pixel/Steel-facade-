@@ -1,0 +1,247 @@
+/* Model management: colour legend, selection filter, phases dialog, clash list, panel preview. */
+.mgmt-color {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.mgmt-color select {
+  background: rgb(22 27 35 / 0.9);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 2px 6px;
+  font-size: 12px;
+}
+.mgmt-legend {
+  background: rgb(22 27 35 / 0.9);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: var(--text-2);
+  max-height: 220px;
+  overflow-y: auto;
+  min-width: 140px;
+}
+.mgmt-legend div {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.mgmt-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex: none;
+}
+.mgmt-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgb(242 165 65 / 0.15);
+  border: 1px solid var(--accent);
+  color: var(--accent-2);
+  border-radius: 999px;
+  padding: 2px 4px 2px 10px;
+  font-size: 12px;
+}
+.mgmt-filter button {
+  background: none;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 4px;
+}
+.mgmt-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.mgmt-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+  background: var(--bg-2);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+}
+.mgmt-row.batch {
+  grid-template-columns: 1fr 130px 130px auto auto;
+}
+.mgmt-row.zone {
+  grid-template-columns: 1fr auto auto;
+}
+.mgmt-row input[type='color'] {
+  width: 26px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+.mgmt-row input[type='text'],
+.mgmt-row input[type='date'],
+.mgmt-row select,
+.mgmt-input {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 3px 6px;
+  min-width: 0;
+  width: 100%;
+}
+.mgmt-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.mgmt-actions .count {
+  color: var(--text-3);
+  font-size: 11px;
+  min-width: 44px;
+  text-align: right;
+  margin-right: 4px;
+}
+.mgmt-mini {
+  background: var(--bg-3);
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  border-radius: 4px;
+  font-size: 11px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.mgmt-mini:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.mgmt-mini:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mgmt-lock {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--text-2);
+  margin-left: 6px;
+}
+.mgmt-lock.locked {
+  border-color: var(--ok);
+  color: var(--ok);
+}
+.mgmt-lock.changed {
+  border-color: var(--err);
+  color: var(--err);
+}
+.mgmt-lock.manual {
+  border-color: var(--accent);
+  color: var(--accent-2);
+}
+.mgmt-steps li {
+  margin-bottom: 8px;
+  color: var(--text-2);
+}
+.mgmt-steps strong {
+  color: var(--text);
+  display: block;
+}
+.mgmt-preview {
+  width: 100%;
+  height: 220px;
+  margin-top: 8px;
+  background: var(--bg-0);
+  border-radius: 8px;
+}
+.mgmt-preview rect {
+  fill: rgb(91 155 213 / 0.12);
+  stroke: rgb(91 155 213 / 0.5);
+  vector-effect: non-scaling-stroke;
+}
+.mgmt-preview line {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 2;
+}
+.mgmt-preview .v {
+  stroke: #4f8ad8;
+}
+.mgmt-preview .h {
+  stroke: #46a37a;
+}
+.mgmt-preview .perimeter {
+  stroke-dasharray: 6 4;
+}
+.mgmt-table {
+  width: 100%;
+  font-size: 12px;
+  border-collapse: collapse;
+}
+.mgmt-table td,
+.mgmt-table th {
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.mgmt-table td.num {
+  text-align: right;
+}
+.clash-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.clash-bar .num-input input {
+  width: 56px;
+}
+.clash-bar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-2);
+  font-size: 12px;
+}
+.clash-table tr.active td {
+  background: rgb(242 165 65 / 0.12);
+}
+.clash-table td select,
+.clash-table td input {
+  background: var(--bg-1);
+  border: 1px solid var(--line-2);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 2px 4px;
+}
+.clash-table td input {
+  width: 100%;
+  min-width: 140px;
+}
+.clash-kind {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.clash-kind.hard {
+  background: rgb(239 100 97 / 0.18);
+  color: var(--err);
+}
+.clash-kind.clearance {
+  background: rgb(240 180 41 / 0.18);
+  color: var(--warn);
+}
+.clash-table tr.resolved td,
+.clash-table tr.ignored td {
+  opacity: 0.55;
+}

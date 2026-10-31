@@ -14,6 +14,7 @@ import { dist } from '../core/model/geometry';
 import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
 import { AssistantPanel } from './AssistantPanel';
 import { askConfirm } from './askState';
+import { GroupingProps } from './dialogs/ManagementDialogs';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -173,6 +174,7 @@ function MemberProps({ ids }: { ids: string[] }) {
       <button className="secondary-btn wide-btn" onClick={() => useStore.getState().set({ dialog: 'applyConnection' })}>
         <Icon name="bracket" size={15} /> Apply a connection to {ms.length === 1 ? 'this member' : `these ${ms.length} members`}…
       </button>
+      <GroupingProps ids={ids} />
       {ms.length === 1 && (
         <Field label="Name / note">
           <TextInput value={ms[0].name ?? ''} onChange={(v) => patch('Name', { name: v || undefined })} placeholder={ms[0].layer ? `layer ${ms[0].layer}` : ''} />

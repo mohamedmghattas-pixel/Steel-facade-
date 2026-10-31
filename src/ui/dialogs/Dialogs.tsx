@@ -9,6 +9,7 @@ import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/
 import { putBlob } from '../../state/storage';
 import { DrawingSettingsDialog, IssueDrawingsDialog } from './DrawingDialogs';
 import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialogs';
+import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from './ManagementDialogs';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -32,6 +33,14 @@ export function Dialogs() {
       return <ApplyConnectionDialog onClose={close} />;
     case 'customConnection':
       return <CustomConnectionDialog onClose={close} />;
+    case 'phases':
+      return <PhasesDialog onClose={close} />;
+    case 'dwgInfo':
+      return <DwgInfoDialog onClose={close} />;
+    case 'ifcSteel':
+      return <IfcSteelDialog onClose={close} />;
+    case 'panelLayout':
+      return <PanelLayoutDialog onClose={close} />;
     default:
       return null;
   }

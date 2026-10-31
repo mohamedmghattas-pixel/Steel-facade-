@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { MemberRole, Vec2, Vec3 } from '../core/model/types';
+import type { Member, MemberRole, Vec2, Vec3 } from '../core/model/types';
+import type { Part } from '../core/derive/model';
 import type { Frame } from '../core/model/geometry';
 import { shapeOutline, type Shape } from '../core/library/shapes';
 import type { Hole2D } from '../core/connections/common';
@@ -103,6 +104,9 @@ export function plateGeometry(outline: Vec2[], holes: Hole2D[], t: number) {
 /** Shared unit cylinders for bolt shanks (Y axis, height 1, radius 0.5) and hex heads. */
 export const shankGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 10, 1).translate(0, 0.5, 0);
 export const headGeo = new THREE.CylinderGeometry(0.5, 0.5, 1, 6, 1).translate(0, -0.5, 0);
+/** Low-detail bolts for very large models (a quarter of the triangles). */
+export const shankGeoCoarse = new THREE.CylinderGeometry(0.5, 0.5, 1, 4, 1, true).translate(0, 0.5, 0);
+export const headGeoCoarse = new THREE.CylinderGeometry(0.5, 0.5, 1, 4, 1, true).translate(0, -0.5, 0);
 
 /** Instance matrix: unit Y-cylinder → from `pos` along `dir` with given diameter and length. */
 export function alongMatrix(pos: Vec3, dir: Vec3, diameter: number, length: number): THREE.Matrix4 {
@@ -122,10 +126,129 @@ export function disposeObject(obj: THREE.Object3D, keep?: Set<THREE.BufferGeomet
 }
 
 export function cachedGeometries(): Set<THREE.BufferGeometry> {
-  const s = new Set<THREE.BufferGeometry>([shankGeo, headGeo]);
+  const s = new Set<THREE.BufferGeometry>([shankGeo, headGeo, shankGeoCoarse, headGeoCoarse]);
   for (const g of profileGeoCache.values()) {
     s.add(g.mesh);
     s.add(g.edges);
   }
+  for (const g of coarseGeoCache.values()) {
+    s.add(g.mesh);
+    s.add(g.edges);
+  }
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// Geometry sharing for large models
+
+const q = (n: number) => Math.round(n * 2) / 2;
+
+/**
+ * Geometry signature of a part: parts with the same key share one geometry and
+ * are drawn as instances. Linear parts with square ends share a unit-length
+ * extrusion per profile (the length is in the instance matrix); parts with end
+ * preparations key on profile, length and preps; plates on thickness, outline
+ * and holes.
+ */
+export function partGeometryKey(part: Part, member?: Member): string {
+  if (part.kind === 'plate') {
+    const o = (part.outline ?? []).map((v) => `${q(v.x)},${q(v.y)}`).join(' ');
+    const h = (part.plateHoles ?? []).map((x) => `${q(x.x)},${q(x.y)},${x.d},${x.slot ?? 0},${x.angle ?? 0}`).join(';');
+    return `pl|${part.thickness}|${o}|${h}`;
+  }
+  const prepped = !!member && ((!!member.startPrep && member.startPrep.kind !== 'square') || (!!member.endPrep && member.endPrep.kind !== 'square'));
+  return prepped ? `lin|${part.profile}|${q(part.length)}|${JSON.stringify([member!.startPrep ?? null, member!.endPrep ?? null])}` : `lin|${part.profile}`;
+}
+
+/** Whether a key is a unit-length extrusion scaled by the part length. */
+export const isUnitLinearKey = (key: string) => key.startsWith('lin|') && key.split('|').length === 2;
+
+const coarseGeoCache = new Map<string, { mesh: THREE.BufferGeometry; edges: THREE.BufferGeometry }>();
+
+const ngon = (r: number, n: number): Vec2[] => Array.from({ length: n }, (_, i) => ({ x: r * Math.cos(((i + 0.5) / n) * Math.PI * 2), y: r * Math.sin(((i + 0.5) / n) * Math.PI * 2) }));
+
+/** The shape with sharp corners (no root / toe / corner radii). */
+function sharpShape(s: Shape): Shape {
+  switch (s.type) {
+    case 'I':
+    case 'U':
+    case 'L':
+    case 'T':
+      return { ...s, r: 0, r2: 0, ...(s.type === 'T' ? { r3: 0 } : {}), ...(s.type === 'U' || s.type === 'L' ? { ro: 0 } : {}) } as Shape;
+    case 'RHS':
+      return { ...s, ro: 0, ri: 0 };
+    case 'C':
+    case 'Z':
+      return { ...s, r: 0 };
+    default:
+      return s;
+  }
+}
+
+/**
+ * Low-detail unit extrusion for very large models (level of detail): sharp
+ * corners and 8-sided tubes — about a fifth of the triangles of profileGeometry.
+ */
+export function coarseProfileGeometry(name: string, shape: Shape) {
+  let g = coarseGeoCache.get(name);
+  if (!g) {
+    const s = sharpShape(shape);
+    const o = s.type === 'CHS' ? { outer: ngon(s.d / 2, 8), holes: [ngon(s.d / 2 - s.t, 8).reverse()] } : s.type === 'RD' ? { outer: ngon(s.d / 2, 8), holes: [] } : shapeOutline(s);
+    const mesh = new THREE.ExtrudeGeometry(toShape(o.outer, o.holes), { depth: 1, bevelEnabled: false, curveSegments: 1 });
+    g = { mesh, edges: new THREE.EdgesGeometry(mesh, 35) };
+    coarseGeoCache.set(name, g);
+  }
+  return g;
+}
+
+/**
+ * Mesh + edges for a geometry key (see partGeometryKey). `cached` geometries are
+ * shared and must not be disposed. `coarse` = level of detail for very large
+ * models: sharp-cornered profiles and plates without holes.
+ */
+export function geometryForKey(key: string, part: Part, coarse = false): { mesh: THREE.BufferGeometry; edges: THREE.BufferGeometry; cached: boolean } {
+  if (part.kind === 'plate') return { ...plateGeometry(part.outline ?? [], coarse ? [] : (part.plateHoles ?? []), part.thickness), cached: false };
+  if (isUnitLinearKey(key)) return { ...(coarse ? coarseProfileGeometry(part.profile, part.shape!) : profileGeometry(part.profile, part.shape!)), cached: true };
+  // Prepared ends: full-length extrusion (end cuts are drawn by the modelling geometry where available).
+  const unit = coarse ? coarseProfileGeometry(part.profile, part.shape!) : profileGeometry(part.profile, part.shape!);
+  const m = new THREE.Matrix4().makeScale(1, 1, Math.max(part.length, 0.1));
+  return { mesh: unit.mesh.clone().applyMatrix4(m), edges: unit.edges.clone().applyMatrix4(m), cached: false };
+}
+
+const edgeVertex = /* glsl */ `
+attribute vec4 iM0;
+attribute vec4 iM1;
+attribute vec4 iM2;
+attribute vec4 iM3;
+void main() {
+  mat4 im = mat4(iM0, iM1, iM2, iM3);
+  gl_Position = projectionMatrix * modelViewMatrix * im * vec4(position, 1.0);
+}`;
+const edgeFragment = /* glsl */ `
+uniform vec3 color;
+uniform float opacity;
+void main() { gl_FragColor = vec4(color, opacity); }`;
+
+/** Line material whose vertices are transformed per instance (iM0..iM3 = matrix columns). */
+export function instancedEdgeMaterial(color = 0x1b2430, opacity = 0.55): THREE.ShaderMaterial {
+  return new THREE.ShaderMaterial({
+    uniforms: { color: { value: new THREE.Color(color) }, opacity: { value: opacity } },
+    vertexShader: edgeVertex,
+    fragmentShader: edgeFragment,
+    transparent: true,
+  });
+}
+
+/** Edges of many instances of one geometry in a single draw call (16 floats per instance, column-major). */
+export function instancedEdges(edges: THREE.BufferGeometry, matrices: Float32Array, material: THREE.Material): THREE.LineSegments {
+  const g = new THREE.InstancedBufferGeometry();
+  g.setAttribute('position', edges.getAttribute('position'));
+  if (edges.index) g.setIndex(edges.index);
+  const buf = new THREE.InstancedInterleavedBuffer(matrices, 16);
+  for (let i = 0; i < 4; i++) g.setAttribute(`iM${i}`, new THREE.InterleavedBufferAttribute(buf, 4, i * 4));
+  g.instanceCount = matrices.length / 16;
+  const ls = new THREE.LineSegments(g, material);
+  ls.frustumCulled = false;
+  ls.userData.instancedEdges = true;
+  return ls;
 }

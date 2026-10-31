@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Underlay, Vec2, Vec3, WorkPlane } from '../core/model/types';
 import { planeAxes, planeToWorld } from '../core/model/geometry';
 import { v } from './meshes';
+import { provideIfcApi } from '../state/runtime';
 
 /**
  * IFC reference models (concrete frames, primary steel) are tessellated with
@@ -10,7 +11,8 @@ import { v } from './meshes';
  */
 let apiPromise: Promise<import('web-ifc').IfcAPI> | null = null;
 
-async function ifcApi() {
+/** Shared, lazily initialised web-ifc instance (also used by IFC steel import, panel layouts and clash detection). */
+export async function ifcApi() {
   if (!apiPromise) {
     apiPromise = (async () => {
       const [{ IfcAPI }, { default: wasmUrl }] = await Promise.all([import('web-ifc'), import('web-ifc/web-ifc.wasm?url')]);
@@ -21,6 +23,8 @@ async function ifcApi() {
   }
   return apiPromise;
 }
+
+provideIfcApi(ifcApi);
 
 export interface IfcLoadResult {
   group: THREE.Group;

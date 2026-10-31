@@ -15,6 +15,8 @@ import {
   openProjectFile,
   saveProjectFile,
 } from './actions';
+import { exportBcfFile, lockMarksNow, openIfcSteelFile, runClashDetection, unlockMarksNow } from './managementActions';
+import { marksLocked } from '../core/management/marks';
 
 interface Item {
   label: string;
@@ -95,8 +97,10 @@ export function TopBar() {
         label="Import"
         icon="import"
         items={[
-          { label: 'DXF → wireframe or reference…', hint: 'shop / architect drawings', run: importDxf },
+          { label: 'DXF / DWG → wireframe or reference…', hint: 'shop / architect drawings', run: importDxf },
           { label: 'IFC reference model…', hint: 'concrete or main steel', run: importIfcReference },
+          { label: 'IFC steel → editable members…', hint: 'Tekla, Revit, FacadeSteel', run: () => void openIfcSteelFile() },
+          { label: 'Panel layout → sub-frame…', hint: 'DXF or IFC panels', run: () => useStore.getState().set({ dialog: 'panelLayout' }) },
           { label: 'PDF / image underlay…', hint: 'trace shop drawings', run: importUnderlay },
         ]}
       />
@@ -110,8 +114,10 @@ export function TopBar() {
           { label: 'Drawings', hint: 'PDF', run: () => void exportDrawingsPdf() },
           { label: 'Drawings', hint: 'DXF (zip)', run: () => exportDrawingsDxf() },
           { label: 'CNC files', hint: 'DSTV NC1 (zip)', run: exportNc },
+          { label: 'Clash issues', hint: 'BCF 2.1', run: () => exportBcfFile(['open']) },
         ]}
       />
+      <ManageMenu />
       <div className="sep" />
       <button className="icon-btn" title="Undo (Ctrl+Z)" disabled={!canUndo} onClick={undo}>
         <Icon name="undo" />
@@ -139,6 +145,32 @@ export function TopBar() {
       </button>
       <HelpButton />
     </header>
+  );
+}
+
+function ManageMenu() {
+  const locked = useStore((s) => marksLocked(s.project));
+  const set = useStore((s) => s.set);
+  const outputs = useStore((s) => s.outputs);
+  return (
+    <Menu
+      label="Manage"
+      icon="table"
+      items={[
+        { label: 'Phases, zones and batches…', hint: 'erection & delivery', run: () => set({ dialog: 'phases' }) },
+        locked ? { label: 'Unlock marks', hint: 'automatic numbering', run: unlockMarksNow } : { label: 'Lock marks', hint: 'keep numbers stable', run: lockMarksNow },
+        '-',
+        {
+          label: 'Clash detection',
+          hint: 'reference + steel',
+          run: () => {
+            set({ outputs: { ...outputs, open: true, tab: 'clashes' } });
+            const c = useStore.getState().project.clashes;
+            void runClashDetection({ steelSteel: c.steelSteel !== false, touchTolerance: c.touchTolerance ?? 1 });
+          },
+        },
+      ]}
+    />
   );
 }
 

@@ -351,6 +351,10 @@ export interface ClashSettings {
   /** Required clearance to reference elements, mm. */
   clearance: number;
   issues: ClashIssue[];
+  /** Also check steel against steel (default true). */
+  steelSteel?: boolean;
+  /** Overlaps up to this depth count as touching, mm (default 1). */
+  touchTolerance?: number;
 }
 
 /** An imported reference model (concrete, primary steel). Bytes live in IndexedDB. */

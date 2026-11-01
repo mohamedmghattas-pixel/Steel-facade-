@@ -1,5 +1,8 @@
 import type { Vec2 } from '../model/types';
 import { polygonPerimeter } from '../model/geometry';
+import { flattenLoop, loopBox, signedArea, validateLoops, type PolyVertex } from './polyShape';
+
+export type { PolyVertex } from './polyShape';
 
 /**
  * Parametric cross-sections. Dimensions in mm. In section coordinates `x`
@@ -12,6 +15,13 @@ import { polygonPerimeter } from '../model/geometry';
  * - L: `r2` toe radius (hot rolled, EN 10056-1 r2 = r1/2); `ro` outer heel radius
  *   for cold-formed angles (inner bend radius is `r`).
  * - C, Z: `r` inner bend radius of cold-formed lipped sections (outer = r + t).
+ *
+ * POLY is an arbitrary outline (custom / uploaded / sketched profiles): an
+ * outer loop and optional holes (voids), vertices in the profile's own drawing
+ * coordinates with optional arc bulges (see polyShape.ts). Like every other
+ * shape its outline (shapeOutline) is centred on the bounding box; the offset
+ * from drawing coordinates is shapeDrawCentre. `t` is an optional nominal wall
+ * thickness (thin-wall sections; written to DSTV).
  */
 export type Shape =
   | { type: 'I'; h: number; b: number; tw: number; tf: number; r: number; r2?: number }
@@ -26,11 +36,90 @@ export type Shape =
   | { type: 'RD'; d: number }
   | { type: 'FL'; h: number; t: number }
   | { type: 'C'; h: number; b: number; c: number; t: number; r?: number }
-  | { type: 'Z'; h: number; b: number; c: number; t: number; r?: number };
+  | { type: 'Z'; h: number; b: number; c: number; t: number; r?: number }
+  | PolyShape;
+
+export interface PolyShape {
+  type: 'POLY';
+  outer: PolyVertex[];
+  holes?: PolyVertex[][];
+  t?: number;
+}
 
 export type ShapeType = Shape['type'];
 
-export const SHAPE_TYPES: readonly ShapeType[] = ['I', 'U', 'L', 'T', 'RHS', 'CHS', 'RD', 'FL', 'C', 'Z'];
+export const SHAPE_TYPES: readonly ShapeType[] = ['I', 'U', 'L', 'T', 'RHS', 'CHS', 'RD', 'FL', 'C', 'Z', 'POLY'];
+
+// ---------------------------------------------------------------------------
+// POLY outlines (memoised per shape object: profiles share their shape)
+
+interface PolyCache {
+  /** Bounding-box centre in drawing coordinates. */
+  centre: Vec2;
+  w: number;
+  h: number;
+  outline?: Outline;
+  fine?: Outline;
+}
+const polyCache = new WeakMap<PolyShape, PolyCache>();
+
+function orientLoops(outer: Vec2[], holes: Vec2[][]): Outline {
+  const o = signedArea(outer) < 0 ? outer.slice().reverse() : outer;
+  return { outer: o, holes: holes.map((h) => (signedArea(h) > 0 ? h.slice().reverse() : h)) };
+}
+
+function polyInfo(s: PolyShape): PolyCache {
+  let c = polyCache.get(s);
+  if (!c) {
+    const b = loopBox(flattenLoop(s.outer ?? []));
+    const ok = Number.isFinite(b.minX) && Number.isFinite(b.maxX);
+    c = ok
+      ? { centre: { x: (b.minX + b.maxX) / 2, y: (b.minY + b.maxY) / 2 }, w: b.maxX - b.minX, h: b.maxY - b.minY }
+      : { centre: { x: 0, y: 0 }, w: 0, h: 0 };
+    polyCache.set(s, c);
+  }
+  return c;
+}
+
+/** Flattened POLY outline centred on its bounding box (outer CCW, holes CW). `stepDeg` = max arc step. */
+export function polyOutline(s: PolyShape, stepDeg = 6): Outline {
+  const c = polyInfo(s);
+  const key = stepDeg === 1 ? 'fine' : stepDeg === 6 ? 'outline' : null;
+  const hit = key && c[key];
+  if (hit) return hit;
+  const mv = (pts: Vec2[]) => pts.map((p) => ({ x: p.x - c.centre.x, y: p.y - c.centre.y }));
+  const o = orientLoops(mv(flattenLoop(s.outer ?? [], stepDeg)), (s.holes ?? []).map((h) => mv(flattenLoop(h, stepDeg))));
+  if (key) c[key] = o;
+  return o;
+}
+
+/**
+ * Offset of the outline coordinates from the profile's drawing coordinates:
+ * outline point = drawing point − shapeDrawCentre. (0, 0) for parametric
+ * shapes, whose drawing coordinates are the outline coordinates.
+ */
+export function shapeDrawCentre(s: Shape): Vec2 {
+  return s.type === 'POLY' ? { ...polyInfo(s).centre } : { x: 0, y: 0 };
+}
+
+const sigCache = new WeakMap<Shape, string>();
+/** Short content hash of a shape (geometry cache keys: a custom profile can change under the same name). */
+export function shapeSignature(s: Shape): string {
+  let k = sigCache.get(s);
+  if (k === undefined) {
+    const t = JSON.stringify(s);
+    let h1 = 0x811c9dc5;
+    let h2 = 0x01000193;
+    for (let i = 0; i < t.length; i++) {
+      const ch = t.charCodeAt(i);
+      h1 = Math.imul(h1 ^ ch, 16777619);
+      h2 = Math.imul(h2 ^ ch, 2246822519);
+    }
+    k = (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+    sigCache.set(s, k);
+  }
+  return k;
+}
 
 export interface Outline {
   outer: Vec2[];
@@ -140,6 +229,10 @@ export function shapeBox(s: Shape): { w: number; h: number } {
       return { w: s.t, h: s.h };
     case 'Z':
       return { w: 2 * s.b - s.t, h: s.h };
+    case 'POLY': {
+      const c = polyInfo(s);
+      return { w: c.w, h: c.h };
+    }
     default:
       return { w: s.b, h: s.h };
   }
@@ -344,6 +437,8 @@ export function shapeOutline(s: Shape): Outline {
       const ro = ri + t;
       return { outer: filletPolygon(pts, [ro, ro, ri, ri, 0, 0, ro, ro, ri, ri, 0, 0]), holes: [] };
     }
+    case 'POLY':
+      return polyOutline(s);
   }
 }
 
@@ -468,7 +563,8 @@ function circularProps(d: number, di: number): SectionProps {
 export function sectionProps(s: Shape): SectionProps {
   if (s.type === 'CHS') return circularProps(s.d, s.d - 2 * s.t);
   if (s.type === 'RD') return circularProps(s.d, 0);
-  const o = shapeOutline(s);
+  // Arbitrary outlines: arcs flattened in 1° steps (a full circle's area within 0.005 %).
+  const o = s.type === 'POLY' ? polyOutline(s, 1) : shapeOutline(s);
   const parts = [o.outer, ...o.holes];
   let A = 0;
   let Sx = 0;
@@ -563,5 +659,11 @@ export function validateShape(s: Shape): string | null {
       if (s.c <= s.t || 2 * s.c >= s.h) return `${s.type}: lip must be longer than t and shorter than h/2`;
       if ((s.r ?? 0) * 2 + 2 * s.t > Math.min(s.b, s.c * 2)) return `${s.type}: bend radius too large`;
       return null;
+    case 'POLY': {
+      if (s.holes !== undefined && !Array.isArray(s.holes)) return 'POLY: holes must be a list of loops';
+      if (s.t !== undefined && !(Number.isFinite(s.t) && s.t > 0)) return 'POLY: t must be > 0';
+      const err = validateLoops(s.outer, s.holes ?? []);
+      return err ? `POLY: ${err}` : null;
+    }
   }
 }

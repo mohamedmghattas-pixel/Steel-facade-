@@ -46,6 +46,12 @@ export class DxfWriter {
     return this;
   }
 
+  point(x: number, y: number, layer = '0'): this {
+    this.ensure(layer);
+    this.push(0, 'POINT', 8, layer, 10, x, 20, y, 30, 0);
+    return this;
+  }
+
   circle(cx: number, cy: number, r: number, layer = '0'): this {
     this.ensure(layer);
     this.push(0, 'CIRCLE', 8, layer, 10, cx, 20, cy, 30, 0, 40, r);

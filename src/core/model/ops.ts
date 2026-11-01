@@ -50,6 +50,7 @@ import { stiffenerShape } from '../geometry/stiffener';
 import { stripFlatPattern, DEFAULT_K_FACTOR, type StripBend } from '../geometry/bentPlate';
 import { arcFromCentre, arcPoints, segmentsForDeviation, type Arc3 } from '../geometry/arc';
 import { getProfile } from '../library/profiles';
+import { newMemberPatch } from './roleProfiles';
 
 let counter = 0;
 export function newId(prefix: string): Id {
@@ -88,6 +89,7 @@ export function defaultSettings(): ProjectSettings {
       { match: 'horizontal', profile: 'SHS 80x80x4', role: 'transom' },
       { match: 'inclined', profile: 'CHS 48.3x3.2', role: 'brace' },
     ],
+    roleProfiles: {},
     gridStep: 50,
     designCode: 'auto',
     movement: defaultMovement(),
@@ -199,7 +201,11 @@ function sameLine(m: Member, a: Id, b: Id) {
   return (m.start === a && m.end === b) || (m.start === b && m.end === a);
 }
 
-/** Add a wireframe line between two points (nodes are merged). Returns the member id or null. */
+/**
+ * Add a wireframe line between two points (nodes are merged). Returns the member id or null.
+ * A line given a `role` but no `profile` (undefined; null keeps it a wire line) gets the
+ * role's profile from ProjectSettings.roleProfiles.
+ */
 export function addLine(p: Project, a: Vec3, b: Vec3, props: Partial<Member> = {}): Id | null {
   if (dist(a, b) < 1) return null;
   const na = addNode(p, a);
@@ -207,8 +213,21 @@ export function addLine(p: Project, a: Vec3, b: Vec3, props: Partial<Member> = {
   if (na === nb) return null;
   for (const m of Object.values(p.members)) if (sameLine(m, na, nb)) return m.id;
   const id = newId('m');
-  p.members[id] = { ...memberDefaults(p), ...props, id, start: na, end: nb };
+  const byRole = props.role && props.profile === undefined ? newMemberPatch(p, props.role) : {};
+  const given = Object.fromEntries(Object.entries(props).filter(([k, v]) => v !== undefined || !(k in byRole)));
+  p.members[id] = { ...memberDefaults(p), ...byRole, ...given, id, start: na, end: nb };
   return id;
+}
+
+/**
+ * Role-profile extras (rotation, alignment mode, material) for a generated member whose
+ * profile is its role's profile.
+ */
+function roleExtras(p: Project, role: MemberRole, profile: string | null): Partial<Member> {
+  const rp = p.settings.roleProfiles?.[role];
+  if (!rp || !profile || rp.profile !== profile) return {};
+  const { profile: _p, ...rest } = newMemberPatch(p, role);
+  return rest;
 }
 
 export function removeOrphanNodes(p: Project) {
@@ -432,7 +451,11 @@ export function memberDirection(p: Project, m: Member): Direction {
   return 'inclined';
 }
 
-/** Assign profiles/roles by rules (first matching rule wins). Returns number changed. */
+/**
+ * Assign profiles/roles by rules: a layer rule first, then a role rule (lines
+ * that already have that role), then a direction rule; the first match of the
+ * winning kind is used. Returns number changed.
+ */
 export function autoAssign(p: Project, memberIds: Id[], rules: AutoAssignRule[] = p.settings.autoRules): number {
   let changed = 0;
   for (const id of memberIds) {
@@ -441,6 +464,7 @@ export function autoAssign(p: Project, memberIds: Id[], rules: AutoAssignRule[] 
     const dir = memberDirection(p, m);
     const rule =
       rules.find((r) => r.match === 'layer' && r.layer && m.layer && r.layer.toLowerCase() === m.layer.toLowerCase()) ??
+      rules.find((r) => r.match === 'role' && r.ofRole === m.role) ??
       rules.find((r) => r.match === dir);
     if (!rule) continue;
     m.profile = rule.profile;
@@ -508,6 +532,7 @@ export function facadeGrid(p: Project, o: FacadeGridOptions): Id[] {
         profile: o.mullionProfile,
         role: 'mullion',
         rotation: mullionRot(a, b),
+        ...roleExtras(p, 'mullion', o.mullionProfile),
       });
       if (id) out.push(id);
     }
@@ -523,6 +548,7 @@ export function facadeGrid(p: Project, o: FacadeGridOptions): Id[] {
         profile: o.transomProfile,
         role: 'transom',
         rotation: transomRot(a, b),
+        ...roleExtras(p, 'transom', o.transomProfile),
       });
       if (id) out.push(id);
     }

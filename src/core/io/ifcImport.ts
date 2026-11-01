@@ -397,11 +397,15 @@ const shapeDims = (s: Shape): number[] => {
     case 'C':
     case 'Z':
       return [s.h, s.b, s.c, s.t];
+    case 'POLY':
+      return [];
   }
 };
 
 /** Library profiles of the same section type and dimensions (h, b within 0.6 mm, thicknesses within 0.25 mm). */
 export function matchProfileByShape(s: Shape): Profile | undefined {
+  // Arbitrary outlines have no dimensions to compare.
+  if (s.type === 'POLY') return undefined;
   const want = shapeDims(s);
   let best: Profile | undefined;
   let bestErr = Infinity;

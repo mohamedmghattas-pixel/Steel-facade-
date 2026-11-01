@@ -11,10 +11,17 @@
  * its corner radius, bounded across the section). Bent plates are written as
  * extruded segments — the flat pieces exactly, with their holes as voids, and
  * each bend zone as tangent strips (see core/geometry/bentPlate).
+ *
+ * Arbitrary outline profiles (Shape POLY) are IfcArbitraryClosedProfileDef, or
+ * IfcArbitraryProfileDefWithVoids when they have holes, with every loop an
+ * IfcIndexedPolyCurve: straight runs as IfcLineIndex, arcs exactly as
+ * IfcArcIndex (start, a point on the arc, end). Coordinates are relative to
+ * the bounding-box centre, like the parameterised profiles.
  */
 import type { Level, MemberRole, Project, Vec2, Vec3 } from '../model/types';
 import { madd } from '../model/geometry';
-import { shapeOutline, type Shape } from '../library/shapes';
+import { shapeBox, shapeDrawCentre, shapeOutline, type PolyShape, type Shape } from '../library/shapes';
+import { bulgeArc, loopArea, moveLoop, reverseLoop, segmentPoint, type PolyVertex } from '../library/polyShape';
 import { getMaterial } from '../library/materials';
 import { getBolt } from '../library/bolts';
 import type { Hole2D } from '../connections/common';
@@ -199,6 +206,47 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     refs.push(refs[0]);
     return w.add('IFCPOLYLINE', [list(refs)]);
   };
+  /** Closed loop with exact arcs as an IfcIndexedPolyCurve. */
+  const indexedLoop = (pts: PolyVertex[]): Ref => {
+    const coords: string[] = [];
+    const idx = (v: Vec2) => {
+      coords.push(list([real(v.x), real(v.y)]));
+      return coords.length;
+    };
+    const first = idx(pts[0]);
+    const segs: string[] = [];
+    let run: number[] = [first];
+    const flush = () => {
+      if (run.length > 1) segs.push(`IFCLINEINDEX(${list(run)})`);
+    };
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const q = pts[(i + 1) % pts.length];
+      const end = i + 1 < pts.length ? idx(q) : first;
+      if (bulgeArc(p, q, p.b)) {
+        flush();
+        const mid = idx(segmentPoint(p, q, p.b, 0.5));
+        segs.push(`IFCARCINDEX(${list([run[run.length - 1], mid, end])})`);
+        run = [end];
+      } else run.push(end);
+    }
+    flush();
+    const pl = w.add('IFCCARTESIANPOINTLIST2D', [list(coords)]);
+    return w.add('IFCINDEXEDPOLYCURVE', [pl, list(segs), en('F')]);
+  };
+  /** POLY profile: outer loop counter-clockwise, voids clockwise, centred on the bounding box. */
+  const polyProfile = (name: string, s: PolyShape): Ref => {
+    const c = shapeDrawCentre(s);
+    const orient = (l: PolyVertex[], ccw: boolean) => {
+      const m = moveLoop(l, -c.x, -c.y);
+      return loopArea(m) > 0 === ccw ? m : reverseLoop(m);
+    };
+    const outer = indexedLoop(orient(s.outer, true));
+    const holes = (s.holes ?? []).map((h) => indexedLoop(orient(h, false)));
+    return holes.length
+      ? w.add('IFCARBITRARYPROFILEDEFWITHVOIDS', [en('AREA'), str(name), outer, list(holes)])
+      : w.add('IFCARBITRARYCLOSEDPROFILEDEF', [en('AREA'), str(name), outer]);
+  };
   const profileCache = new Map<string, Ref>();
   const profileDef = (name: string, s: Shape): Ref => {
     const hit = profileCache.get(name);
@@ -206,6 +254,9 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     let ref: Ref;
     const A = en('AREA');
     switch (s.type) {
+      case 'POLY':
+        ref = polyProfile(name, s);
+        break;
       case 'I':
         ref = w.add('IFCISHAPEPROFILEDEF', [A, str(name), pos2d, real(s.b), real(s.h), real(s.tw), real(s.tf), real(s.r), '$', '$']);
         break;
@@ -547,7 +598,7 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
 }
 
 function sectionHeight(s: Shape): number {
-  return s.type === 'CHS' || s.type === 'RD' ? s.d : s.h;
+  return s.type === 'CHS' || s.type === 'RD' ? s.d : shapeBox(s).h;
 }
 
 function perpendicular(d: Vec3): Vec3 {

@@ -1,4 +1,6 @@
-import { sectionProps, shapeBox, validateShape, type SectionProps, type Shape, type ShapeType } from './shapes';
+import { sectionProps, shapeBox, shapeDrawCentre, validateShape, type SectionProps, type Shape, type ShapeType } from './shapes';
+import { findMaterial } from './materials';
+import type { Vec2 } from '../model/types';
 import * as EN from './sections/en';
 import * as BS from './sections/bs';
 import * as US from './sections/aisc';
@@ -46,6 +48,14 @@ export interface Profile extends SectionProps {
   aliases?: string[];
   /** True for user-registered (custom/imported) profiles. */
   custom?: boolean;
+  /**
+   * Insertion point ("wireframe point") in outline coordinates, i.e. relative
+   * to the bounding-box centre (ProfileDef.insertion is in drawing coordinates).
+   * Members in alignment mode 'insertion' put the wire line through it.
+   */
+  insertion?: Vec2;
+  /** Material the section is made of (custom profiles), e.g. "6063 T6"; `mass` stays on the steel basis. */
+  material?: string;
 }
 
 export const STEEL_DENSITY = 7850; // kg/m³
@@ -63,6 +73,8 @@ interface BuildOpts {
   tdes?: number;
   aliases?: string[];
   custom?: boolean;
+  insertion?: Vec2;
+  material?: string;
 }
 
 function buildProfile(name: string, standard: Standard, family: string, shape: Shape, o: BuildOpts = {}): Profile {
@@ -83,7 +95,24 @@ function buildProfile(name: string, standard: Standard, family: string, shape: S
   if (o.tdes !== undefined) p.tdes = o.tdes;
   if (o.aliases?.length) p.aliases = o.aliases;
   if (o.custom) p.custom = true;
+  if (o.insertion) {
+    const c = shapeDrawCentre(shape);
+    p.insertion = { x: o.insertion.x - c.x, y: o.insertion.y - c.y };
+  }
+  if (o.material) p.material = o.material;
   return p;
+}
+
+/** kg/m³ of a material name (steel 7850 when unknown or absent). */
+const densityOf = (material?: string) => findMaterial(material)?.density ?? STEEL_DENSITY;
+
+/**
+ * Mass per metre of a profile in a material (default: the profile's own
+ * material, else steel). `Profile.mass` is on the steel basis (7850 kg/m³);
+ * member masses scale it by the member material's density.
+ */
+export function profileMassIn(p: Pick<Profile, 'mass' | 'material'>, material?: string): number {
+  return (p.mass * densityOf(material ?? p.material)) / STEEL_DENSITY;
 }
 
 function addProfile(name: string, standard: Standard, family: string, shape: Shape, o: BuildOpts = {}) {
@@ -304,8 +333,19 @@ export interface ProfileDef {
   /** Defaults to "Custom <type>". */
   family?: string;
   shape: Shape;
+  /** kg/m in `material` (steel when no material is given). */
   mass?: number;
   spec?: string;
+  /**
+   * Insertion point ("wireframe point") in the profile's own drawing
+   * coordinates: for POLY the coordinates of its vertices, for parametric
+   * shapes the outline coordinates (origin at the bounding-box centre).
+   */
+  insertion?: Vec2;
+  /** Section material (e.g. "6063 T6"): mass is computed with its density and new members of this profile get it. */
+  material?: string;
+  /** Editable sketch the outline was made from (ProfileSketcher); opaque to the catalogue. */
+  sketch?: unknown;
 }
 
 /** Build a Profile from a definition (throws on an invalid shape or name). */
@@ -316,11 +356,17 @@ export function profileFromDef(def: ProfileDef): Profile {
   const err = validateShape(def.shape);
   if (err) throw new Error(`${name}: ${err}`);
   if (def.mass !== undefined && !(Number.isFinite(def.mass) && def.mass > 0)) throw new Error(`${name}: mass must be > 0`);
-  return buildProfile(name, def.standard ?? 'Custom', def.family?.trim() || `Custom ${def.shape.type}`, { ...def.shape }, {
-    mass: def.mass,
+  if (def.insertion !== undefined && !(def.insertion && Number.isFinite(def.insertion.x) && Number.isFinite(def.insertion.y))) throw new Error(`${name}: insertion point must be {x, y} numbers`);
+  if (def.material !== undefined && !findMaterial(def.material)) throw new Error(`${name}: unknown material "${def.material}"`);
+  // Mass is stored on the steel basis (members scale it by their material's density).
+  const mass = def.mass === undefined ? undefined : (def.mass * STEEL_DENSITY) / densityOf(def.material);
+  return buildProfile(name, def.standard ?? 'Custom', def.family?.trim() || (def.shape.type === 'POLY' ? 'Custom outline' : `Custom ${def.shape.type}`), { ...def.shape }, {
+    mass,
     massSource: def.mass === undefined ? 'computed' : 'user',
     spec: def.spec,
     custom: true,
+    insertion: def.insertion ? { x: def.insertion.x, y: def.insertion.y } : undefined,
+    material: def.material ? findMaterial(def.material)!.name : undefined,
   });
 }
 
@@ -369,7 +415,7 @@ export function registerProfiles(defs: readonly ProfileDef[], opts: { replaceBui
     if (existing) all[all.indexOf(existing)] = p;
     else all.push(p);
     byName.set(p.name, p);
-    customDefs.set(p.name, { ...def, name: p.name, shape: { ...def.shape } });
+    customDefs.set(p.name, { ...def, name: p.name, shape: { ...def.shape } as Shape });
     count++;
   }
   if (count) changed();
@@ -401,7 +447,7 @@ export function unregisterProfiles(names: Iterable<string>): number {
 
 /** Definitions of all registered custom profiles (e.g. to store with a project). */
 export function customProfileDefs(): ProfileDef[] {
-  return [...customDefs.values()].map((d) => ({ ...d, shape: { ...d.shape } }));
+  return [...customDefs.values()].map((d) => ({ ...d, shape: { ...d.shape } as Shape }));
 }
 
 export function isCustomProfile(name: string): boolean {
@@ -417,8 +463,11 @@ export function isCustomProfile(name: string): boolean {
  *   Tube 60x3,,CHS,,,,,,3,60,,4.22
  *
  * - Columns are matched by header name in any order (case-insensitive); unused cells stay
- *   blank. Optional extra columns: `standard` (EN, BS, AISC or Custom — default Custom) and
- *   `spec`. Unknown columns are ignored.
+ *   blank. Optional extra columns: `standard` (EN, BS, AISC or Custom — default Custom),
+ *   `spec`, `material` (e.g. 6063 T6; mass is then in that material) and `ix`, `iy` (the
+ *   insertion point, mm from the bounding-box centre, x across = local y, y up = local z).
+ *   Unknown columns are ignored. Arbitrary outlines (POLY) need the JSON format
+ *   (profileDefsToJson / parseProfileJson).
  * - Delimiter is comma, semicolon or tab, taken from the header row. With semicolon or tab,
  *   decimal commas ("2,5") are accepted. Fields may be double-quoted. Blank lines and lines
  *   starting with # are skipped.
@@ -508,11 +557,15 @@ export function parseProfileCsv(text: string): { defs: ProfileDef[]; errors: str
       continue;
     }
     const type = TYPE_ALIASES[cell('type').toUpperCase()];
+    if (cell('type').toUpperCase() === 'POLY') {
+      errors.push(`line ${ln} (${name}): outline profiles (POLY) need the JSON format`);
+      continue;
+    }
     if (!type) {
       errors.push(`line ${ln} (${name}): unknown type "${cell('type')}"`);
       continue;
     }
-    const [h, b, tw, tf, r, t, d, c, mass] = ['h', 'b', 'tw', 'tf', 'r', 't', 'd', 'c', 'mass'].map(num);
+    const [h, b, tw, tf, r, t, d, c, mass, ix, iy] = ['h', 'b', 'tw', 'tf', 'r', 't', 'd', 'c', 'mass', 'ix', 'iy'].map(num);
     if (bad.length) {
       errors.push(`line ${ln} (${name}): not a number in ${bad.join(', ')}`);
       continue;
@@ -571,11 +624,22 @@ export function parseProfileCsv(text: string): { defs: ProfileDef[]; errors: str
       errors.push(`line ${ln} (${name}): unknown standard "${std}"`);
       continue;
     }
+    const mat = cell('material');
+    if (mat && !findMaterial(mat)) {
+      errors.push(`line ${ln} (${name}): unknown material "${mat}"`);
+      continue;
+    }
+    if ((ix === undefined) !== (iy === undefined)) {
+      errors.push(`line ${ln} (${name}): give both ix and iy for the insertion point`);
+      continue;
+    }
     const def: ProfileDef = { name, shape };
     if (std) def.standard = std as Standard;
     if (cell('family')) def.family = cell('family');
     if (cell('spec')) def.spec = cell('spec');
     if (mass !== undefined) def.mass = mass;
+    if (mat) def.material = findMaterial(mat)!.name;
+    if (ix !== undefined && iy !== undefined) def.insertion = { x: ix, y: iy };
     seen.add(name);
     defs.push(def);
   }
@@ -583,16 +647,38 @@ export function parseProfileCsv(text: string): { defs: ProfileDef[]; errors: str
   return { defs, errors };
 }
 
-/** Write definitions in the parseProfileCsv format (extra radii such as r2/ro are not representable). */
+/**
+ * Write definitions in the parseProfileCsv format (extra radii such as r2/ro are not
+ * representable). Outline profiles (POLY) are left out: use profileDefsToJson for them.
+ */
 export function profileDefsToCsv(defs: readonly ProfileDef[]): string {
+  defs = defs.filter((d) => d.shape.type !== 'POLY');
   const withStd = defs.some((d) => d.standard && d.standard !== 'Custom');
   const withSpec = defs.some((d) => d.spec);
-  const cols: string[] = [...PROFILE_CSV_COLUMNS, ...(withStd ? ['standard'] : []), ...(withSpec ? ['spec'] : [])];
+  const withMat = defs.some((d) => d.material);
+  const withIns = defs.some((d) => d.insertion);
+  const cols: string[] = [
+    ...PROFILE_CSV_COLUMNS,
+    ...(withStd ? ['standard'] : []),
+    ...(withSpec ? ['spec'] : []),
+    ...(withMat ? ['material'] : []),
+    ...(withIns ? ['ix', 'iy'] : []),
+  ];
   const q = (s: string) => (/[",;\t\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s);
   const f = (v: number | undefined) => (v === undefined ? '' : String(Number(v.toFixed(4))));
   const rows = defs.map((d) => {
     const s = d.shape;
-    const v: Record<string, string> = { name: q(d.name), family: q(d.family ?? ''), type: s.type, mass: f(d.mass), standard: d.standard ?? '', spec: q(d.spec ?? '') };
+    const v: Record<string, string> = {
+      name: q(d.name),
+      family: q(d.family ?? ''),
+      type: s.type,
+      mass: f(d.mass),
+      standard: d.standard ?? '',
+      spec: q(d.spec ?? ''),
+      material: q(d.material ?? ''),
+      ix: f(d.insertion?.x),
+      iy: f(d.insertion?.y),
+    };
     switch (s.type) {
       case 'I':
       case 'U':
@@ -618,8 +704,63 @@ export function profileDefsToCsv(defs: readonly ProfileDef[]): string {
       case 'Z':
         Object.assign(v, { h: f(s.h), b: f(s.b), c: f(s.c), t: f(s.t), r: f(s.r) });
         break;
+      case 'POLY':
+        break;
     }
     return cols.map((k) => v[k] ?? '').join(',');
   });
   return [cols.join(','), ...rows].join('\n') + '\n';
+}
+
+// ---------------------------------------------------------------------------
+// JSON (all shapes, including outlines with arcs, insertion points and sketches)
+
+export const PROFILE_JSON_FORMAT = 'facadesteel-profiles';
+
+/** `{ format, version, profiles: ProfileDef[] }`, pretty-printed. */
+export function profileDefsToJson(defs: readonly ProfileDef[]): string {
+  return JSON.stringify({ format: PROFILE_JSON_FORMAT, version: 1, profiles: defs }, null, 1) + '\n';
+}
+
+/**
+ * Read profile definitions from JSON: the profileDefsToJson document, a bare
+ * array of definitions or a single definition. Every definition is checked with
+ * profileFromDef; invalid ones are reported and skipped.
+ */
+export function parseProfileJson(text: string): { defs: ProfileDef[]; errors: string[] } {
+  const defs: ProfileDef[] = [];
+  const errors: string[] = [];
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text.replace(/^\uFEFF/, ''));
+  } catch (e) {
+    return { defs, errors: [`not valid JSON: ${(e as Error).message}`] };
+  }
+  const list: unknown[] = Array.isArray(doc)
+    ? doc
+    : doc && typeof doc === 'object' && Array.isArray((doc as { profiles?: unknown }).profiles)
+      ? (doc as { profiles: unknown[] }).profiles
+      : doc && typeof doc === 'object' && 'shape' in (doc as object)
+        ? [doc]
+        : [];
+  if (!list.length) errors.push('no profiles found (expected {"profiles": [...]} or a list of profile definitions)');
+  const seen = new Set<string>();
+  list.forEach((raw, i) => {
+    const d = raw as ProfileDef;
+    const label = `profile ${i + 1}${d && typeof d.name === 'string' ? ` (${d.name})` : ''}`;
+    if (!d || typeof d !== 'object' || typeof d.name !== 'string' || !d.name.trim()) return void errors.push(`${label}: name is required`);
+    if (seen.has(d.name.trim())) return void errors.push(`${label}: duplicate name`);
+    if (d.standard !== undefined && !STANDARD_VALUES.has(d.standard)) return void errors.push(`${label}: unknown standard "${d.standard}"`);
+    try {
+      profileFromDef(d);
+    } catch (e) {
+      return void errors.push(`${label}: ${(e as Error).message.replace(`${d.name.trim()}: `, '')}`);
+    }
+    const def: ProfileDef = { name: d.name.trim(), shape: d.shape };
+    for (const k of ['standard', 'family', 'mass', 'spec', 'insertion', 'material', 'sketch'] as const) if (d[k] !== undefined) (def as unknown as Record<string, unknown>)[k] = d[k];
+    if (def.material) def.material = findMaterial(def.material)!.name;
+    seen.add(def.name);
+    defs.push(def);
+  });
+  return { defs, errors };
 }

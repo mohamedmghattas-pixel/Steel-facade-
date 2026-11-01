@@ -3,8 +3,8 @@
  * inner edges of rolled sections as seen in front/top views.
  */
 import type { Vec2 } from '../model/types';
-import type { Shape } from '../library/shapes';
-import { shapeBox } from '../library/shapes';
+import type { PolyShape, Shape } from '../library/shapes';
+import { shapeBox, shapeOutline } from '../library/shapes';
 import type { Part } from '../derive/model';
 import { cutXAt, flangeProfile, sideProfile, type EndCut } from '../geometry/endPrep';
 import { bendAllowance, DEFAULT_K_FACTOR } from '../geometry/bentPlate';
@@ -105,9 +105,53 @@ export function frontInnerLines(s: Shape): { z: number; hidden: boolean }[] {
         { z: -s.h / 2 + s.t, hidden: true },
         { z: -s.h / 2 + s.c, hidden: false },
       ];
+    case 'POLY':
+      return polyInnerLines(s, 'front').map((l) => ({ z: l.v, hidden: l.hidden }));
     default:
       return [];
   }
+}
+
+/**
+ * Straight section edges seen edge-on in a view of an arbitrary outline: front
+ * (elevation, the viewer at local −y) shows the edges parallel to local y at
+ * their z, top (plan, the viewer above) the edges parallel to local z at their
+ * y. The silhouette edges are left out (the band outline draws them). An edge
+ * is hidden when material lies in front of it on both of its sides.
+ */
+function polyInnerLines(s: PolyShape, view: 'front' | 'top'): { v: number; hidden: boolean }[] {
+  const o = shapeOutline(s);
+  // (d, v): d = depth from the viewer (smaller is nearer), v = the level the line is drawn at.
+  const map = (p: Vec2) => (view === 'front' ? { d: p.x, v: p.y } : { d: -p.y, v: p.x });
+  const loops = [o.outer, ...o.holes].map((l) => l.map(map));
+  const vs = loops[0].map((q) => q.v);
+  const vMin = Math.min(...vs);
+  const vMax = Math.max(...vs);
+  const nearest = (v: number) => {
+    let best = Infinity;
+    for (const l of loops) {
+      for (let i = 0; i < l.length; i++) {
+        const a = l[i];
+        const b = l[(i + 1) % l.length];
+        if (a.v > v !== b.v > v) best = Math.min(best, a.d + ((v - a.v) / (b.v - a.v)) * (b.d - a.d));
+      }
+    }
+    return best;
+  };
+  const levels = new Map<number, boolean>();
+  for (const l of loops) {
+    for (let i = 0; i < l.length; i++) {
+      const a = l[i];
+      const b = l[(i + 1) % l.length];
+      if (Math.abs(a.v - b.v) > 1e-6 || Math.abs(a.d - b.d) < 1e-3) continue;
+      if (a.v < vMin + 1e-3 || a.v > vMax - 1e-3) continue;
+      const d0 = Math.min(a.d, b.d);
+      const hidden = nearest(a.v + 1e-3) < d0 - 1e-3 && nearest(a.v - 1e-3) < d0 - 1e-3;
+      const k = Math.round(a.v * 10) / 10;
+      levels.set(k, (levels.get(k) ?? true) && hidden);
+    }
+  }
+  return [...levels].sort((x, y) => x[0] - y[0]).map(([v, hidden]) => ({ v, hidden }));
 }
 
 /** Inner edges seen from above (looking at local z): y values across the width. */
@@ -149,6 +193,8 @@ export function topInnerLines(s: Shape): { y: number; hidden: boolean }[] {
         { y: s.t / 2, hidden: true },
         { y: -s.t / 2, hidden: false },
       ];
+    case 'POLY':
+      return polyInnerLines(s, 'top').map((l) => ({ y: l.v, hidden: l.hidden }));
     default:
       return [];
   }

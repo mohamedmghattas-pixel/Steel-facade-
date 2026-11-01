@@ -24,12 +24,23 @@
  * all coordinates are measured from that extreme start. Coped parts also get
  * outer contours (AK) of the web (v) and of every coped flange (o / u), with the
  * cope corner radii as polylines.
+ *
+ * Arbitrary outline profiles (custom / sketched / DXF-uploaded, Shape POLY)
+ * use the special-profile code SO. The header carries the bounding box (height
+ * h along local z, "flange width" b along local y) and the nominal wall
+ * thickness when the profile has one (thin-wall sketches), else 0. DSTV has no
+ * block for a cross-section, so the faces are written as their outer contours:
+ * AK on v (length × h) and o (length × b) — the stock the saw and drill see,
+ * with coordinates from the bounding box like any other section — and the
+ * section outline itself follows as ** comment lines (machines ignore them;
+ * the CAM operator can read the shape). Holes, saw angles and end-slot
+ * notches use the same faces as for boxes.
  */
 import type { Project } from '../model/types';
 import { bbox2 } from '../model/geometry';
 import { flangeProfile, sideProfile } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
-import type { Shape } from '../library/shapes';
+import { shapeBox, shapeOutline, type Shape } from '../library/shapes';
 import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
 import { flatPlate, markPosition } from './plateDxf';
 import { fabSettings } from './settings';
@@ -61,6 +72,7 @@ function profileCode(shape: Shape | undefined, kind: Part['kind']): string {
     case 'RD':
       return 'RU';
     case 'Z':
+    case 'POLY':
       return 'SO';
   }
 }
@@ -86,6 +98,10 @@ function sectionDims(shape: Shape): [number, number, number, number, number] {
       return [shape.h, shape.b, shape.tf, shape.tw, shape.r];
     case 'RD':
       return [shape.d, shape.d, 0, 0, 0];
+    case 'POLY': {
+      const box = shapeBox(shape);
+      return [box.h, box.w, shape.t ?? 0, shape.t ?? 0, 0];
+    }
   }
 }
 
@@ -201,6 +217,23 @@ export function partToDstv(part: Part, qty: number, p: Project, opts: DstvOption
     if (coped('bottom')) contour('u', flangeProfile(e.start, e.end, b, -h / 2).map((q) => ({ x: q.x, y: q.y + b / 2 })));
   }
   const contoured = new Set<string>();
+  if (!isPlate && shape?.type === 'POLY') {
+    // Special profile: plain face contours (unless a cope or slot contour follows), then the section as comments.
+    const coped = !!e && (e.start.copes.length > 0 || e.end.copes.length > 0);
+    const slotted = new Set((part.slots ?? []).flatMap((k) => (k.face === 'z' ? ['o', 'u'] : ['v', 'h'])));
+    for (const [face, H] of [['v', height], ['o', flangeW]] as const) {
+      if ((coped && face === 'v') || slotted.has(face)) continue;
+      out.push('AK');
+      for (const q of [{ x: 0, y: 0 }, { x: length, y: 0 }, { x: length, y: H }, { x: 0, y: H }, { x: 0, y: 0 }]) out.push(`  ${face}${f(q.x)}${f(q.y)}${f(0)}`);
+    }
+    const o = shapeOutline(shape);
+    const loops = [o.outer, ...o.holes];
+    out.push(`** Section outline (SO), mm from the bounding-box corner: y across (local y), z up (local z); ${loops.length} loop${loops.length === 1 ? '' : 's'}`);
+    loops.forEach((loop, i) => {
+      out.push(`** ${i === 0 ? 'outer' : `void ${i}`}`);
+      for (const q of loop) out.push(`**${f(q.x + flangeW / 2)}${f(q.y + height / 2)}`);
+    });
+  }
   if (shape && e && (e.start.copes.length || e.end.copes.length)) {
     contoured.add('v');
     for (const k of [...e.start.copes, ...e.end.copes]) contoured.add(k.side === 'top' ? 'o' : 'u');

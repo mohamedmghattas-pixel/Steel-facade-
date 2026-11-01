@@ -35,13 +35,15 @@ export interface ApplyResult {
   members: Id[];
 }
 
-interface Seg {
+/** A member piece of a straight line: stations s0 … s1 along the line, end nodes n0 / n1. */
+export interface LinePiece {
   id: Id;
   s0: number;
   s1: number;
   n0: Id;
   n1: Id;
 }
+type Seg = LinePiece;
 
 const sub = (a: Vec3, b: Vec3): Vec3 => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
 const dot = (a: Vec3, b: Vec3) => a.x * b.x + a.y * b.y + a.z * b.z;
@@ -250,45 +252,15 @@ export function applyWireframePlan(p: Project, plan: WireframePlan, acceptedIds?
   }
 
   // 5. Re-point references to the piece now at their node.
-  const resolve = (id: Id, node?: Id, point?: Vec3): Id => {
-    const info = segsOf.get(id);
-    if (!info || !info.segs.length) return id;
-    if (info.segs.length === 1) return info.segs[0].id;
-    const q = node && p.nodes[node] ? p.nodes[node].p : point;
-    if (!q) return info.segs[0].id;
-    const s = dot(sub(q, info.a), info.dir);
-    const cands = info.segs.filter((g) => s >= g.s0 - 1 && s <= g.s1 + 1);
-    if (cands.length === 1) return cands[0].id;
-    if (!cands.length) {
-      let best = info.segs[0];
-      let bd = Infinity;
-      for (const g of info.segs) {
-        const dd = s < g.s0 ? g.s0 - s : s > g.s1 ? s - g.s1 : 0;
-        if (dd < bd) {
-          bd = dd;
-          best = g;
-        }
-      }
-      return best.id;
-    }
-    // At a cut between two pieces: the one continuing upwards (as Auto-connect picks the main).
-    const far = (g: Seg) => {
-      const n = node === g.n0 ? g.n1 : g.n0;
-      return p.nodes[n]?.p.z ?? 0;
-    };
-    return cands.reduce((x, y) => (far(y) > far(x) ? y : x)).id;
-  };
   if (segsOf.size) {
-    const touched = (id: Id | null | undefined) => !!id && segsOf.has(id);
-    for (const c of Object.values(p.connections)) {
-      if (touched(c.main)) c.main = resolve(c.main!, c.node);
-      if (c.secondary.some(touched)) c.secondary = c.secondary.map((x) => (touched(x) ? resolve(x, c.node) : x));
-    }
-    for (const m of Object.values(p.members)) {
-      if (touched(m.startPrep?.to)) m.startPrep!.to = resolve(m.startPrep!.to!, m.start);
-      if (touched(m.endPrep?.to)) m.endPrep!.to = resolve(m.endPrep!.to!, m.end);
-    }
-    for (const pl of Object.values(p.plates ?? {})) if (touched(pl.weldedTo)) pl.weldedTo = resolve(pl.weldedTo!, undefined, pl.origin);
+    repointMemberRefs(
+      p,
+      (id) => segsOf.has(id),
+      (id, node, point) => {
+        const info = segsOf.get(id);
+        return info ? pieceAt(p, info.segs, info.a, info.dir, node, point) ?? id : id;
+      },
+    );
   }
 
   // 6. Remove absorbed pieces and deleted lines, then orphan nodes.
@@ -305,6 +277,59 @@ export function applyWireframePlan(p: Project, plan: WireframePlan, acceptedIds?
   });
   res.members = out;
   return res;
+}
+
+/**
+ * The piece of a rebuilt line that stands for it at a node or point. Pieces run
+ * along `a + dir·s` from station s0 to s1. Off the pieces: the nearest one; at a
+ * cut between two pieces: the one continuing upwards (as Auto-connect picks the
+ * main member). Null when there are no pieces.
+ */
+export function pieceAt(p: Project, segs: readonly LinePiece[], a: Vec3, dir: Vec3, node?: Id, point?: Vec3): Id | null {
+  if (!segs.length) return null;
+  if (segs.length === 1) return segs[0].id;
+  const q = node && p.nodes[node] ? p.nodes[node].p : point;
+  if (!q) return segs[0].id;
+  const s = dot(sub(q, a), dir);
+  const cands = segs.filter((g) => s >= g.s0 - 1 && s <= g.s1 + 1);
+  if (cands.length === 1) return cands[0].id;
+  if (!cands.length) {
+    let best = segs[0];
+    let bd = Infinity;
+    for (const g of segs) {
+      const dd = s < g.s0 ? g.s0 - s : s > g.s1 ? s - g.s1 : 0;
+      if (dd < bd) {
+        bd = dd;
+        best = g;
+      }
+    }
+    return best.id;
+  }
+  const far = (g: LinePiece) => {
+    const n = node === g.n0 ? g.n1 : g.n0;
+    return p.nodes[n]?.p.z ?? 0;
+  };
+  return cands.reduce((x, y) => (far(y) > far(x) ? y : x)).id;
+}
+
+/**
+ * Re-point member references for the members `touched` accepts: connection
+ * main / secondary (resolved at the connection's node), end-preparation `to`
+ * (at the referring end's node) and welded free plates (at the plate origin).
+ * `resolve` returns the member that now stands for `id` there. Shared by the
+ * wireframe check and the modify operations (join, split, break …).
+ */
+export function repointMemberRefs(p: Project, touched: (id: Id) => boolean, resolve: (id: Id, node?: Id, point?: Vec3) => Id) {
+  const hit = (id: Id | null | undefined): id is Id => !!id && touched(id);
+  for (const c of Object.values(p.connections)) {
+    if (hit(c.main)) c.main = resolve(c.main, c.node);
+    if (c.secondary.some(hit)) c.secondary = c.secondary.map((x) => (hit(x) ? resolve(x, c.node) : x));
+  }
+  for (const m of Object.values(p.members)) {
+    if (hit(m.startPrep?.to)) m.startPrep!.to = resolve(m.startPrep!.to!, m.start);
+    if (hit(m.endPrep?.to)) m.endPrep!.to = resolve(m.endPrep!.to!, m.end);
+  }
+  for (const pl of Object.values(p.plates ?? {})) if (hit(pl.weldedTo)) pl.weldedTo = resolve(pl.weldedTo, undefined, pl.origin);
 }
 
 function setPrep(m: Member, key: 'startPrep' | 'endPrep', prep: EndPrep | undefined) {

@@ -185,14 +185,18 @@ const ROLE_WORD: Record<MemberRole, string> = {
   other: 'line',
 };
 
-/** Fields that must match for two pieces to merge into one member. */
-function propsDiff(a: Member, b: Member, reclassify: boolean): string[] {
+/**
+ * Fields that must match for two pieces to merge into one member. Shared with
+ * the modify operations (join, core/model/modify.ts).
+ */
+export function memberPropsDiff(a: Member, b: Member, reclassify = false): string[] {
   const out: string[] = [];
   if ((a.profile ?? null) !== (b.profile ?? null)) out.push('profile');
   if (!reclassify && a.role !== b.role && a.role !== 'other' && b.role !== 'other') out.push('role');
   if (a.material !== b.material) out.push('material');
   if (a.finish !== b.finish) out.push('finish');
   if (a.rotation !== b.rotation) out.push('rotation');
+  if (!!a.mirrorSection !== !!b.mirrorSection) out.push('mirrored section');
   if (a.alignY !== b.alignY || a.alignZ !== b.alignZ || a.offsetY !== b.offsetY || a.offsetZ !== b.offsetZ) out.push('position on the line');
   if ((a.phase ?? '') !== (b.phase ?? '') || (a.zone ?? '') !== (b.zone ?? '') || (a.batch ?? '') !== (b.batch ?? '')) out.push('phase / zone / batch');
   if ((a.markOverride ?? '') !== (b.markOverride ?? '')) out.push('manual mark');
@@ -870,7 +874,7 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
       if ((nodeEnds.get(n)?.length ?? 0) > explained) continue;
       const a = p.members[L.pieces[k - 1]];
       const b = p.members[L.pieces[k]];
-      const diff = propsDiff(a, b, o.reclassify);
+      const diff = memberPropsDiff(a, b, o.reclassify);
       if (endDetail(a, n) || endDetail(b, n)) diff.push('end preparation / extension at the joint');
       if (diff.length) {
         add({

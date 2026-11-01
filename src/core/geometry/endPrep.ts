@@ -175,9 +175,12 @@ export function fitPlane(p: Project, m: Member, end: End, other: Member | undefi
   const dA = inward(A, end);
   // Face positions along ±y / ±z of B: the section envelope, except the web of I and U
   // sections — a member framing in from the web side is cut to the web face.
+  // A mirrored channel (Member.mirrorSection) opens towards −y: its web faces swap sides.
   const s = B.shape;
-  const yPos = s?.type === 'I' ? s.tw / 2 : s?.type === 'U' ? -B.w / 2 + s.tw : B.w / 2;
-  const yNeg = s?.type === 'I' ? s.tw / 2 : B.w / 2;
+  const uOpen = s?.type === 'U' ? -B.w / 2 + s.tw : B.w / 2;
+  const mirrored = !!other.mirrorSection;
+  const yPos = s?.type === 'I' ? s.tw / 2 : mirrored ? B.w / 2 : uOpen;
+  const yNeg = s?.type === 'I' ? s.tw / 2 : mirrored ? uOpen : B.w / 2;
   const faces: [Vec3, number][] = [
     [B.y, yPos],
     [scale(B.y, -1), yNeg],

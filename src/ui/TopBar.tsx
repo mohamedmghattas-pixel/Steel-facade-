@@ -20,6 +20,7 @@ import { exportBcfFile, lockMarksNow, openIfcSteelFile, runClashDetection, unloc
 import { marksLocked } from '../core/management/marks';
 import { WireframeStatusChip } from './dialogs/WireframeDialog';
 import { openWireframeCheck } from './wireframeActions';
+import { openOrientDialog } from './surfaceActions';
 
 interface Item {
   label: string;
@@ -173,6 +174,7 @@ function ManageMenu() {
       icon="table"
       items={[
         { label: 'Wireframe check…', hint: 'clean up, cut at junctions, client confirmation', run: () => openWireframeCheck('all') },
+        { label: 'Orient profiles to surface…', hint: 'section depth perpendicular to the facade', run: () => openOrientDialog() },
         '-',
         { label: 'Phases, zones and batches…', hint: 'erection & delivery', run: () => set({ dialog: 'phases' }) },
         locked ? { label: 'Unlock marks', hint: 'automatic numbering', run: unlockMarksNow } : { label: 'Lock marks', hint: 'keep numbers stable', run: lockMarksNow },

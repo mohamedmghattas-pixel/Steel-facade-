@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { derived, useStore, type ViewName } from '../state/store';
+import { provideReferenceCentre } from '../state/runtime';
 import { Viewer } from '../viewer/Viewer';
 import { getBlob } from '../state/storage';
 import { dxfReferenceObject, loadIfcReference, loadUnderlayImage, placeUnderlay, setGroupOpacity, underlayMesh, type UnderlayImage } from '../viewer/references';
@@ -62,6 +63,7 @@ export function ViewportPanel() {
     });
     viewerRef.current = v;
     viewerInstance = v;
+    provideReferenceCentre(() => v.referenceCentre());
     const s = useStore.getState();
     v.setModel(s.project, derived(s.project));
     v.setWorkPlane(s.workPlane, s.project.settings.gridStep, s.project);
@@ -70,6 +72,7 @@ export function ViewportPanel() {
       v.dispose();
       viewerRef.current = null;
       viewerInstance = null;
+      provideReferenceCentre(null);
     };
   }, []);
 

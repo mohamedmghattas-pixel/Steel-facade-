@@ -1,7 +1,7 @@
 import type { Connection, ConnectionType, Id, ParamValue, Project } from '../model/types';
 import { addConnection, memberDirection, membersAtNode } from '../model/ops';
 import { getProfile } from '../library/profiles';
-import { axesFor } from '../model/geometry';
+import { memberAxes } from '../model/geometry';
 import { basePlate } from './basePlate';
 import type { ConnectionDef } from './common';
 import { angleCleat, endPlate, finPlate, welded } from './memberJoints';
@@ -205,7 +205,7 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
         }
         // Put cleats/fins on the side of the secondary where the main member continues.
         const params: Record<string, number> = {};
-        const ys = axesFor(p.nodes[x.member.start].p, p.nodes[x.member.end].p, x.member.rotation).y;
+        const ys = memberAxes(p.nodes[x.member.start].p, p.nodes[x.member.end].p, x.member).y;
         if (main.at !== 'through' && isV(main) && Math.abs(ys.z) > 0.7) {
           const up = otherZ(main.member) > z ? 1 : -1;
           params.side = Math.sign(ys.z) * up;

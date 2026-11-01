@@ -64,6 +64,8 @@ export function migrateProject(p: Project | null): Project | null {
     approvals: Array.isArray(p.wireframe?.approvals) ? p.wireframe.approvals : [],
     settings: { ...defaultWireframeSettings(), ...(p.wireframe?.settings ?? {}) },
   };
+  const gap = p.wireframe.settings.stackJointGap;
+  if (!gap || !Number.isFinite(gap.min) || !Number.isFinite(gap.max)) p.wireframe.settings.stackJointGap = defaultWireframeSettings().stackJointGap;
   return p;
 }
 

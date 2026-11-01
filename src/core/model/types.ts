@@ -70,8 +70,16 @@ export interface Member {
   profile: string | null;
   material: string;
   role: MemberRole;
-  /** Rotation of the section about the member axis, degrees. */
+  /** Rotation of the section about the member axis, degrees (applied on top of the reference axes). */
   rotation: number;
+  /**
+   * Surface normal (any length, world): local z is this direction projected
+   * perpendicular to the member axis, local y = z × x (axesFor). Set by
+   * "Orient profiles to surface" so the section depth is perpendicular to the
+   * facade; absent = the default axes (world Z / +Y reference). `rotation`
+   * still applies on top. Points to the exterior side of the facade.
+   */
+  normal?: Vec3;
   /** Where the wireframe line sits on the section (local y / local z), in alignment mode 'grid'. */
   alignY: Align;
   alignZ: Align;
@@ -475,7 +483,21 @@ export interface WireframeCheckSettings {
   isolated: 'construction' | 'delete';
   /** Short lines with one end on a mullion and the other end free become brackets up to this length, mm. Default 600. */
   bracketMaxLength: number;
+  /**
+   * Collinear gaps of this size (mm) between two lengths of the same line family are stack
+   * joints: listed as "kept", never closed and not counted as issues. Default 10–60 mm.
+   */
+  stackJointGap: { min: number; max: number };
+  /** Propose turning profiles perpendicular to the facade surface (Member.normal). Default true. */
+  orient: boolean;
+  /** Orientation: keep each member's rotation on top of the surface normal (default false: rotation reset to 0). */
+  keepRotation: boolean;
+  /** Orientation of fold members (shared by two surface patches): the bisector (default), or follow the larger / smaller patch. */
+  foldNormal: FoldNormal;
 }
+
+/** Normal of a fold member between two surface patches: bisector, the larger patch (A) or the smaller (B). */
+export type FoldNormal = 'bisector' | 'a' | 'b';
 
 /** Counts shown before / after a check and stored with each confirmation. */
 export interface WireframeSummary {

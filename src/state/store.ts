@@ -48,6 +48,7 @@ export type DialogName =
   | 'arcMembers'
   | 'curvedFacade'
   | 'wireframeCheck'
+  | 'orientSurface'
   | ManagementDialogName;
 
 export interface Selection {
@@ -121,6 +122,8 @@ interface State {
   lastImport: Id[];
   /** Scope the wireframe check opens with (set before opening the dialog). */
   wireScope: WireScope;
+  /** Scope the "Orient profiles to surface" dialog opens with. */
+  orientScope: 'all' | 'selection';
   /** Preview of the wireframe check in the 3D view (null = none). */
   wireOverlay: WireOverlay | null;
 
@@ -167,6 +170,7 @@ export const useStore = create<State>((set, get) => ({
   assistantFocus: 0,
   lastImport: [],
   wireScope: 'all',
+  orientScope: 'all',
   wireOverlay: null,
 
   apply: (_label, fn) => {

@@ -18,14 +18,14 @@ cross product, `madd(p, d, s) = p + d·s` (`src/core/model/geometry.ts:22`).
 | --- | --- | --- |
 | Units | millimetres, degrees | `src/core/model/types.ts:5` |
 | World axes | X east, Y north, Z up | `src/core/model/types.ts:5` |
-| Handedness | Every frame is right-handed: `z = x × y` (members, plates), or equivalently `x = y × z` (angles, tees) | `src/core/model/geometry.ts:72`, `src/core/connections/common.ts:166`, `src/core/connections/kit.ts:338,374` |
-| Angles | degrees in the data (`rotation`, saw angles, `Hole2D.angle`), radians only inside functions | `src/core/model/types.ts:66`, `src/core/model/geometry.ts:74`, `src/core/geometry/endPrep.ts:47` |
+| Handedness | Every frame is right-handed: `z = x × y` (members, plates), or equivalently `x = y × z` (angles, tees) | `src/core/model/geometry.ts:84`, `src/core/connections/common.ts:166`, `src/core/connections/kit.ts:338,374` |
+| Angles | degrees in the data (`rotation`, saw angles, `Hole2D.angle`), radians only inside functions | `src/core/model/types.ts:66`, `src/core/model/geometry.ts:87`, `src/core/geometry/endPrep.ts:47` |
 | `EPS` | 1e-6 (zero-length normalise, parallel tests) | `src/core/model/geometry.ts:3,19` |
 | `NODE_TOL` | 0.5 mm: node merge, "member passes through node" | `src/core/model/ops.ts:60,169-172,419` |
-| Point equality / segment intersection | 0.5 mm | `src/core/model/geometry.ts:23,279` |
+| Point equality / segment intersection | 0.5 mm | `src/core/model/geometry.ts:23,340` |
 | Shortest line | lines shorter than 1 mm are not created | `src/core/model/ops.ts:204` |
 | End on node (mitre/fit) | 1 mm | `src/core/geometry/endPrep.ts:138-139` |
-| Vertical / horizontal (local axes **and** rules) | `\|d̂·Ẑ\| > 0.995` (`VERTICAL_COS`, about 5.7° from plumb) / `< 0.005` (`HORIZONTAL_SIN`): `isVerticalAxis` / `isHorizontalAxis` | `src/core/model/geometry.ts:41-54,69`, `src/core/model/ops.ts:428-431` |
+| Vertical / horizontal (local axes **and** rules) | `\|d̂·Ẑ\| > 0.995` (`VERTICAL_COS`, about 5.7° from plumb) / `< 0.005` (`HORIZONTAL_SIN`): `isVerticalAxis` / `isHorizontalAxis` | `src/core/model/geometry.ts:41-54,81`, `src/core/model/ops.ts:428-431` |
 | Collinear (rules) | `\|û·v̂\| > 0.999` | `src/core/connections/registry.ts:229` |
 | Through member at node | distance < `NODE_TOL` and `1e-4 < t < 1−1e-4` | `src/core/model/ops.ts:418-419` |
 | Cut angle limit / saw warning | 85° / 60° | `src/core/geometry/endPrep.ts:51,53` |
@@ -55,13 +55,13 @@ not whether a member is vertical.
 interface Frame { origin: Vec3; x: Vec3; y: Vec3; z: Vec3 }   // src/core/model/geometry.ts:27-32
 ```
 
-- `toWorld(f, lx, ly, lz) = f.origin + f.x·lx + f.y·ly + f.z·lz` (`src/core/model/geometry.ts:95-97`)
-- `toLocal(f, p) = ((p−o)·f.x, (p−o)·f.y, (p−o)·f.z)` (`src/core/model/geometry.ts:100-103`).
+- `toWorld(f, lx, ly, lz) = f.origin + f.x·lx + f.y·ly + f.z·lz` (`src/core/model/geometry.ts:133-135`)
+- `toLocal(f, p) = ((p−o)·f.x, (p−o)·f.y, (p−o)·f.z)` (`src/core/model/geometry.ts:138-141`).
   This is exact only for orthonormal frames. Every frame the code builds is
   orthonormal: member axes (§3.1), plate frames (`plateOn` orthogonalises,
   §2.1), free plates (§2.2), angles, tees and section parts
   (`src/core/connections/kit.ts:335-341,371-389`).
-- Rodrigues rotation `rotateAbout` (`src/core/model/geometry.ts:85-92`).
+- Rodrigues rotation `rotateAbout` (`src/core/model/geometry.ts:123-130`).
 
 ### 2.1 Plate frames: `plateOn`
 
@@ -116,14 +116,14 @@ assembly only when that member has a profile; otherwise a warning is raised
 
 ### 2.3 Work planes
 
-`planeAxes` (`src/core/model/geometry.ts:130-146`) gives:
+`planeAxes` (`src/core/model/geometry.ts:191-207`) gives:
 
 - XY: `u = X`, `v = Y`, `n = Z`
 - XZ: `u = X`, `v = Z`, `n = −Y`
 - YZ: `u = Y`, `v = Z`, `n = X`
 - custom: `u = x̂A`, `n = norm(u × yA)`, `v = n × u`, origin shifted by `offset` along `n`.
 
-`planeToWorld` and `worldToPlane` are at `src/core/model/geometry.ts:222-231`.
+`planeToWorld` and `worldToPlane` are at `src/core/model/geometry.ts:283-292`.
 For the XZ plane, `n = u × v = −Y`.
 
 ---
@@ -136,15 +136,38 @@ A `Member` runs between two nodes: `start` → `end`
 alignment. The **physical axis** is the centre line between the extended,
 trimmed or cut ends.
 
-### 3.1 Local axes (`axesFor`, `src/core/model/geometry.ts:67-83`)
+### 3.1 Local axes (`axesFor` / `memberAxes`, `src/core/model/geometry.ts:72-121`)
+
+Every consumer gets a member's axes through `memberAxes(a, b, m)` =
+`axesFor(a, b, m.rotation, m.normal)`: `memberGeom`
+(`src/core/derive/memberGeom.ts:50`, so meshes, IFC, DSTV, drawings, clash
+solids and connections), the end-preparation centre lines
+(`src/core/geometry/endPrep.ts:124`) and Auto-connect's cleat side
+(`src/core/connections/registry.ts:208`).
 
 ```
 x̂  = norm(b − a)
-vertical = isVerticalAxis(x̂)  ⇔  |x̂_z| > 0.995       (the rules' test, §1)
-r  = vertical ? Ŷ : Ẑ
-ŷ0 = norm(r × x̂),   ẑ0 = x̂ × ŷ0
-θ  = rotation (deg):  ŷ = ŷ0 cosθ + ẑ0 sinθ,   ẑ = ẑ0 cosθ − ŷ0 sinθ   (right-handed about x̂)
+with a surface normal n (Member.normal, src/core/model/types.ts:82), unless |n̂·x̂| > 0.999 or n = 0:
+   ẑ0 = norm(n − (n·x̂)x̂),   ŷ0 = ẑ0 × x̂          (depthFromNormal, geometry.ts:106)
+otherwise (no normal, the rule of every earlier model):
+   vertical = isVerticalAxis(x̂)  ⇔  |x̂_z| > 0.995       (the rules' test, §1)
+   r  = vertical ? Ŷ : Ẑ
+   ŷ0 = norm(r × x̂),   ẑ0 = x̂ × ŷ0
+θ  = rotation (deg):  ŷ = ŷ0 cosθ + ẑ0 sinθ,   ẑ = ẑ0 cosθ − ŷ0 sinθ   (right-handed about x̂, both cases)
 ```
+
+**Surface normal.** `Member.normal` makes the section perpendicular to the
+facade: the depth (local z) is the surface normal projected perpendicular to
+the member, the width (local y) lies in the surface, and `ẑ0 = x̂ × ŷ0` keeps the
+frame right-handed as before. The normal points to the exterior side; it does
+not depend on the direction the line was drawn (a member drawn the other way
+gets the same ẑ and the opposite ŷ, as without a normal). It is set by *Orient
+profiles to surface* and the wireframe check ([WIREFRAME_CHECK.md §5a](WIREFRAME_CHECK.md)).
+Members without a normal derive exactly as before (a test compares 400 random
+members bit for bit). Copy and split carry the normal; mirror reflects it and
+negates the rotation, so the mirrored depth is the mirror image of the
+original's (`mirrorMembers`, `src/core/model/ops.ts`). The wireframe
+fingerprint includes the normal and rotation of oriented members only.
 
 - Non-vertical: `ŷ0 = (−x̂y, x̂x, 0)/|…|` is horizontal and points to the left
   of the travel direction seen from above. `ẑ0` has a positive Z component:
@@ -183,12 +206,16 @@ r  = vertical ? Ŷ : Ẑ
 ```
 
 `rotationForDepth(a, b, dir)` returns the `rotation` that turns local `z`
-onto `dir` (`src/core/model/geometry.ts:174-181`). `facadeGrid` uses it with
+onto `dir` for a member without a normal (`src/core/model/geometry.ts:235-242`). `facadeGrid` uses it with
 `−n` for mullions and `+n` for transoms on custom planes. On XZ / YZ planes it
 uses fixed values: mullion 0 / 90, transom 90 when `transomDepthNormal`
 (`src/core/model/ops.ts:497-498`).
 
 **Notes / caveats:**
+- On a facade that is not vertical (sloped, V-shaped, curved), the default rule
+  twists transoms and some mullions against the surface (world Z is not the
+  facade's "up"). Orient the members to the surface instead of setting
+  rotations by hand.
 - The axes still change rule at the vertical threshold, now the same angle
   (5.7°) as the placement rules: a member leaning more is "inclined" for the
   rules too, and its local `z` is the projection of world Z.

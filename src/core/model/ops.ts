@@ -143,7 +143,20 @@ export function defaultDrawingSet(): DrawingSet {
 
 /** Default wireframe check rules (see core/wireframe and docs/WIREFRAME_CHECK.md). */
 export function defaultWireframeSettings(): WireframeCheckSettings {
-  return { junctionTolerance: 10, maxExtension: 50, splitMullions: true, minLength: 20, nearMiss: 100, reclassify: false, isolated: 'construction', bracketMaxLength: 600 };
+  return {
+    junctionTolerance: 10,
+    maxExtension: 50,
+    splitMullions: true,
+    minLength: 20,
+    nearMiss: 100,
+    reclassify: false,
+    isolated: 'construction',
+    bracketMaxLength: 600,
+    stackJointGap: { min: 10, max: 60 },
+    orient: true,
+    keepRotation: false,
+    foldNormal: 'bisector',
+  };
 }
 
 export function createProject(name = 'New facade project'): Project {
@@ -352,6 +365,56 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1)
   return out;
 }
 
+/** Mirror image of a point in the plane through `o` with normal `k` (unit). */
+function reflectPoint(q: Vec3, o: Vec3, k: Vec3): Vec3 {
+  const s = 2 * dot(sub(q, o), k);
+  return { x: q.x - k.x * s, y: q.y - k.y * s, z: q.z - k.z * s };
+}
+
+/** Mirror image of a direction in a plane with normal `k` (unit). */
+export function reflectVector(v: Vec3, k: Vec3): Vec3 {
+  const s = 2 * dot(v, k);
+  return { x: v.x - k.x * s, y: v.y - k.y * s, z: v.z - k.z * s };
+}
+
+/**
+ * Mirrored copies of members in the plane through `point` with normal `planeNormal`.
+ * Each copy keeps its properties; a surface normal (Member.normal) is reflected and the
+ * rotation of an oriented member negated, so the section depth is the mirror image of the
+ * original's. Members without a normal keep their rotation (as Copy). Mitres pair up with a
+ * mirrored partner or are dropped; welded free plates are not mirrored. Returns the new ids.
+ */
+export function mirrorMembers(p: Project, memberIds: Id[], point: Vec3, planeNormal: Vec3): Id[] {
+  const k = normalize(planeNormal);
+  if (len(k) < 0.5) throw new Error('The mirror plane needs a normal direction.');
+  const out: Id[] = [];
+  const copied = new Map<Id, Id>();
+  for (const m of memberIds.map((id) => p.members[id]).filter(Boolean)) {
+    const a = reflectPoint(p.nodes[m.start].p, point, k);
+    const b = reflectPoint(p.nodes[m.end].p, point, k);
+    const { id: _id, start: _s, end: _e, ...props } = structuredClone(m);
+    if (props.normal) {
+      props.normal = reflectVector(props.normal, k);
+      props.rotation = props.rotation ? -props.rotation : 0;
+    }
+    const nid = addLine(p, a, b, props);
+    if (!nid || nid === m.id) continue;
+    out.push(nid);
+    copied.set(m.id, nid);
+  }
+  for (const nid of copied.values()) {
+    const m = p.members[nid];
+    for (const key of ['startPrep', 'endPrep'] as const) {
+      const pr = m[key];
+      if (!pr?.to) continue;
+      const partner = copied.get(pr.to);
+      if (partner) pr.to = partner;
+      else if (pr.kind === 'mitre') delete m[key];
+    }
+  }
+  return out;
+}
+
 /** Split a member at parameter t (0..1). Returns the new node and the id of the second half. */
 export function splitMember(p: Project, memberId: Id, t: number): { node: Id; member: Id } | null {
   const m = p.members[memberId];
@@ -363,6 +426,7 @@ export function splitMember(p: Project, memberId: Id, t: number): { node: Id; me
   const nid = addNode(p, pos);
   const id2 = newId('m');
   p.members[id2] = { ...m, id: id2, start: nid, startExt: 0 };
+  if (m.normal) p.members[id2].normal = { ...m.normal };
   delete p.members[id2].startPrep;
   m.end = nid;
   m.endExt = 0;

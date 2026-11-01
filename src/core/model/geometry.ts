@@ -62,14 +62,27 @@ export function isHorizontalAxis(d: Vec3): boolean {
  * drawn upwards get y = +X, z = +Y; drawn downwards y = −X, z = +Y (y flips
  * with x like a horizontal member drawn the other way; the section depth z
  * stays +Y). A near-plumb member keeps z ≈ +Y, continuous with the plumb case.
- * `rotationDeg` then spins y/z about x.
+ *
+ * With a surface `normal` (Member.normal) the depth follows the surface instead:
+ * z0 = norm(n − (n·x)x), the normal projected perpendicular to the member, and
+ * y0 = z0 × x (so z0 = x × y0, right-handed as above). A normal (nearly) parallel
+ * to the member (|n̂·x| > NORMAL_PARALLEL_COS) or of zero length falls back to the
+ * rule above. `rotationDeg` then spins y/z about x in both cases.
  */
-export function axesFor(a: Vec3, b: Vec3, rotationDeg = 0): Omit<Frame, 'origin'> {
+export function axesFor(a: Vec3, b: Vec3, rotationDeg = 0, normal?: Vec3 | null): Omit<Frame, 'origin'> {
   const x = normalize(sub(b, a));
-  const vertical = isVerticalAxis(x);
-  const zRef = vertical ? v3(0, 1, 0) : v3(0, 0, 1);
-  let y = normalize(cross(zRef, x));
-  let z = cross(x, y);
+  let y: Vec3;
+  let z: Vec3;
+  const zn = normal ? depthFromNormal(x, normal) : null;
+  if (zn) {
+    z = zn;
+    y = cross(z, x);
+  } else {
+    const vertical = isVerticalAxis(x);
+    const zRef = vertical ? v3(0, 1, 0) : v3(0, 0, 1);
+    y = normalize(cross(zRef, x));
+    z = cross(x, y);
+  }
   if (rotationDeg) {
     const r = (rotationDeg * Math.PI) / 180;
     const c = Math.cos(r);
@@ -80,6 +93,31 @@ export function axesFor(a: Vec3, b: Vec3, rotationDeg = 0): Omit<Frame, 'origin'
     z = z2;
   }
   return { x, y, z };
+}
+
+/** A surface normal closer than about 2.6° to the member axis does not define a depth direction. */
+export const NORMAL_PARALLEL_COS = 0.999;
+
+/**
+ * Section depth (local z before rotation) of a member along unit axis `x` whose
+ * surface normal is `n`: n projected perpendicular to x, normalised; null when
+ * n is (nearly) zero or parallel to x.
+ */
+export function depthFromNormal(x: Vec3, n: Vec3): Vec3 | null {
+  const l = len(n);
+  if (!(l > EPS)) return null;
+  const c = dot(n, x) / l;
+  if (Math.abs(c) > NORMAL_PARALLEL_COS) return null;
+  return normalize(sub(n, scale(x, dot(n, x))));
+}
+
+/**
+ * Local axes of a member (no origin): `axesFor` with the member's rotation and
+ * surface normal. Every consumer that needs a member's section orientation goes
+ * through this (memberGeom, end preparations, auto-connect, orientation checks).
+ */
+export function memberAxes(a: Vec3, b: Vec3, m: Pick<Member, 'rotation' | 'normal'>): Omit<Frame, 'origin'> {
+  return axesFor(a, b, m.rotation || 0, m.normal);
 }
 
 export function rotateAbout(v: Vec3, axis: Vec3, deg: number): Vec3 {

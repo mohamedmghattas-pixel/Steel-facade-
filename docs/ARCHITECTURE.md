@@ -196,7 +196,7 @@ lists and NC files cannot disagree.
 ### 3.2 Data model
 
 - **`Project`** is plain JSON:
-  - `nodes`, `members` (wire lines; `profile: null` means a construction line), `connections` at nodes
+  - `nodes`, `members` (wire lines; `profile: null` means a construction line; an optional surface `normal` sets the section depth perpendicular to the facade), `connections` at nodes
   - `grids`, `levels`, `references` (IFC/DXF; bytes in IndexedDB), `underlays`
   - `settings` (stock, kerf, prefixes, auto rules, design code, movement, galvanizing bath, stock on hand)
   - `drawings` (settings, revisions, edits, cuts, templates)
@@ -370,6 +370,7 @@ lists and NC files cannot disagree.
 | D29 | Wireframe check: roles from topology (T-junctions and crossings 2-coloured on a maximum spanning forest), direction only as a tie-break; cuts only at mullion–transom junctions; client confirmation stored against a content fingerprint | Imported 3D facades are fragmented and often sloped, so "vertical = mullion" fails; the client must confirm the line model before detailing | Direction rules; splitting at every crossing | One reviewable plan (merge, cut, roles, issues) applied as one undo step; any later edit of geometry, roles or profiles shows "changed since verification" |
 | D30 | Arbitrary outline profiles (`POLY`, bulge arcs) are centred on their bounding box like every other shape; the insertion point is a shift of the section (`sectionShift`), not a new frame origin | Every consumer (meshes, IFC, DSTV, drawings, clash, connections) keeps working on box-centred outlines and the section centre line | Frame origin at the insertion point | Old models derive unchanged; connections use the box faces of outline profiles ([PROFILES.md](PROFILES.md)) |
 | D31 | Profiles by role as project settings plus a pure `assignProfilesByRole` in core | One place to say "mullions are X, transoms are Y"; other features (wireframe classification, assistant) reuse it | Per-member edits only | New members of a role get its profile; changing it asks whether to update existing members |
+| D32 | Profiles perpendicular to the facade surface: an optional `Member.normal` (local z = the normal projected perpendicular to the member, rotation on top), set from surfaces detected in the wireframe topology (junction normals → patches by connectivity and a 10° similarity → consistent sign through folds → exterior side by rule, user flips); all member axes go through one function (`memberAxes`) | A "world Z is up" rule twists sections on sloped, V-shaped and curved facades; the junctions already describe the surface, and the user wants "always perpendicular to the surface" | Per-member rotations computed once (lost on any edit, no notion of a surface); a user-picked plane per region (fails on curved and folded facades) | Models without normals derive bit for bit as before; copy / split / merge carry the normal, mirror reflects it; the fingerprint includes normals of oriented members only, so earlier confirmations stay valid; the exterior side is a heuristic the user can flip ([WIREFRAME_CHECK.md §5a](WIREFRAME_CHECK.md)) |
 
 ## 5. Known limits and open items
 

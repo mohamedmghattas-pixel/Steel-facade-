@@ -43,8 +43,9 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - **Line** and **Polyline** tools with snapping to ends, midpoints, grid and reference geometry.
    - Typed coordinates: `x,y,z` for world, `u,v` for work-plane, `@dx,dy` for relative, or a single length.
    - **Facade grid** generates every mullion and transom from bay widths and row heights.
-   - **Wireframe check** (Manage menu, or the status chip next to the project name) cleans an imported or drawn wireframe: whole lines, cut only where mullions and transoms meet, roles set, issues listed, and the client's confirmation recorded. See *Wireframe check* below.
+   - **Wireframe check** (Manage menu, or the status chip next to the project name) cleans an imported or drawn wireframe: whole lines, cut only where mullions and transoms meet, roles set, profiles turned perpendicular to the facade surface, stack joints kept, issues listed, and the client's confirmation recorded. See *Wireframe check* below.
 3. **Members.** Assign profiles from the **EN** and **AISC** libraries by hand, or let **Auto-assign** pick by direction, DXF layer or role. Then set rotation, face alignment, offsets and extensions.
+   - **Orient profiles to surface** (Members → *Orient*, Manage menu, member properties, or the assistant's `orient_to_surface`): profiles are always perpendicular to the facade. The surfaces are found from where mullions and transoms meet, so sloped, V-shaped, folded and curved facades work: every section's depth (local z) follows the surface normal and its width lies in the surface. Fold members between two surface patches get the bisector (or follow one patch), brackets get their depth along the mullion they stand on, and the exterior side can be flipped for the whole model or per patch.
    - **Custom profiles:** draw your own section in the **profile sketcher** (outlines, holes, thin walls with bend radii, fillets, mirror, typed coordinates), or upload them from **DXF** (closed polylines with holes), JSON or CSV. Each can carry an **insertion point**, the point the wire line runs through.
    - **Profiles by role:** give mullions, transoms and the other roles their own profile in Library → *Profiles by role*, and apply it to all members of a role at once. See [docs/PROFILES.md](docs/PROFILES.md).
 4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs.
@@ -101,13 +102,15 @@ Importing 20 000 segments, with joining and splitting, takes well under a second
 
 ## Wireframe check
 
-Manage → **Wireframe check…**, the status chip next to the project name, or the assistant (`wireframe_check`, `wireframe_apply`, `wireframe_status`). It opens on its own after a wireframe DXF import.
+Manage → **Wireframe check…**, the status chip next to the project name, or the assistant (`wireframe_check`, `wireframe_apply`, `wireframe_status`; `orient_to_surface` and `surface_info` for the orientation alone). It opens on its own after a wireframe DXF import.
 
 - **Whole lines.** Pieces that continue straight through a node become one line. A split is kept only where a mullion and a transom meet, where a connection sits, or where the two pieces differ (profile, material, rotation …; listed for review).
 - **Junctions.** A line end whose own axis, extended or trimmed by up to 50 mm, meets another line within the junction tolerance (default 10 mm, the 3D gap between the axes) is snapped onto that axis. Ends that meet one line at one point become one node. Mullions are cut where transoms meet them (switch: *Keep mullions continuous*, then transom ends sit on the mullion as through-nodes); transoms are cut where a mullion crosses them or ends on them.
 - **Roles from topology.** The line that receives other lines' ends is the mullion, the lines that end on it are transoms; this works on sloped and V-shaped facades where nothing is vertical. Direction (45° from horizontal), roles already set and length break ties. Short lines with one end on a mullion and the other free are brackets. Each line gets a reason.
-- **Issues for review:** isolated lines (made construction lines or deleted, as chosen), near-misses (10–100 mm, never auto-joined), dangling transom ends, very short lines, duplicates and overlaps, crossings without a node, collinear gaps (stack joints, kept).
-- **Review and confirm.** The dialog shows counts before → after, every change grouped with checkboxes and zoom-to, and a coloured 3D preview (role colours, yellow cuts, red issues). *Apply and confirm* applies the ticked changes as one undo step and records who confirmed (with a note) against a fingerprint of the wireframe. The chip then reads *verified*, turns to *changed* after any edit to node positions, member ends, roles or profiles, and back to *verified* on undo. *Issue drawings* reminds you when the wireframe is not verified.
+- **Orientation (perpendicular to the surface).** Surface patches come from the mullion–transom junctions; every member whose section depth is more than 2° off the surface normal is proposed (accepted by default) and gets the surface normal. The dialog shows the patches, fold members and members left as they are, normal arrows and patch tints in the 3D preview, and *Flip exterior side* (whole model or per patch).
+- **Stack joints (kept).** Collinear gaps of 10–60 mm (a setting) between two lengths of one family are listed as kept stack joints, with their sizes and zoom-to; they are never closed and are not issues.
+- **Issues for review:** isolated lines (made construction lines or deleted, as chosen), near-misses (10–100 mm, never auto-joined), dangling transom ends, very short lines, duplicates and overlaps, crossings without a node, collinear gaps outside the stack-joint range.
+- **Review and confirm.** The dialog shows counts before → after, every change grouped with checkboxes and zoom-to, and a coloured 3D preview (role colours, yellow cuts, red issues). *Apply and confirm* applies the ticked changes as one undo step and records who confirmed (with a note) against a fingerprint of the wireframe. The chip then reads *verified*, turns to *changed* after any edit to node positions, member ends, roles, profiles or the orientation of oriented members, and back to *verified* on undo. *Issue drawings* reminds you when the wireframe is not verified.
 
 Details, rules and limits: [docs/WIREFRAME_CHECK.md](docs/WIREFRAME_CHECK.md). A 21,600-member fragmented facade is checked in about 2 s and cleaned in under 1 s.
 
@@ -129,7 +132,8 @@ npm run build      # type-check + production build into dist/
 ```
 src/core/            pure TypeScript, no DOM, unit-tested
   model/             types, geometry, wireframe operations, facade grid generator
-  wireframe/         wireframe check: whole lines, junction cuts, roles, issues, confirmation fingerprint
+  wireframe/         wireframe check: whole lines, junction cuts, roles, issues, stack joints, surfaces and
+                     orientation (profiles perpendicular to the facade), confirmation fingerprint
   library/           EN + AISC profiles, section properties, materials, bolts
   connections/       parametric connection definitions + rule-based auto-connect
   derive/            wireframe + connections → parts, holes, assemblies, marks, weights

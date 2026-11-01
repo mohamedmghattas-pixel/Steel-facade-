@@ -5,20 +5,24 @@ A 3D DXF typically has every member drawn as a polyline with extra vertices,
 so it imports as many short pieces. Transoms stop a few millimetres short of
 the mullion or sit slightly off its plane, and lines cross without a node.
 The wireframe check turns that into **whole lines that are cut only where
-mullions and transoms meet**. It sets the member roles, lists everything else
-for review, and records the **client's confirmation** against a fingerprint of
-the result.
+mullions and transoms meet**. It sets the member roles, turns every profile
+**perpendicular to the facade surface**, keeps the **stack joints**, lists
+everything else for review, and records the **client's confirmation** against
+a fingerprint of the result.
 
 | Part | File |
 | --- | --- |
 | Analysis (pure, no DOM) | `src/core/wireframe/analyze.ts` |
 | Apply (inside `store.apply`, one undo step) | `src/core/wireframe/apply.ts` |
 | Fingerprint, status, approvals | `src/core/wireframe/record.ts` |
-| Actions (scope, apply, confirm) | `src/ui/wireframeActions.ts` |
-| Dialog, status chip, 3D preview | `src/ui/dialogs/WireframeDialog.tsx`, `src/viewer/Viewer.ts` (`setWireOverlay`) |
+| Surfaces: patches, signs, exterior side, folds (pure) | `src/core/wireframe/surfaces.ts` |
+| Orientation targets and items; standalone "Orient profiles to surface" | `src/core/wireframe/orient.ts`, `src/core/wireframe/orientModel.ts` |
+| Member axes with a surface normal | `src/core/model/geometry.ts` (`axesFor`, `memberAxes`), [CONNECTION_GEOMETRY.md §3.1](CONNECTION_GEOMETRY.md) |
+| Actions (scope, apply, confirm) | `src/ui/wireframeActions.ts`, `src/ui/surfaceActions.ts` |
+| Dialog, status chip, 3D preview | `src/ui/dialogs/WireframeDialog.tsx`, `src/ui/dialogs/SurfacePanel.tsx`, `src/ui/dialogs/OrientDialog.tsx`, `src/viewer/Viewer.ts` (`setWireOverlay`) |
 | DXF import (whole lines, split mode) | `src/core/io/wireframeJoin.ts`, `src/core/io/dxfImport.ts` |
 | Assistant tools | `src/assistant/modules/wireframe.ts` |
-| Tests | `tests/wireframeCheck.test.ts` |
+| Tests | `tests/wireframeCheck.test.ts`, `tests/surfaceOrientation.test.ts` |
 
 ## 1. Where to find it
 
@@ -31,6 +35,10 @@ the result.
 - **Issue drawings** shows a reminder with a link when the wireframe is not
   verified or has changed since it was confirmed.
 - **Assistant:** `wireframe_check`, `wireframe_apply` and `wireframe_status` (§9).
+- **Orient profiles to surface** on its own (§5a): Manage menu, Members →
+  *Orient* in the tool rail, *Section depth → Orient to surface…* in the member
+  properties, or the assistant (`orient_to_surface`, `surface_info`). Whole
+  model or the selection.
 
 ## 2. Lines
 
@@ -87,8 +95,16 @@ cut it goes midway between the axes.
   These are moved to where the axes meet.
 
 **Collinear gaps.** A line end that faces the end of a collinear line beyond
-the tolerance is a gap, for example a stack or movement joint between mullion
-lengths. Gaps are listed once and never closed.
+the tolerance (up to the near-miss distance) is a gap, for example a stack or
+movement joint between mullion lengths. Gaps are never closed. A gap of the
+**stack-joint size** (setting, default 10–60 mm) between two lines of one
+family (mullion / post with mullion / post, transom / rail with transom / rail)
+is a **stack joint**: it is listed once per pair in the informational group
+*Stack joints (kept)*, with its size and zoom-to (the two facing pieces), and
+marked teal in the 3D preview. Stack joints are not review issues; the
+assistant reports them separately. Other gaps (another size, or between
+different families) stay in *For review*. The two lengths of a stack joint
+also tie the surfaces on both sides together (§5a).
 
 ## 4. Roles (topology first)
 
@@ -153,6 +169,85 @@ previous cut.
   extension at the joint, and roles that are both set and different. These
   are listed as *property conflicts* and are not merged.
 
+## 5a. Orientation: profiles perpendicular to the surface
+
+**Rule.** Profiles are always perpendicular to the facade surface: a member's
+section depth (local z) is along the local surface normal and its width
+(local y) lies in the surface, for mullions, transoms and every other member
+in the surface. `Member.normal` stores the surface normal; local z is that
+normal projected perpendicular to the member axis, and the member's rotation
+applies on top ([CONNECTION_GEOMETRY.md §3.1](CONNECTION_GEOMETRY.md)). Without
+a normal the old rule applies (section "up" = world Z, or +Y for vertical
+members), which is right only for vertical facades: on a sloped, V-shaped or
+curved facade it twists the transoms and some mullions against the surface.
+
+**Surface detection** (`surfaces.ts`, on the check's lines and junctions):
+1. **Junction normals.** Wherever two lines meet at 20°–160° (T-junctions,
+   crossings, corners where both lines end, end joins), n = norm(d1 × d2).
+   Pairs of one family (mullion with mullion, transom with transom) and
+   brackets / outriggers do not define the surface there.
+2. **Patches.** Along each line, junctions sorted by station whose normals are
+   within 10° of each other are chained into one patch; patches spread through
+   the lines they share (union-find). A smoothly curved facade stays one patch;
+   a fold (the valley of a V, a building corner) separates two. The two
+   lengths of a stack joint join their patches when their normals agree.
+3. **Consistent sign.** Inside a patch a BFS flips each junction normal to agree
+   with its neighbour. Between patches, at a line they share, each patch leaves
+   the line on one side; an oriented surface crossing a fold has its two
+   patches on opposite sides, which fixes their relative sign (else the sign
+   of n_A·n_B). The relations are solved strongest first on a parity
+   union-find, so one bad junction cannot flip a whole facade.
+4. **Exterior side**, per connected facade, the first rule that decides:
+   1. normals already set on its members (each patch keeps its side, so a
+      flip is remembered);
+   2. away from the centre of the loaded reference models (concrete, primary
+      steel), when any are shown;
+   3. away from the centre of all the facades, when they are curved, folded or
+      wrap around it (a planar facade does not decide);
+   4. upwards, when the facade is sloped;
+   5. the side most section depths already point to (fewest changes);
+   6. as found.
+
+   The dialog says which rule decided. **Flip exterior side** reverses every
+   member; each patch can be flipped on its own from the patch list.
+5. **Normals per member.** A line in one patch takes the mean of its junction
+   normals; each member piece the mean of the junctions on its span, so a
+   warped surface is followed piece by piece. A **fold member** (in two
+   patches) takes the **bisector** of the two patch normals, or follows patch
+   A (the larger) or B — a setting, and per fold in the dialog.
+6. **Brackets / outriggers** keep their axis; their depth runs along the line
+   they are attached to (local z = the mullion axis projected perpendicular to
+   the bracket), upwards.
+7. **Members left as they are:** lines with no junction at 20°–160° (isolated
+   lines, free stubs). The dialog lists them (*Show members left as is*).
+
+**Proposals.** Group *Orientation (perpendicular to the surface)*: every line
+in scope with a member whose current depth axis deviates from its target by
+more than **2°**, with the largest deviation (a section facing the inside
+shows as 180°). Accepted by default, except a line whose members only change
+side (180°, the same solid for a symmetric section) and carry connections:
+connection parameters such as *side* follow the local axes, so it is listed
+unticked with a note. Applying sets `Member.normal` on every
+final piece of the line (after merges and cuts) and resets the rotation to 0,
+unless *Keep each member's rotation on top* is ticked. Role profiles given in
+the same step do not bring their rotation back. Members within 2° are left
+untouched.
+
+**Dialog.** Above the group: the number of surface patches, fold members,
+lines and members to turn and how far off they are, members left as is,
+brackets, the exterior rule and *Flip exterior side*; the patch list (lines,
+size, normal, curvature, flip, zoom) and the fold list (patches, angle,
+bisector / follow A / follow B, zoom). The 3D preview draws the depth
+direction as an arrow at member midpoints (every k-th member above 1,500),
+in the patch colour (folds white, brackets orange); *Colour the preview by
+surface patch* tints the lines (no surface: grey). Flips and fold choices
+re-run only the orientation, not the analysis.
+
+**Standalone.** *Orient profiles to surface* runs the same analysis on the
+model as it is (nothing but the normals changes), shows the same panel and
+preview, and applies the members to turn as one undo step. Scope: whole model
+or the selection; the rest of the model still defines the surfaces.
+
 ## 6. Issues for review
 
 | Issue | Default | Action |
@@ -166,7 +261,8 @@ previous cut.
 | Crossing without a junction | review only | — |
 | Junction too close to an end or cut | review only | — |
 | End shared with lines outside the scope / carrying its own connection | review only | — |
-| Collinear gaps (stack joints) | review only | — |
+| Collinear gaps outside the stack-joint range or between families | review only | — |
+| Stack joints (10–60 mm, one family) | listed as kept (group *Stack joints*), not issues | — never closed |
 
 ## 7. Applying
 
@@ -184,6 +280,8 @@ state (fingerprint mismatch). The steps:
    - Extensions and end preparations stay at the ends where they were; new cut
      ends are square with no extension.
 3. Roles of the accepted role items are set on every piece of the line.
+   Accepted orientation items set the surface normal on every final piece of
+   their line (per-piece normal from the junctions on its span).
 4. **References are re-pointed** to the piece that now sits at their node:
    - connection `main` / `secondary`;
    - end-preparation `to`;
@@ -207,7 +305,11 @@ assert this for the synthetic facade.
 
 **Fingerprint** (`wireframeFingerprint`): cyrb128 over
 - every node position rounded to 0.1 mm;
-- every member as its two rounded end points (sorted) plus role and profile.
+- every member as its two rounded end points (sorted) plus role and profile;
+- for a member with a surface normal, also the unit normal (rounded to 0.001)
+  and its rotation. Members without a normal hash exactly as before, so
+  confirmations recorded before orientation existed stay valid; orienting,
+  flipping or rotating an oriented member counts as a change.
 
 Each list is sorted. It does not depend on ids or order, so undo, redo, save
 and load give the same value.
@@ -217,7 +319,7 @@ and load give the same value.
 | Status | Meaning |
 | --- | --- |
 | verified | the fingerprint equals the last approval's |
-| changed since verification | any node moved more than about 0.05 mm, any line added, removed, split or merged, any role or profile changed since |
+| changed since verification | any node moved more than about 0.05 mm, any line added, removed, split or merged, any role or profile changed, any surface normal set or changed (or the rotation of an oriented member) since |
 | not verified | no approval yet |
 
 Changes to connections, materials, finishes, phases or drawings do not change
@@ -242,9 +344,12 @@ electronic signature.
 | `wireframe_check` | Analyse; returns counts before/after, groups, the first issues and changes (with item ids), settings and status. `open: true` opens the dialog. Changes nothing. |
 | `wireframe_apply` | Apply the default-ticked items of `groups` (default all), plus `include` / minus `exclude` item ids. Records a confirmation **only** with `confirm: true` and `confirmedBy`; `groups: []` + confirm = confirm as is. |
 | `wireframe_status` | Status, last confirmations, settings. |
+| `orient_to_surface` | Orient the profiles to the surface on the model as it is (scope `all` / `selection` / `ids`); `flip`, `flipPatches` (patch keys), `foldNormal`, `keepRotation`, `dryRun`. One undo step; returns the counts and the largest deviation left. |
+| `surface_info` | Patches (key, normal, size, curvature), folds, exterior rule, lines / members off their normal and by how much, members left as is, brackets. Changes nothing. |
 
-All three accept the scope (`all`, `selection`, `last_import`, or member `ids`)
-and the settings below.
+The first three accept the scope (`all`, `selection`, `last_import`, or member
+`ids`) and the settings below; `wireframe_check` also returns `stackJoints`
+(count, gap range) and `surfaces`.
 
 ## 10. Settings (stored with the project)
 
@@ -258,6 +363,10 @@ and the settings below.
 | Brackets up to | 600 mm | longest line classified as a bracket |
 | Isolated lines | Make construction lines | or delete |
 | Re-assign roles already set | off | roles other than *other* are kept |
+| Stack joints from / to | 10 / 60 mm | collinear gaps of this size between lengths of one family are kept stack joints (§3) |
+| Turn profiles perpendicular to the surface | on | the orientation group (§5a) |
+| Fold members | Bisector | or follow the larger / smaller patch |
+| Keep each member's rotation on top | off | off: oriented members get rotation 0 |
 
 **Scope:** whole model, the selection when the check opened, or the last
 import. Lines outside the scope are context: junctions onto them are found and
@@ -287,6 +396,11 @@ stopping 12 mm short. That is 21,604 members and 21,140 junction points.
 
 A 1,100-piece 3D facade checks in under 0.1 s in the browser.
 
+Orientation, on the same 21,151-member facade folded every ten bays (15
+patches, 14 folds): analysis with surfaces 1.5 s, of which the surface
+detection 0.2 s; setting the normals 0.1 s. The 459-line client facade (2
+patches, 5 folds, 266 members turned): 0.1 s.
+
 ## 13. Limits
 
 - Lines are straight. Arcs imported as chords stay as chords. Each chord meets
@@ -311,3 +425,17 @@ A 1,100-piece 3D facade checks in under 0.1 s in the browser.
   below about 0.05 mm may not change it (0.1 mm rounding).
 - **The analysis runs synchronously** when a rule changes: about 2 s on 20k
   lines.
+- **Orientation needs junctions.** A member that meets nothing at 20°–160°
+  keeps its orientation. A surface needs two families: a facade drawn with
+  mullions only gets no normals.
+- **The exterior side is a heuristic** (§5a); check it once in the preview and
+  flip it if needed — the choice is then kept by the members' normals.
+- **Patches are split at 10°.** A coarsely segmented arc with more than 10°
+  between neighbouring facets becomes one patch per facet; the mullions
+  between them are folds and get the bisector, which is the radial direction.
+  End mullions of an open arc see one facet only and follow its normal.
+- **Fold members with three or more patches** take the normalised sum of the
+  patch normals; *follow A / B* picks the two largest.
+- **Asymmetric sections** (channels, angles, custom outlines) keep the usual
+  convention: local y is to the left of the drawing direction, so a member
+  drawn the other way is mirrored across its depth.

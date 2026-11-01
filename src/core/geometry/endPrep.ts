@@ -23,7 +23,7 @@
  */
 import type { EndPrep, EndPrepKind, Member, Project, Vec2, Vec3 } from '../model/types';
 import {
-  axesFor,
+  memberAxes,
   clipHalfPlane,
   dist,
   dot,
@@ -121,7 +121,7 @@ export function centreLine(p: Project, m: Member): CentreLine | null {
   const a = p.nodes[m.start]?.p;
   const b = p.nodes[m.end]?.p;
   if (!a || !b || dist(a, b) < 1e-6) return null;
-  const ax = axesFor(a, b, m.rotation);
+  const ax = memberAxes(a, b, m);
   const prof = getProfile(m.profile);
   const w = prof?.b ?? 0;
   const h = prof?.h ?? 0;

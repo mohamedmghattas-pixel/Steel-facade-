@@ -4,7 +4,7 @@
  * client confirmation.
  */
 import type { Id, WireframeCheckSettings, WireframeSummary } from '../core/model/types';
-import { analyzeWireframe, applyWireframePlan, predictSummary, recordApproval, type ApplyResult, type WireframePlan } from '../core/wireframe';
+import { analyzeWireframe, applyWireframePlan, predictSummary, recordApproval, type ApplyResult, type OrientChoices, type WireframePlan } from '../core/wireframe';
 import { useStore, type WireScope } from '../state/store';
 import { assignProfilesByRole, roleProfile } from '../core/model/roleProfiles';
 
@@ -19,8 +19,8 @@ export function resolveWireScope(scope: WireScope, ids?: Id[]): Id[] | null {
   return null;
 }
 
-export function runWireframeCheck(settings: Partial<WireframeCheckSettings>, scope: Id[] | null): WireframePlan {
-  return analyzeWireframe(st().project, settings, scope);
+export function runWireframeCheck(settings: Partial<WireframeCheckSettings>, scope: Id[] | null, choices: OrientChoices = {}): WireframePlan {
+  return analyzeWireframe(st().project, settings, scope, choices);
 }
 
 export interface ConfirmInput {
@@ -69,6 +69,8 @@ export function applyWireframeCheck(
     if (opts.assignRoleProfiles !== false) {
       const bare = (res as ApplyResult).members.filter((id) => d.members[id] && !d.members[id].profile);
       profiled = assignProfilesByRole(d, bare, CHECK_PROFILE_ROLES);
+      // A role profile's rotation was meant for the default axes: oriented members keep rotation 0 unless kept.
+      if (profiled && !plan.settings.keepRotation) for (const id of (res as ApplyResult).orientedIds) if (d.members[id]) d.members[id].rotation = 0;
     }
     d.wireframe.settings = { ...plan.settings };
     if (confirm) recordApproval(d, { by: confirm.by, note: confirm.note, summary, changes: res.applied });

@@ -22,6 +22,7 @@ import { askConfirm } from './askState';
 import { ConnectionMovementInfo, MovementSettingsSection } from './dialogs/MovementDialogs';
 import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
 import { GroupingProps } from './dialogs/ManagementDialogs';
+import { clearMemberNormals, openOrientDialog } from './surfaceActions';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -152,6 +153,7 @@ function MemberProps({ ids }: { ids: string[] }) {
           />
         </Field>
       </div>
+      <SurfaceNormalRow ms={ms} ids={ids} />
       <div className="row2">
         <Field label="Across (local y)">
           <Segmented<Align>
@@ -816,5 +818,35 @@ function ModelPanel() {
         </div>
       ))}
     </section>
+  );
+}
+
+/** Surface normal of the selected members: follows the surface (n), the default axes, or mixed; orient / clear. */
+function SurfaceNormalRow({ ms, ids }: { ms: Member[]; ids: string[] }) {
+  const withN = ms.filter((m) => m.normal);
+  const n = withN[0]?.normal;
+  const text = !withN.length
+    ? 'Default axes (world Z / +Y reference)'
+    : withN.length < ms.length
+      ? `${withN.length} of ${ms.length} follow the surface`
+      : withN.length === 1 || withN.every((m) => Math.abs(m.normal!.x - n!.x) + Math.abs(m.normal!.y - n!.y) + Math.abs(m.normal!.z - n!.z) < 1e-6)
+        ? `Follows the surface, n = (${n!.x.toFixed(3)}, ${n!.y.toFixed(3)}, ${n!.z.toFixed(3)})`
+        : 'Follow the surface (several normals)';
+  return (
+    <Field label="Section depth" hint="Profiles perpendicular to the facade: local z along the surface normal; rotation applies on top">
+      <div className="row-inline" style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span className="muted" style={{ fontSize: 12, flex: 1 }} data-testid="member-normal">
+          {text}
+        </span>
+        <button className="link-btn small" title="Find the surface and turn these members perpendicular to it" onClick={() => openOrientDialog('selection')}>
+          Orient to surface…
+        </button>
+        {withN.length > 0 && (
+          <button className="link-btn small" title="Back to the default axes" onClick={() => clearMemberNormals(ids)}>
+            Clear
+          </button>
+        )}
+      </div>
+    </Field>
   );
 }

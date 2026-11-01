@@ -6,6 +6,7 @@ import { CATALOG, CATEGORIES } from '../core/connections/catalog';
 import { ConnectionLibraryHost, openConnectionLibrary } from './ConnectionLibrary';
 import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool, splitSelection } from './actions';
 import { fitSelection, mitreSelection } from './dialogs/modellingActions';
+import { openOrientDialog } from './surfaceActions';
 
 function ToolBtn({ tool, icon, label, shortcut }: { tool: Tool; icon: string; label: string; shortcut?: string }) {
   const active = useStore((s) => s.tool === tool);
@@ -72,6 +73,7 @@ export function ToolRail() {
         <span className="rail-title">2 · Members</span>
         <ActionBtn icon="profile" label="Assign" onClick={assignActiveProfile} title="Assign the active profile and role (Library) to the selected lines" />
         <ActionBtn icon="auto" label="Auto-assign" onClick={autoAssignSelection} title="Assign profiles by direction / DXF layer rules" />
+        <ActionBtn icon="orient" label="Orient" onClick={() => openOrientDialog()} title="Orient profiles to surface: section depth perpendicular to the facade (selection, or the whole model)" />
         <ActionBtn icon="mitre" label="Mitre" onClick={mitreSelection} title="Mitre two selected members at their shared corner" />
         <ActionBtn icon="fit" label="Fit to" onClick={fitSelection} title="Cut the first selected member to the face of the second (Shift+click)" />
         <ActionBtn icon="stiffener" label="Stiffener" onClick={() => set({ dialog: 'stiffeners' })} title="Add web stiffeners to the selected I/H or channel members" />

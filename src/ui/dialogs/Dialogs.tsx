@@ -13,6 +13,7 @@ import { SurveyDialog } from './MovementDialogs';
 import { ModellingDialogs } from './ModellingDialogs';
 import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from './ManagementDialogs';
 import { WireframeCheckDialog } from './WireframeDialog';
+import { OrientSurfaceDialog } from './OrientDialog';
 import { openWireframeCheck } from '../wireframeActions';
 
 export function Dialogs() {
@@ -49,6 +50,8 @@ export function Dialogs() {
       return <PanelLayoutDialog onClose={close} />;
     case 'wireframeCheck':
       return <WireframeCheckDialog onClose={close} />;
+    case 'orientSurface':
+      return <OrientSurfaceDialog onClose={close} />;
     default:
       return <ModellingDialogs dialog={dialog} onClose={close} />;
   }

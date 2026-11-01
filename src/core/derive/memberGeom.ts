@@ -1,5 +1,5 @@
 import type { Id, Member, Project, Vec2, Vec3 } from '../model/types';
-import { axesFor, dist, madd, sectionShift, toWorld, type Frame } from '../model/geometry';
+import { dist, madd, memberAxes, sectionShift, toWorld, type Frame } from '../model/geometry';
 import { getProfile, type Profile } from '../library/profiles';
 import { shapeOutline } from '../library/shapes';
 import { resolveEndCuts, cutEnvelope, type EndCut } from '../geometry/endPrep';
@@ -47,7 +47,7 @@ export function appliedExt(m: Member, governed?: GovernedEnds): { start: number;
 export function memberGeom(p: Project, m: Member, trims?: Trims, governed?: GovernedEnds): MemberGeom {
   const a = p.nodes[m.start].p;
   const b = p.nodes[m.end].p;
-  const axes = axesFor(a, b, m.rotation);
+  const axes = memberAxes(a, b, m);
   const profile = getProfile(m.profile);
   const h = profile?.h ?? 0;
   const w = profile?.b ?? 0;

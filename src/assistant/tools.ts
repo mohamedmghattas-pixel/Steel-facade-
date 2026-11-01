@@ -9,6 +9,7 @@ import {
   addLine,
   autoAssign,
   copyMembers,
+  mirrorMembers,
   deleteConnections,
   deleteMembers,
   facadeGrid,
@@ -141,13 +142,15 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: 'edit_geometry',
-    description: 'Move, copy (array) or delete members, or split lines at their crossings.',
+    description: 'Move, copy (array) or delete members, split lines at their crossings, or mirror (copy) members in a plane (mirrorPoint + mirrorNormal; surface normals are reflected).',
     input_schema: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['move', 'copy', 'delete', 'split'] },
+        action: { type: 'string', enum: ['move', 'copy', 'delete', 'split', 'mirror'] },
         filter: memberFilter,
         delta: vec3,
+        mirrorPoint: vec3,
+        mirrorNormal: vec3,
         count: { type: 'integer', description: 'Copies for "copy" (each shifted by delta × i)' },
       },
       required: ['action', 'filter'],
@@ -550,6 +553,10 @@ export async function runTool(name: string, input: Json): Promise<string> {
         else if (action === 'copy') created = copyMembers(d, ids, delta, Math.max(1, Number(input.count ?? 1)));
         else if (action === 'delete') deleteMembers(d, ids);
         else if (action === 'split') splitAtIntersections(d, ids.length ? ids : undefined);
+        else if (action === 'mirror') {
+          if (!input.mirrorNormal) throw new Error('mirror needs mirrorNormal (and mirrorPoint, default the origin).');
+          created = mirrorMembers(d, ids, input.mirrorPoint ? pt(input.mirrorPoint as number[]) : { x: 0, y: 0, z: 0 }, pt(input.mirrorNormal as number[]));
+        }
       });
       if (created.length) s.select({ members: created });
       return out({ action, members: ids.length, created: created.length });

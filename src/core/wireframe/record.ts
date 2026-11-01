@@ -6,7 +6,9 @@
  * (rounded to 0.1 mm) and every member as its two rounded end points plus role
  * and profile, each list sorted, hashed with cyrb128. Undo, redo, save and
  * load therefore give the same value; any move, split, merge, role or profile
- * change gives a new one.
+ * change gives a new one. A member with a surface normal (Member.normal) adds
+ * the normal (rounded to 0.001) and its rotation, so orientation changes count
+ * too; members without one hash as before, so earlier confirmations stay valid.
  */
 import type { Project, WireframeApproval, WireframeSummary, Vec3 } from '../model/types';
 import { hash128 } from '../io/guid';
@@ -16,6 +18,11 @@ const r = (v: number) => {
   return n === 0 ? 0 : n;
 };
 const pt = (q: Vec3) => `${r(q.x)},${r(q.y)},${r(q.z)}`;
+/** A unit-normal component rounded to 0.001 (about 0.06°). */
+const nr = (v: number) => {
+  const n = Math.round(v * 1000);
+  return n === 0 ? 0 : n;
+};
 
 /**
  * Order- and id-independent hash of node positions, member end points, roles and
@@ -32,7 +39,9 @@ export function wireframeFingerprint(p: Project): string {
     let x = pt(a.p);
     let y = pt(b.p);
     if (x > y) [x, y] = [y, x];
-    members.push(`${x}|${y}|${m.role}|${m.profile ?? ''}`);
+    const nl = m.normal ? Math.hypot(m.normal.x, m.normal.y, m.normal.z) || 1 : 1;
+    const orient = m.normal ? `|n${nr(m.normal.x / nl)},${nr(m.normal.y / nl)},${nr(m.normal.z / nl)}|r${Math.round((m.rotation || 0) * 1000) / 1000}` : '';
+    members.push(`${x}|${y}|${m.role}|${m.profile ?? ''}${orient}`);
   }
   members.sort();
   const bytes = hash128(`n:${nodes.join(';')}\nm:${members.join(';')}`);

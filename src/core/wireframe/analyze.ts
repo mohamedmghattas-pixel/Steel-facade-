@@ -20,8 +20,15 @@
  *    merged away — unless a connection sits on it or the pieces differ.
  * 5. Issues for review: isolated lines, very short lines, near-misses,
  *    dangling transom ends, property conflicts, crossings without a node.
+ * 6. Stack joints: collinear gaps of the stack-joint size between lengths of
+ *    one line family, listed as kept (never closed, not issues).
+ * 7. Orientation: surface patches from the junctions (surfaces.ts); members
+ *    whose section depth is not along the surface normal are proposed
+ *    (orient.ts).
  */
 import type { Connection, Id, Member, MemberRole, Project, Vec3, WireframeCheckSettings, WireframeSummary } from '../model/types';
+import type { SurfaceLink } from './surfaces';
+import { ORIENT_TOLERANCE, orientLines, type OrientationSummary, type OrientChoices } from './orient';
 import { defaultWireframeSettings, NODE_TOL } from '../model/ops';
 import { lineLineClosest, pointSegment, segmentIntersection } from '../model/geometry';
 import { capsuleCells } from '../io/wireframeJoin';
@@ -30,7 +37,7 @@ import { wireframeFingerprint } from './record';
 // ---------------------------------------------------------------------------
 // Plan types
 
-export type PlanGroup = 'merge' | 'junction' | 'crossing' | 'roles' | 'isolated' | 'short' | 'duplicate' | 'review';
+export type PlanGroup = 'merge' | 'junction' | 'crossing' | 'roles' | 'orientation' | 'isolated' | 'short' | 'duplicate' | 'joints' | 'review';
 
 export type PlanItemKind =
   | 'merge'
@@ -49,7 +56,9 @@ export type PlanItemKind =
   | 'crossing'
   | 'outside'
   | 'tooClose'
-  | 'joint';
+  | 'joint'
+  | 'orient'
+  | 'stackJoint';
 
 /** What applying an item does (apply.ts). Line numbers index WireframePlan.lines. */
 export type PlanOp =
@@ -61,6 +70,7 @@ export type PlanOp =
   | { t: 'isolated'; line: number; action: 'construction' | 'delete' }
   | { t: 'short'; line: number; action: 'delete' | 'collapse'; keep?: Id; drop?: Id }
   | { t: 'duplicate'; line: number }
+  | { t: 'orient'; line: number; normal: Vec3; samples?: { s: number; n: Vec3 }[]; keepRotation: boolean }
   | { t: 'none' };
 
 export interface PlanItem {
@@ -118,6 +128,12 @@ export interface WireframePlan {
   after: WireframeSummary;
   /** Mullion–transom junction points (for the summaries). */
   junctions: JunctionPair[];
+  /** Every junction between two lines (T, crossing, corner), any roles: the input of the surface detection. */
+  links: SurfaceLink[];
+  /** Collinear lines of one family facing each other across a gap (stack / movement joints). */
+  continuations: { a: number; b: number }[];
+  /** Surfaces and orientation targets (null when the orientation rule is off). */
+  orientation: OrientationSummary | null;
   /**
    * pieces / lines in scope; tees = mullion–transom T-junction pairs (a line end on a line);
    * crossings = mid-span crossings without a node; crossingsAtNode = lines that already cross at a
@@ -146,13 +162,18 @@ export const GROUP_LABEL: Record<PlanGroup, string> = {
   junction: 'Mullion–transom junctions (snap ends, cut)',
   crossing: 'Mid-span crossings',
   roles: 'Roles (mullion / transom / bracket)',
+  orientation: 'Orientation (perpendicular to the surface)',
   isolated: 'Isolated lines',
   short: 'Very short lines',
   duplicate: 'Duplicate lines',
+  joints: 'Stack joints (kept)',
   review: 'For review (not changed)',
 };
 
-export const GROUP_ORDER: PlanGroup[] = ['merge', 'junction', 'crossing', 'roles', 'isolated', 'duplicate', 'short', 'review'];
+export const GROUP_ORDER: PlanGroup[] = ['merge', 'junction', 'crossing', 'roles', 'orientation', 'isolated', 'duplicate', 'short', 'joints', 'review'];
+
+/** Informational groups: never applied and not counted as issues. */
+export const INFO_GROUPS: ReadonlySet<PlanGroup> = new Set(['joints']);
 
 // ---------------------------------------------------------------------------
 
@@ -269,9 +290,10 @@ export interface AnalyzeOptions extends Partial<WireframeCheckSettings> {}
  * the check to these members (the rest of the model is context: junctions onto
  * it are found, but it is never changed).
  */
-export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: Id[] | null): WireframePlan {
+export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: Id[] | null, choices: OrientChoices = {}): WireframePlan {
   const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const o: WireframeCheckSettings = { ...defaultWireframeSettings(), ...(p.wireframe?.settings ?? {}), ...stripUndefined(opts) };
+  o.stackJointGap = { ...defaultWireframeSettings().stackJointGap, ...(o.stackJointGap ?? {}) };
   const tol = Math.max(0.01, o.junctionTolerance);
   const nearMiss = Math.max(tol, o.nearMiss);
   const straight = Math.min(1, tol);
@@ -596,6 +618,20 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
         crosses.push({ l: i, m: j, sl, sm, p: mid(hit.p, q), gap: dist(hit.p, q), shared, through });
       }
     }
+  }
+
+  // Every junction between two lines, for the surface detection.
+  const links: SurfaceLink[] = [];
+  for (const t of tees) for (const sx of t.secs) if (sx !== t.main && live(sx) && live(t.main)) links.push({ a: sx, b: t.main, at: t.q });
+  for (const c of crosses) links.push({ a: c.l, b: c.m, at: c.p });
+  for (const [n, ls] of lineEndsAt) {
+    const lv = ls.filter(live);
+    for (let x = 0; x < lv.length; x++) for (let y = x + 1; y < lv.length; y++) links.push({ a: lv[x], b: lv[y], at: pos(n) });
+  }
+  for (const j of joins) {
+    const A = (lineEndsAt.get(j.node) ?? []).filter(live);
+    const B = (lineEndsAt.get(j.into) ?? []).filter(live);
+    for (const x of A) for (const y of B) if (x !== y) links.push({ a: x, b: y, at: j.to ?? pos(j.into) });
   }
 
   // 6. Roles.
@@ -990,14 +1026,42 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
     });
   }
   const gapsIn = gaps.filter((g) => lines[g.a].inScope || lines[g.b].inScope);
-  if (gapsIn.length) {
-    const seen = new Set<string>();
-    const uniq = gapsIn.filter((g) => {
-      const k = pairKey(g.a, g.b);
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
+  const seenGap = new Set<string>();
+  const uniqGaps = gapsIn.filter((g) => {
+    const k = pairKey(g.a, g.b);
+    if (seenGap.has(k)) return false;
+    seenGap.add(k);
+    return true;
+  });
+  // Stack joints: a gap of the stack-joint size between two lengths of one family (mullion / transom).
+  const family = (r: MemberRole) => (isMainRole(r) ? 'main' : isSecondaryRole(r) ? 'secondary' : r);
+  const jointGap = o.stackJointGap;
+  const isStack = (g: { a: number; b: number; d: number }) => family(lines[g.a].proposed) === family(lines[g.b].proposed) && g.d >= jointGap.min - 1e-6 && g.d <= jointGap.max + 1e-6;
+  for (const g of uniqGaps.filter(isStack)) {
+    const A = lines[g.a];
+    const B = lines[g.b];
+    const pa = A.nodes[0] === g.node ? A.pieces[0] : A.pieces[A.pieces.length - 1];
+    const P = pos(g.node);
+    const bAtStart = dist(B.a, P) <= dist(B.b, P);
+    const pb = bAtStart ? B.pieces[0] : B.pieces[B.pieces.length - 1];
+    const nb = bAtStart ? B.nodes[0] : B.nodes[B.nodes.length - 1];
+    add({
+      group: 'joints',
+      kind: 'stackJoint',
+      members: [pa, pb],
+      nodes: [g.node, nb],
+      at: mid(P, pos(nb)),
+      value: g.d,
+      unit: 'mm',
+      accepted: false,
+      actionable: false,
+      text: `Stack joint: ${fmt(g.d)} mm gap between two collinear ${ROLE_WORD[A.proposed]} lengths — kept.`,
+      op: { t: 'none' },
     });
+  }
+  const otherGaps = uniqGaps.filter((g) => !isStack(g));
+  if (otherGaps.length) {
+    const uniq = otherGaps;
     const ds = uniq.map((g) => g.d);
     const lo = Math.min(...ds);
     const hi = Math.max(...ds);
@@ -1011,7 +1075,7 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
       value: uniq.length,
       accepted: false,
       actionable: false,
-      text: `${uniq.length} gap${uniq.length === 1 ? '' : 's'} of ${lo === hi || hi - lo < 0.5 ? fmt(hi) : `${fmt(lo)}–${fmt(hi)}`} mm between collinear ${roles} lengths (stack / movement joints) — kept as they are.`,
+      text: `${uniq.length} gap${uniq.length === 1 ? '' : 's'} of ${lo === hi || hi - lo < 0.5 ? fmt(hi) : `${fmt(lo)}–${fmt(hi)}`} mm between collinear ${roles} lengths, outside the stack-joint range (${fmt(jointGap.min)}–${fmt(jointGap.max)} mm) or between different line families — kept as they are; check them.`,
       op: { t: 'none' },
     });
   }
@@ -1071,6 +1135,10 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
     before: currentSummary(p, scopeSet),
     after: currentSummary(p, scopeSet),
     junctions: [],
+    links,
+    // All gaps (also outside the scope): the surfaces are found on the whole model.
+    continuations: gaps.filter((g) => family(lines[g.a].proposed) === family(lines[g.b].proposed)).map((g) => ({ a: g.a, b: g.b })),
+    orientation: null,
     stats: { pieces: lines.reduce((s, L) => s + (L.inScope ? L.pieces.length : 0), 0), lines: lines.filter((L) => L.inScope).length, tees: 0, crossings: 0, crossingsAtNode: 0, cutPoints, ms: 0 },
   };
   plan.junctions = junctionPoints(lines, teeClusters, crossItems, isJunction, live, (t) => dist(pos(t.node), t.q));
@@ -1082,9 +1150,69 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
   plan.before.junctions = plan.junctions.length;
   plan.before.connected = plan.junctions.filter((j) => j.before).length;
   plan.after = predictSummary(plan, new Set(items.filter((i) => i.accepted && i.actionable).map((i) => i.id)));
+  if (o.orient) addOrientation(p, plan, choices);
   const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
   plan.stats.ms = Math.round(t1 - t0);
   return plan;
+}
+
+/**
+ * Surfaces and orientation items of a plan (group "orientation"): lines in scope whose
+ * members' section depth deviates more than ORIENT_TOLERANCE from the surface normal.
+ */
+function addOrientation(p: Project, plan: WireframePlan, choices: OrientChoices) {
+  const o = plan.settings;
+  const sum = orientLines(p, plan.lines, plan.links, { foldNormal: o.foldNormal, keepRotation: o.keepRotation }, choices, plan.continuations);
+  plan.orientation = sum;
+  const S = sum.surfaces;
+  const connected = new Set<Id>();
+  for (const c of Object.values(p.connections)) {
+    if (c.main) connected.add(c.main);
+    for (const x of c.secondary) connected.add(x);
+  }
+  for (const lo of sum.lines) {
+    if (lo.deviation <= ORIENT_TOLERANCE) continue;
+    const L = plan.lines[lo.line];
+    const ln = lo.normal;
+    // Only the side changes (a symmetric section looks the same) but connection parameters such as
+    // "side" follow the local axes: not ticked by default on members that carry connections.
+    const sideOnly = lo.members.every((t) => t.deviation <= ORIENT_TOLERANCE || t.deviation >= 180 - ORIENT_TOLERANCE);
+    const hold = sideOnly && lo.members.some((t) => connected.has(t.id));
+    const what = `${ROLE_WORD[L.proposed][0].toUpperCase()}${ROLE_WORD[L.proposed].slice(1)} ${fmt(L.len)} mm`;
+    const off = lo.deviation > 178 ? 'faces the other side (180°)' : `is ${fmt(lo.deviation)}° off`;
+    let text: string;
+    if (ln.bracket) text = `${what}: section depth along the line it is attached to — it ${off} now.`;
+    else if (ln.fold) {
+      const f = S.folds.find((x) => x.line === lo.line)!;
+      const how = f.mode === 'a' ? `patch ${f.patches[0] + 1}` : f.mode === 'b' ? `patch ${f.patches[1] + 1}` : 'the bisector';
+      text = `${what} on the fold between patches ${f.patches.map((x) => x + 1).join(' and ')} (${fmt(f.angle)}° apart): depth along ${how} — it ${off} now.`;
+    } else text = `${what}: section depth ${lo.deviation > 178 ? 'faces the inside (180°)' : `${fmt(lo.deviation)}° off the surface normal`} — turn it perpendicular to the surface (patch ${ln.patch + 1}).`;
+    if (hold) text += ' It carries connections whose side parameters follow the section — check them before turning.';
+    plan.items.push({
+      id: `orient-${lo.line}`,
+      group: 'orientation',
+      kind: 'orient',
+      members: lo.members.map((t) => t.id),
+      nodes: [],
+      at: mid(L.a, L.b),
+      value: lo.deviation,
+      unit: '°',
+      accepted: !hold,
+      actionable: true,
+      text,
+      op: { t: 'orient', line: lo.line, normal: ln.n, ...(ln.samples ? { samples: ln.samples } : {}), keepRotation: o.keepRotation },
+    });
+  }
+}
+
+/**
+ * The plan with its orientation recomputed for other choices (flip the exterior side,
+ * flip patches, fold normals, inside point): cheap, the analysis is not re-run.
+ */
+export function reorientPlan(p: Project, plan: WireframePlan, choices: OrientChoices): WireframePlan {
+  const next: WireframePlan = { ...plan, items: plan.items.filter((i) => i.group !== 'orientation'), orientation: null };
+  if (plan.settings.orient) addOrientation(p, next, choices);
+  return next;
 }
 
 /** One point per mullion–transom junction: a cluster of T-ends on a line, or a crossing. */

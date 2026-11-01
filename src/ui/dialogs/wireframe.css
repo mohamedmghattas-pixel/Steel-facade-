@@ -174,3 +174,49 @@
 .wf-buttons {
   justify-content: flex-end;
 }
+/* Surface orientation (shared by the check and "Orient profiles to surface"). */
+.wf-surfaces {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+.wf-surf-stats {
+  font-size: 12px;
+  margin: 0 0 6px;
+  color: var(--text-2);
+}
+.wf-surf-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  margin: 4px 0;
+  flex-wrap: wrap;
+}
+.wf-surf-row .secondary-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.wf-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-top: 3px;
+  flex: none;
+}
+.wf-group li select {
+  font-size: 11px;
+  max-width: 140px;
+}
+.wf-group.info-group {
+  background: transparent;
+  border-style: dashed;
+}
+.secondary-btn.small {
+  font-size: 11px;
+  padding: 2px 8px;
+  height: auto;
+}

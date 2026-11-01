@@ -3,19 +3,23 @@
  * with checkboxes and zoom-to, a coloured 3D preview while open, and the
  * client confirmation (apply and confirm / apply / confirm as is).
  */
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { useStore, type WireOverlay, type WireScope } from '../../state/store';
 import { Field, Modal, NumberInput, Segmented, Select } from '../widgets';
-import type { Id, Vec3, WireframeCheckSettings, WireframeSummary } from '../../core/model/types';
-import { GROUP_LABEL, GROUP_ORDER, predictSummary, STATUS_LABEL, wireframeStatus, type PlanGroup, type PlanItem, type WireframePlan } from '../../core/wireframe';
+import type { FoldNormal, Id, WireframeCheckSettings, WireframeSummary } from '../../core/model/types';
+import { GROUP_LABEL, GROUP_ORDER, predictSummary, reorientPlan, STATUS_LABEL, wireframeStatus, type OrientChoices, type PlanGroup, type PlanItem, type WireframePlan } from '../../core/wireframe';
 import { ROLE_COLORS } from '../../viewer/meshes';
-import { getViewer } from '../ViewportPanel';
 import { applyWireframeCheck, checkRoleProfiles, confirmWireframe, resolveWireScope, runWireframeCheck } from '../wireframeActions';
+import { referenceInsidePoint } from '../surfaceActions';
+import { SurfacePanel, surfaceOverlay, zoomToMembers } from './SurfacePanel';
 import './wireframe.css';
+
+export { zoomToMembers };
 
 const LIST_LIMIT = 200;
 const ISSUE_COLOR = 0xef4444;
 const CUT_COLOR = 0xffd23f;
+const JOINT_COLOR = 0x2dd4bf;
 
 const fmt = (n: number) => (Math.abs(n) >= 10 ? Math.round(n).toLocaleString() : n.toFixed(n >= 1 ? 1 : 2));
 const dateOf = (iso: string) => {
@@ -23,35 +27,7 @@ const dateOf = (iso: string) => {
   return Number.isNaN(d.getTime()) ? iso : `${d.toISOString().slice(0, 10)} ${d.toTimeString().slice(0, 5)}`;
 };
 
-/** Select the members of an item and aim the 3D view at them. */
-export function zoomToMembers(ids: Id[], fallback?: Vec3) {
-  const s = useStore.getState();
-  const p = s.project;
-  const live = ids.filter((id) => p.members[id]);
-  s.select({ members: live });
-  const min = { x: Infinity, y: Infinity, z: Infinity };
-  const max = { x: -Infinity, y: -Infinity, z: -Infinity };
-  for (const id of live) {
-    const m = p.members[id];
-    for (const n of [m.start, m.end]) {
-      const q = p.nodes[n]?.p;
-      if (!q) continue;
-      min.x = Math.min(min.x, q.x);
-      min.y = Math.min(min.y, q.y);
-      min.z = Math.min(min.z, q.z);
-      max.x = Math.max(max.x, q.x);
-      max.y = Math.max(max.y, q.y);
-      max.z = Math.max(max.z, q.z);
-    }
-  }
-  const v = getViewer();
-  if (!v) return;
-  if (fallback && (!live.length || Math.hypot(max.x - min.x, max.y - min.y, max.z - min.z) > 6000)) v.focusPoint(fallback, 2500);
-  else if (live.length) v.focusBox(min, max);
-  else if (fallback) v.focusPoint(fallback, 2500);
-}
-
-function overlayOf(plan: WireframePlan, accepted: Set<string>): WireOverlay {
+function overlayOf(plan: WireframePlan, accepted: Set<string>, tint: boolean): WireOverlay {
   const segments: number[] = [];
   const colors: number[] = [];
   const points: number[] = [];
@@ -66,13 +42,28 @@ function overlayOf(plan: WireframePlan, accepted: Set<string>): WireOverlay {
   });
   for (const it of plan.items) {
     const cut = it.actionable && accepted.has(it.id) && (it.kind === 'split' || it.kind === 'cross');
-    const issue = !it.actionable || it.group === 'short' || it.group === 'duplicate';
-    if (!cut && !issue) continue;
+    const joint = it.kind === 'stackJoint';
+    const issue = !joint && (!it.actionable || it.group === 'short' || it.group === 'duplicate');
+    if (!cut && !issue && !joint) continue;
     if (it.kind === 'joint') continue;
     points.push(it.at.x, it.at.y, it.at.z);
-    pointColors.push(cut ? CUT_COLOR : ISSUE_COLOR);
+    pointColors.push(cut ? CUT_COLOR : joint ? JOINT_COLOR : ISSUE_COLOR);
   }
-  return { segments, colors, points, pointColors };
+  const o = { segments, colors, points, pointColors };
+  if (plan.orientation) {
+    const p = useStore.getState().project;
+    surfaceOverlay(o, plan.lines, plan.orientation, p.nodes, p.members, tint);
+  }
+  return o;
+}
+
+/** "30 mm" or "30–31 mm": the gap sizes of the stack joints. */
+function gapNote(items: PlanItem[]): string {
+  const v = items.map((i) => i.value ?? 0);
+  if (!v.length) return '';
+  const lo = Math.min(...v);
+  const hi = Math.max(...v);
+  return hi - lo < 0.5 ? `${fmt(hi)} mm` : `${fmt(lo)}–${fmt(hi)} mm`;
 }
 
 const SUMMARY_ROWS: { key: keyof WireframeSummary; label: string }[] = [
@@ -105,26 +96,43 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
     setScope(s);
     setScopeIds(resolveWireScope(s));
   };
-  const { plan, error } = useMemo(() => {
+  const { plan: basePlan, error } = useMemo(() => {
     void project;
     try {
       const ids = scope === 'import' ? lastImport.filter((id) => project.members[id]) : scopeIds;
-      return { plan: runWireframeCheck(settings, scope === 'all' ? null : (ids ?? [])), error: '' };
+      return { plan: runWireframeCheck(settings, scope === 'all' ? null : (ids ?? []), { insidePoint: referenceInsidePoint() }), error: '' };
     } catch (e) {
       return { plan: null, error: (e as Error).message };
     }
   }, [project, settings, scope, scopeIds, lastImport]);
+  // Flip / fold choices only recompute the orientation, not the analysis.
+  const [choices, setChoices] = useState<OrientChoices>({});
+  const [tint, setTint] = useState(false);
+  useEffect(() => setChoices({}), [basePlan]);
+  const plan = useMemo(() => {
+    if (!basePlan || (!choices.flip && !choices.flipPatches?.length && !Object.keys(choices.folds ?? {}).length)) return basePlan;
+    return reorientPlan(project, basePlan, { insidePoint: referenceInsidePoint(), ...choices });
+  }, [basePlan, choices, project]);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
   useEffect(() => {
-    if (plan) setAccepted(new Set(plan.items.filter((i) => i.accepted && i.actionable).map((i) => i.id)));
-  }, [plan]);
+    if (basePlan) setAccepted(new Set(basePlan.items.filter((i) => i.accepted && i.actionable).map((i) => i.id)));
+  }, [basePlan]);
+  // A new orientation keeps the other ticks; orientation items the user had unticked stay unticked.
+  useEffect(() => {
+    if (!plan || plan === basePlan) return;
+    setAccepted((prev) => {
+      const next = new Set([...prev].filter((id) => !id.startsWith('orient-')));
+      for (const it of plan.items) if (it.group === 'orientation' && (prev.has(it.id) || !basePlan?.items.some((x) => x.id === it.id))) next.add(it.id);
+      return next;
+    });
+  }, [plan, basePlan]);
   const after = useMemo(() => (plan ? predictSummary(plan, accepted) : null), [plan, accepted]);
   const status = useMemo(() => wireframeStatus(project), [project]);
 
   // 3D preview while the dialog is open.
   useEffect(() => {
-    useStore.getState().set({ wireOverlay: plan ? overlayOf(plan, accepted) : null });
-  }, [plan, accepted]);
+    useStore.getState().set({ wireOverlay: plan ? overlayOf(plan, accepted, tint) : null });
+  }, [plan, accepted, tint]);
   useEffect(() => () => useStore.getState().set({ wireOverlay: null }), []);
 
   const groups = useMemo(() => {
@@ -152,6 +160,7 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
         res.splits ? `${res.splits} cuts` : '',
         res.snapped ? `${res.snapped} ends snapped` : '',
         res.roles ? `${res.roles} roles set` : '',
+        res.oriented ? `${res.oriented} members turned perpendicular to the surface` : '',
         res.profiled ? `${res.profiled} profiles assigned by role` : '',
         res.deleted ? `${res.deleted} deleted` : '',
         res.construction ? `${res.construction} construction lines` : '',
@@ -282,6 +291,35 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={settings.reclassify} onChange={(e) => set('reclassify', e.target.checked)} /> Re-assign roles already set
           </label>
         </div>
+        <div className="row2">
+          <Field label="Stack joints from" hint="Collinear gaps between lengths of one family in this range are kept joints">
+            <NumberInput value={settings.stackJointGap.min} unit="mm" min={0} onChange={(v) => set('stackJointGap', { ...settings.stackJointGap, min: v })} />
+          </Field>
+          <Field label="to">
+            <NumberInput value={settings.stackJointGap.max} unit="mm" min={0} onChange={(v) => set('stackJointGap', { ...settings.stackJointGap, max: v })} />
+          </Field>
+        </div>
+        <label className="check">
+          <input type="checkbox" checked={settings.orient} onChange={(e) => set('orient', e.target.checked)} /> Turn profiles perpendicular to the surface (section depth along the surface normal)
+        </label>
+        {settings.orient && (
+          <div className="row2">
+            <Field label="Fold members" hint="Members shared by two surface patches (e.g. the valley of a V)">
+              <Select<FoldNormal>
+                value={settings.foldNormal}
+                options={[
+                  { value: 'bisector', label: 'Bisector of the two patches' },
+                  { value: 'a', label: 'Follow the larger patch' },
+                  { value: 'b', label: 'Follow the smaller patch' },
+                ]}
+                onChange={(v) => set('foldNormal', v)}
+              />
+            </Field>
+            <label className="check wf-reclassify" title="Off: the rotation of oriented members is reset to 0">
+              <input type="checkbox" checked={settings.keepRotation} onChange={(e) => set('keepRotation', e.target.checked)} /> Keep each member's rotation on top
+            </label>
+          </div>
+        )}
       </details>
       {error && <p className="warning">{error}</p>}
       {plan && after && (
@@ -319,56 +357,68 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
           </p>
           {GROUP_ORDER.map((g) => {
             const items = groups.get(g);
-            if (!items?.length) return null;
+            const surfaces =
+              g === 'orientation' && plan.orientation ? (
+                <SurfacePanel key="surfaces" sum={plan.orientation} lines={plan.lines} choices={choices} onChoices={setChoices} tint={tint} onTint={setTint} />
+              ) : null;
+            if (!items?.length) return surfaces;
             const act = items.filter((i) => i.actionable);
             const on = act.filter((i) => accepted.has(i.id)).length;
             const isOpen = !!open[g];
+            const note = g === 'joints' ? gapNote(items) : '';
             return (
-              <section className={`wf-group ${g === 'review' ? 'review' : ''}`} key={g} data-testid={`wf-group-${g}`}>
-                <header>
-                  {act.length > 0 ? (
-                    <input
-                      type="checkbox"
-                      aria-label={GROUP_LABEL[g]}
-                      checked={on === act.length}
-                      ref={(el) => {
-                        if (el) el.indeterminate = on > 0 && on < act.length;
-                      }}
-                      onChange={(e) => toggle(act.map((i) => i.id), e.target.checked)}
-                    />
-                  ) : (
-                    <span className="wf-dot" />
+              <Fragment key={g}>
+                {surfaces}
+                <section className={`wf-group ${g === 'review' ? 'review' : ''} ${g === 'joints' ? 'info-group' : ''}`} data-testid={`wf-group-${g}`}>
+                  <header>
+                    {act.length > 0 ? (
+                      <input
+                        type="checkbox"
+                        aria-label={GROUP_LABEL[g]}
+                        checked={on === act.length}
+                        ref={(el) => {
+                          if (el) el.indeterminate = on > 0 && on < act.length;
+                        }}
+                        onChange={(e) => toggle(act.map((i) => i.id), e.target.checked)}
+                      />
+                    ) : (
+                      <span className="wf-dot" />
+                    )}
+                    <button className="wf-toggle" onClick={() => setOpen({ ...open, [g]: !isOpen })} aria-expanded={isOpen}>
+                      <span className="wf-caret">{isOpen ? '▾' : '▸'}</span> {GROUP_LABEL[g]}
+                    </button>
+                    <span className="wf-count">
+                      {act.length ? `${on} / ${items.length}` : items.length}
+                      {note ? ` · ${note}` : ''}
+                    </span>
+                    <button className="link-btn small" title="Select these members and zoom to them" onClick={() => zoomToMembers([...new Set(items.flatMap((i) => i.members))])}>
+                      Show
+                    </button>
+                  </header>
+                  {isOpen && (
+                    <ul>
+                      {items.slice(0, LIST_LIMIT).map((it) => (
+                        <li key={it.id} className={it.actionable ? '' : 'info'}>
+                          {it.actionable ? <input type="checkbox" checked={accepted.has(it.id)} onChange={(e) => toggle([it.id], e.target.checked)} aria-label={it.text} /> : <span className="wf-dot" />}
+                          <span className="wf-text">{it.text}</span>
+                          {it.value !== undefined && it.unit && <span className="wf-value">{it.unit === 'pieces' ? `${it.value}` : `${fmt(it.value)} ${it.unit}`}</span>}
+                          <button className="icon-btn wf-zoom" title="Select and zoom to" aria-label="Zoom to" onClick={() => zoomToMembers(it.members, it.at)}>
+                            ⌖
+                          </button>
+                        </li>
+                      ))}
+                      {items.length > LIST_LIMIT && <li className="info muted">… and {(items.length - LIST_LIMIT).toLocaleString()} more (the group checkbox covers all of them)</li>}
+                    </ul>
                   )}
-                  <button className="wf-toggle" onClick={() => setOpen({ ...open, [g]: !isOpen })} aria-expanded={isOpen}>
-                    <span className="wf-caret">{isOpen ? '▾' : '▸'}</span> {GROUP_LABEL[g]}
-                  </button>
-                  <span className="wf-count">{act.length ? `${on} / ${items.length}` : items.length}</span>
-                  <button className="link-btn small" title="Select these members and zoom to them" onClick={() => zoomToMembers([...new Set(items.flatMap((i) => i.members))])}>
-                    Show
-                  </button>
-                </header>
-                {isOpen && (
-                  <ul>
-                    {items.slice(0, LIST_LIMIT).map((it) => (
-                      <li key={it.id} className={it.actionable ? '' : 'info'}>
-                        {it.actionable ? <input type="checkbox" checked={accepted.has(it.id)} onChange={(e) => toggle([it.id], e.target.checked)} aria-label={it.text} /> : <span className="wf-dot" />}
-                        <span className="wf-text">{it.text}</span>
-                        {it.value !== undefined && it.unit && <span className="wf-value">{it.unit === 'pieces' ? `${it.value}` : `${fmt(it.value)} ${it.unit}`}</span>}
-                        <button className="icon-btn wf-zoom" title="Select and zoom to" aria-label="Zoom to" onClick={() => zoomToMembers(it.members, it.at)}>
-                          ⌖
-                        </button>
-                      </li>
-                    ))}
-                    {items.length > LIST_LIMIT && <li className="info muted">… and {(items.length - LIST_LIMIT).toLocaleString()} more (the group checkbox covers all of them)</li>}
-                  </ul>
-                )}
-              </section>
+                </section>
+              </Fragment>
             );
           })}
           {!plan.items.length && <p className="ok">Nothing to change: every line is whole and every mullion–transom junction meets at a node.</p>}
           <p className="muted wf-legend">
             3D preview: <span style={{ color: '#4f8ad8' }}>mullion</span> · <span style={{ color: '#46a37a' }}>transom</span> · <span style={{ color: '#d98b3a' }}>bracket</span> ·{' '}
-            <span style={{ color: '#8899aa' }}>other</span> · <span style={{ color: '#ffd23f' }}>● cut</span> · <span style={{ color: '#ef4444' }}>● issue / isolated</span>
+            <span style={{ color: '#8899aa' }}>other</span> · <span style={{ color: '#ffd23f' }}>● cut</span> · <span style={{ color: '#2dd4bf' }}>● stack joint</span> ·{' '}
+            <span style={{ color: '#ef4444' }}>● issue / isolated</span>
           </p>
         </>
       )}

@@ -47,6 +47,7 @@ const paths: Record<string, JSX.Element> = {
   ),
   measure: <path d="M2 14l12-12 4 4L6 18zM6 10l2 2M9 7l2 2M12 4l2 2" />,
   plane: <path d="M2 14l6-8h10l-6 8z" />,
+  orient: <path d="M2 16l5-6h11l-5 6zM10 13V3M10 3L8 5.5M10 3l2 2.5" />,
   zoom: <path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" />,
   file: <path d="M5 2h7l4 4v12H5zM12 2v4h4" />,
   check: <path d="M4 10l4 4 8-8" />,

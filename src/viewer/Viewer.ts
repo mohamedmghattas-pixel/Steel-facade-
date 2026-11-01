@@ -753,6 +753,18 @@ export class Viewer {
     this.requestRender();
   }
 
+  /**
+   * Centre of the visible reference models (concrete, primary steel), or null when none is
+   * loaded: the surface orientation takes the exterior side as away from it.
+   */
+  referenceCentre(): Vec3 | null {
+    if (!this.refGroup.visible || !this.refGroup.children.length) return null;
+    const box = new THREE.Box3().setFromObject(this.refGroup);
+    if (box.isEmpty()) return null;
+    const c = box.getCenter(new THREE.Vector3());
+    return { x: c.x, y: c.y, z: c.z };
+  }
+
   /** Aim the camera at a box (e.g. the members of a check item) from the current viewing direction. */
   focusBox(min: Vec3, max: Vec3) {
     const c = { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };

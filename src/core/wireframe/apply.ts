@@ -8,11 +8,15 @@
  * it) → roles → connection, end-preparation and welded-plate references are
  * re-pointed to the piece that now sits at their node → absorbed pieces and
  * orphan nodes are removed. A node that carries a connection is never removed.
+ * Orientation items set Member.normal on every final piece of their line
+ * (per piece from the junction normals along it on warped surfaces).
  */
 import type { EndPrep, Id, Member, Project, Vec3 } from '../model/types';
 import { deleteMembers, newId, removeOrphanNodes } from '../model/ops';
 import { wireframeFingerprint } from './record';
 import type { WireframePlan } from './analyze';
+import { normalOnSpan } from './surfaces';
+import { setMemberNormal } from './orient';
 
 export interface ApplyResult {
   /** Plan items applied. */
@@ -31,6 +35,10 @@ export interface ApplyResult {
   deleted: number;
   /** Isolated lines turned into construction lines. */
   construction: number;
+  /** Members given a surface normal (orientation items). */
+  oriented: number;
+  /** Their ids. */
+  orientedIds: Id[];
   /** Members of the checked lines after applying (the new scope). */
   members: Id[];
 }
@@ -51,7 +59,7 @@ export function applyWireframePlan(p: Project, plan: WireframePlan, acceptedIds?
   if (wireframeFingerprint(p) !== plan.fingerprint) throw new Error('The model changed since the wireframe check ran — run the check again.');
   const acc = new Set(acceptedIds ?? plan.items.filter((i) => i.accepted && i.actionable).map((i) => i.id));
   const items = plan.items.filter((i) => i.actionable && acc.has(i.id));
-  const res: ApplyResult = { applied: items.length, merged: 0, splits: 0, snapped: 0, joined: 0, roles: 0, deleted: 0, construction: 0, members: [] };
+  const res: ApplyResult = { applied: items.length, merged: 0, splits: 0, snapped: 0, joined: 0, roles: 0, deleted: 0, construction: 0, oriented: 0, orientedIds: [], members: [] };
 
   // Node union-find (merges) and moves.
   const parent = new Map<Id, Id>();
@@ -248,6 +256,23 @@ export function applyWireframePlan(p: Project, plan: WireframePlan, acceptedIds?
     for (const id of finalOf.get(li) ?? []) if (p.members[id]) p.members[id].role = role;
     res.roles++;
   }
+
+  // 4b. Orientation: the surface normal on every final piece of the line.
+  for (const it of items) {
+    const op = it.op;
+    if (op.t !== 'orient' || deleteLines.has(op.line)) continue;
+    const L = plan.lines[op.line];
+    const ln = { n: op.normal, samples: op.samples, patch: 0, fold: false };
+    for (const id of finalOf.get(op.line) ?? L.pieces) {
+      const m = p.members[id];
+      if (!m || deleteIds.has(id) || absorbed.has(id) || !p.nodes[m.start] || !p.nodes[m.end]) continue;
+      const s0 = dot(sub(p.nodes[m.start].p, L.a), L.dir);
+      const s1 = dot(sub(p.nodes[m.end].p, L.a), L.dir);
+      setMemberNormal(m, normalOnSpan(ln, L.dir, s0, s1), op.keepRotation);
+      res.orientedIds.push(id);
+    }
+  }
+  res.oriented = res.orientedIds.length;
 
   // 5. Re-point references to the piece now at their node.
   const resolve = (id: Id, node?: Id, point?: Vec3): Id => {

@@ -20,6 +20,7 @@ import {
 } from '../core/model/ops';
 import { handleModellingPoints } from './dialogs/modellingActions';
 import { dist, pointSegment, sub, worldToPlane } from '../core/model/geometry';
+import { connectionSummaryText, type ConnectionSummary } from '../core/model/connectionFollow';
 import { measureText } from './modifyActions';
 import { APPLY_END, applyConnection, autoConnect, CONNECTIONS } from '../core/connections/registry';
 import type { ConnectionType } from '../core/model/types';
@@ -187,14 +188,18 @@ export function handleToolPoints(tool: Tool, pts: Vec3[]) {
     const sel = s.selection;
     if (!sel.members.length && !sel.nodes.length) return notify('Select something to move or copy first.', 'error');
     const d = sub(b, a);
-    if (tool === 'move') s.apply('Move', (p) => moveItems(p, sel.members, sel.nodes, d));
+    // Connections go with the moved nodes and are copied with the copied members; say what happened to them.
+    let sum: ConnectionSummary | undefined;
+    if (tool === 'move') s.apply('Move', (p) => void (sum = moveItems(p, sel.members, sel.nodes, d)));
     else {
       let ids: string[] = [];
       s.apply('Copy', (p) => {
-        ids = copyMembers(p, sel.members, d, 1);
+        ids = copyMembers(p, sel.members, d, 1, (x) => (sum = x));
       });
       s.select({ members: ids });
     }
+    const text = [connectionSummaryText(sum), sum?.warnings[0] ?? ''].filter(Boolean).join(' ');
+    if (text) notify(`${tool === 'move' ? 'Moved' : 'Copied'}. ${text}${(sum?.warnings.length ?? 0) > 1 ? ` (+${sum!.warnings.length - 1} more)` : ''}`);
   } else if (tool === 'measure') {
     const d = sub(b, a);
     const along = Math.hypot(d.x, d.y);

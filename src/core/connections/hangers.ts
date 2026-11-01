@@ -9,7 +9,7 @@
 import { getBolt, type BoltSize } from '../library/bolts';
 import type { Vec3 } from '../model/types';
 import { emptyOut, endSlot, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
-import { P, addBolts, addPlate, ceilTo, cross, edgeDist, holeAt, jointOf, madd, normalize, scale, type Joint } from './kit';
+import { P, addBolts, addPlate, ceilTo, cross, edgeDist, holeAt, jointOf, madd, normalize, scale, sideOf, type Joint } from './kit';
 
 type Style = 'fork-boss' | 'fork-cap' | 'tab' | 'tongue';
 
@@ -40,13 +40,17 @@ interface LugGeom {
 
 const CLEAR = 1.5;
 
+/** Which side of the lug plane the tab / tongue and the pin head go: along secondary × main axis, so it flips with a reflection or a reversed main member. */
+const LUG_SIDE = P.side('side', 'Lug side (±1: tab / pin head side)', 1, ['mx', 'det']);
+
 function lugGeom(ctx: ConnCtx, style: Style, out?: ConnectionOut, label = 'Lug joint'): LugGeom | null {
   const j = jointOf(ctx, out, label);
   if (!j) return null;
   const { v } = ctx;
   const { main, sec, dIn } = j;
   const c = cross(dIn, main.frame.x);
-  const nL = Math.hypot(c.x, c.y, c.z) > 0.2 ? normalize(c) : sec.frame.y;
+  // Lug normal: across the plane of the secondary and the main axis, on the `side` (±1) given.
+  const nL = scale(Math.hypot(c.x, c.y, c.z) > 0.2 ? normalize(c) : sec.frame.y, sideOf(v.side));
   const wL = normalize(cross(nL, dIn));
   const pin = getBolt(str(v.bolt, style.startsWith('fork') ? 'M20' : 'M16'));
   const tl = num(v.lugT, 12);
@@ -185,6 +189,7 @@ export const hangerRod: ConnectionDef = {
   needsMain: true,
   params: [
     P.sel('variant', 'End', ['fork + lug (pinned)', 'tab + lug (bolted)']),
+    LUG_SIDE,
     P.num('lugT', 'Lug thickness', 12),
     P.num('lugW', 'Lug width (0 = auto)', 0),
     P.bolt('bolt', 'Pin / bolt', 'M20'),
@@ -220,6 +225,7 @@ export const tieBack: ConnectionDef = {
   needsMain: true,
   params: [
     P.sel('variant', 'End', ['tongue (single shear)', 'fork on end cap (double shear)']),
+    LUG_SIDE,
     P.num('lugT', 'Lug thickness', 12),
     P.num('lugW', 'Lug width (0 = auto)', 0),
     P.bolt('bolt', 'Bolt', 'M16'),

@@ -3,6 +3,7 @@
  * clones the project before calling them so the previous state stays intact
  * for undo.
  */
+import { copyConnections, followConnections, snapshotConnections, type ConnectionSummary } from './connectionFollow';
 import type {
   AutoAssignRule,
   Connection,
@@ -315,8 +316,14 @@ export function mergeNodes(p: Project, tol = NODE_TOL) {
   for (const id of remap.keys()) delete p.nodes[id];
 }
 
-/** Move the nodes of the given members (and/or nodes) by delta. */
-export function moveItems(p: Project, memberIds: Iterable<Id>, nodeIds: Iterable<Id>, delta: Vec3) {
+/**
+ * Move the nodes of the given members (and/or nodes) by delta. Connections on
+ * the moved nodes go with them; a joint whose main member no longer meets it
+ * takes a member the moved end lands on, else it is reported
+ * (followConnections). Returns what happened to the connections.
+ */
+export function moveItems(p: Project, memberIds: Iterable<Id>, nodeIds: Iterable<Id>, delta: Vec3): ConnectionSummary {
+  const snap = snapshotConnections(p);
   const nodes = new Set<Id>(nodeIds);
   for (const id of memberIds) {
     const m = p.members[id];
@@ -334,15 +341,25 @@ export function moveItems(p: Project, memberIds: Iterable<Id>, nodeIds: Iterable
     if (m && nodes.has(m.start) && nodes.has(m.end)) pl.origin = add(pl.origin, delta);
   }
   mergeNodes(p);
+  return followConnections(p, snap, { findMain: true });
 }
 
-/** Copy members `count` times, each shifted by delta * i. Returns new member ids. */
-export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1): Id[] {
+/**
+ * Copy members `count` times, each shifted by delta * i. Returns new member
+ * ids. The connections whose supported members are all copied are copied with
+ * them (main: the copied one, the original where it still meets the copy, or a
+ * member the copied end lands on); `summary` receives what happened.
+ */
+export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1, summary?: (s: ConnectionSummary) => void): Id[] {
   const out: Id[] = [];
   const src = memberIds.map((id) => p.members[id]).filter(Boolean);
+  const snap = snapshotConnections(p);
+  const allCopies = new Map<Id, Id>();
+  const warnings: string[] = [];
   for (let i = 1; i <= count; i++) {
     const d = { x: delta.x * i, y: delta.y * i, z: delta.z * i };
     const copied = new Map<Id, Id>();
+    const nodeMap = new Map<Id, Id>();
     for (const m of src) {
       const a = add(p.nodes[m.start].p, d);
       const b = add(p.nodes[m.end].p, d);
@@ -351,6 +368,8 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1)
       if (!nid) continue;
       out.push(nid);
       copied.set(m.id, nid);
+      nodeMap.set(m.start, p.members[nid].start);
+      nodeMap.set(m.end, p.members[nid].end);
       for (const pl of Object.values(p.plates ?? {})) {
         if (pl.weldedTo !== m.id) continue;
         const id = newId('pl');
@@ -368,7 +387,11 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1)
         else if (pr.kind === 'mitre') delete m[k];
       }
     }
+    for (const [nid, sid] of copyConnections(p, copied, nodeMap, warnings)) allCopies.set(nid, snap.conns.has(sid) ? sid : (allCopies.get(sid) ?? sid));
   }
+  const sum = followConnections(p, snap, { copies: allCopies });
+  sum.warnings.push(...warnings);
+  summary?.(sum);
   return out;
 }
 

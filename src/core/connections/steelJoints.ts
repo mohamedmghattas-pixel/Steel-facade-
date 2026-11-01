@@ -39,6 +39,7 @@ import {
   rectAt,
   scale,
   sectionFrame,
+  sideOf,
   teeOf,
   v3,
   wallOf,
@@ -174,6 +175,7 @@ export const doubleAngle: ConnectionDef = {
   label: 'Double angle cleat',
   description: 'Angle cleats on both sides of the secondary, bolted through it and through the main member.',
   needsMain: true,
+  faceGap: 'gap',
   params: [
     P.sel('angle', 'Angles', CLEAT_ANGLES, 'L 60x60x6'),
     P.num('length', 'Cleat length (0 = auto)', 0),
@@ -183,6 +185,7 @@ export const doubleAngle: ConnectionDef = {
     P.count('bolts', 'Bolts per leg', 1),
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.num('slot', 'Slot in main legs, along cleat (extra)', 0),
+    P.side('boltSide', 'Bolt head side (±1 across secondary)'),
   ],
   trims: (ctx) => jointTrim(ctx, () => num(ctx.v.gap, 10)),
   build(ctx) {
@@ -207,7 +210,8 @@ export const doubleAngle: ConnectionDef = {
     const offs = offsets(n, pitch);
     if (Math.max(...offs.map(Math.abs)) + edgeDist(bolt.name, { slot, towards: true }) > Lc / 2 + 0.5) out.warnings.push('Cleats too short for the bolt pattern.');
     const mainDepth = depthAlong(main, dIn);
-    const ySec = sec.frame.y;
+    // Cleats on both sides; the through-bolt heads on the boltSide one.
+    const ySec = scale(sec.frame.y, sideOf(v.boltSide));
     const xp = cross(dIn, ySec);
     const secHeads: Vec3[] = [];
     for (const s of [1, -1]) {
@@ -357,6 +361,8 @@ export const seatedAngle: ConnectionDef = {
   label: 'Seated angle',
   description: 'Bearing seat angle under the secondary, bolted to the main face; optional top restraint cleat.',
   needsMain: true,
+  faceGap: 'gap',
+  gravity: true,
   params: [
     P.sel('angle', 'Seat angle (vertical × seat leg)', SEAT_ANGLES, 'L 100x100x10'),
     P.num('length', 'Seat length (0 = auto)', 0),
@@ -524,6 +530,7 @@ export const saddleBracket: ConnectionDef = {
   label: 'U-saddle bracket',
   description: 'U-strap around the main member with a fork that receives the secondary; drilling-free or through-bolted.',
   needsMain: true,
+  faceGap: 'gap',
   params: [
     P.num('t', 'Side plate thickness', 10),
     P.num('tb', 'Back plate thickness', 10),
@@ -534,6 +541,7 @@ export const saddleBracket: ConnectionDef = {
     P.count('bolts', 'Bolts through secondary', 1),
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.bool('mainBolt', 'Also bolt through main member', false),
+    P.side('boltSide', 'Bolt head side (±1 along secondary × main axis)', 1, ['mx', 'det']),
   ],
   trims: (ctx) => jointTrim(ctx, () => num(ctx.v.gap, 10)),
   build(ctx) {
@@ -595,10 +603,12 @@ export const saddleBracket: ConnectionDef = {
       if (mainBolt) holeAt(pl, mainPt, bolt.hole);
     }
     const grip = 2 * t + 2 * Hin;
-    addBolts(out, { key: 'bolts-sec', bolt, grade: str(v.grade, '8.8'), heads: secPts.map((p) => madd(p, A, Hin + t)), dir: scale(A, -1), grip });
+    // Bolt heads on the boltSide of A (= secondary × main axis).
+    const Ah = scale(A, sideOf(v.boltSide));
+    addBolts(out, { key: 'bolts-sec', bolt, grade: str(v.grade, '8.8'), heads: secPts.map((p) => madd(p, Ah, Hin + t)), dir: scale(Ah, -1), grip });
     for (const p of secPts) memberHole(out, sec, p, A, bolt.hole);
     if (mainBolt) {
-      addBolts(out, { key: 'bolts-main', bolt, grade: str(v.grade, '8.8'), heads: [madd(mainPt, A, Hin + t)], dir: scale(A, -1), grip });
+      addBolts(out, { key: 'bolts-main', bolt, grade: str(v.grade, '8.8'), heads: [madd(mainPt, Ah, Hin + t)], dir: scale(Ah, -1), grip });
       memberHole(out, main, mainPt, A, bolt.hole);
     }
     return out;
@@ -617,6 +627,7 @@ export const shearBlock: ConnectionDef = {
   label: 'Shear block / spigot',
   description: 'Block or twin plates welded to the main face inside the hollow secondary end, through-bolted (optional thermal slot).',
   needsMain: true,
+  faceGap: 'gap',
   params: [
     P.sel('variant', 'Spigot', ['solid block', 'twin plates']),
     P.num('length', 'Insert length', 80),
@@ -628,6 +639,7 @@ export const shearBlock: ConnectionDef = {
     P.count('bolts', 'Bolts', 1),
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.num('slot', 'Thermal slot in secondary (extra)', 0),
+    P.side('boltSide', 'Bolt head side (±1 across secondary)'),
   ],
   trims: (ctx) => jointTrim(ctx, () => num(ctx.v.gap, 5)),
   build(ctx) {
@@ -681,7 +693,8 @@ export const shearBlock: ConnectionDef = {
       });
       for (const q of pts) holeAt(pl, q, bolt.hole);
     }
-    addBolts(out, { key: 'bolts', bolt, grade: str(v.grade, '8.8'), heads: pts.map((p) => madd(p, Y, sec.w / 2)), dir: scale(Y, -1), grip: sec.w });
+    const Yh = scale(Y, sideOf(v.boltSide));
+    addBolts(out, { key: 'bolts', bolt, grade: str(v.grade, '8.8'), heads: pts.map((p) => madd(p, Yh, sec.w / 2)), dir: scale(Yh, -1), grip: sec.w });
     for (const p of pts) memberHole(out, sec, p, Y, bolt.hole, slot);
     return out;
   },

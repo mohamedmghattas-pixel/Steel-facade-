@@ -22,6 +22,7 @@ export const splicePlates: ConnectionDef = {
     { key: 'bolts', label: 'Bolts per member', kind: 'number', default: 2 },
     { key: 'pitch', label: 'Bolt pitch', kind: 'number', default: 60, unit: 'mm' },
     { key: 'slot', label: 'Slot (one member, for movement)', kind: 'number', default: 0, unit: 'mm' },
+    { key: 'boltSide', label: 'Bolt head side (±1 across member)', kind: 'select', default: '1', options: ['1', '-1'], flip: ['y'] },
   ],
   trims(ctx) {
     const out = [];
@@ -50,6 +51,8 @@ export const splicePlates: ConnectionDef = {
     const C = centreAt(b, ctx.node);
     const Y = b.frame.y;
     const Z = b.frame.z;
+    // Bolt heads on the boltSide plate.
+    const Yh = scale(Y, Number(ctx.v.boltSide) < 0 ? -1 : 1);
     const e = Math.max(2 * bolt.hole, 30);
     // Bolt positions along the axis (from the node): first group into b, second into a.
     const along = (sign: number) => Array.from({ length: n }, (_, i) => sign * (num(ctx.v.gap, 10) / 2 + e + i * pitch));
@@ -77,8 +80,8 @@ export const splicePlates: ConnectionDef = {
       kind: 'bolt',
       grip,
       length: boltLength(bolt, grip),
-      dir: scale(Y, -1),
-      positions: xs.map((x) => madd(madd(C, dB, x), Y, b.w / 2 + t)),
+      dir: scale(Yh, -1),
+      positions: xs.map((x) => madd(madd(C, dB, x), Yh, b.w / 2 + t)),
     });
     for (const x of xs) {
       const target = x > 0 ? b : a;

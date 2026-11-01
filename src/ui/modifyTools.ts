@@ -241,7 +241,7 @@ export function toolClick(tool: ModifyTool, ptr: ToolPointer) {
         return hit ? pickEnd(hit.id, hit.end) : undefined;
       }
       const id = s.members[0];
-      if (m && m !== id) return void commit('Extend to member', (d) => M.extendToMember(d, id, m, { to: o.extend.to, gap: o.extend.gap, end: s.end, mode: o.extend.mode }), true);
+      if (m && m !== id) return void commit('Extend to member', (d) => M.extendToMember(d, id, m, { to: o.extend.to, gap: o.extend.gap || undefined, end: s.end, mode: o.extend.mode }), true);
       if (!ptr.point && !ptr.ray) return;
       const q = axisPoint(p, id, ptr).q;
       const w = M.wireOf(p, p.members[id]);
@@ -442,6 +442,13 @@ export function planeFromToken(p: Project, token: string): M.Plane3 {
   throw new M.ModifyError(`Plane "${t}": type z=…, x=…, y=…, wp, level <name> or grid <name>.`);
 }
 
+/** Status / toast text of a result: the message, what happened to the connections, the first warning. */
+export function resultText(res: M.ModifyResult): string {
+  const conns = M.connectionSummaryText(res.connections);
+  const extra = res.warnings.length ? ` ${res.warnings[0]}${res.warnings.length > 1 ? ` (+${res.warnings.length - 1} more)` : ''}` : '';
+  return `${res.message}${conns ? ` ${conns}` : ''}${extra}`;
+}
+
 const isPlaneToken = (t: string) => /^([xyz])\s*=\s*-?[\d.]+$/i.test(t) || /^(wp|work ?plane)$/i.test(t) || /^(level|lvl|grid)\s+/i.test(t);
 
 // ---------------------------------------------------------------------------
@@ -451,15 +458,36 @@ async function commitJoin(a: Id, b: Id, shift: boolean) {
   const p = st().project;
   const o = ms().options.join;
   const isCol = M.collinear(p, p.members[a], p.members[b]);
-  const run = (keep?: 'first') => {
-    if (isCol && o.mode === 'auto') return (d: Project) => M.joinMembers(d, [a, b], { maxGap: o.maxGap, keep });
+  const run = (keep?: 'first', jointConnections: 'refuse' | 'remove' = 'refuse') => {
+    if (isCol && o.mode === 'auto') return (d: Project) => M.joinMembers(d, [a, b], { maxGap: o.maxGap, keep, jointConnections });
     if (shift || o.mode === 'tee' || o.mode === 'teeSplit') return (d: Project) => M.joinToMember(d, a, b, { splitB: o.mode === 'teeSplit' });
-    if (isCol) return (d: Project) => M.joinMembers(d, [a, b], { maxGap: o.maxGap, keep });
+    if (isCol) return (d: Project) => M.joinMembers(d, [a, b], { maxGap: o.maxGap, keep, jointConnections });
     return (d: Project) => M.cornerJoin(d, a, b);
   };
-  const res = await commit('Join', run());
-  if (res === 'conflict' && (await askConfirm(`${lastError}\n\nJoin them keeping the properties of the first member?`, { title: 'Join members', ok: 'Keep first' })))
-    await commit('Join', run('first'));
+  await joinAsking('Join', run);
+}
+
+/**
+ * Join with the questions a join can raise: connections on the joint that the
+ * join removes (asked first), then differing properties (keep the first).
+ */
+export async function joinAsking(label: string, run: (keep?: 'first', jointConnections?: 'refuse' | 'remove') => (d: Project) => M.ModifyResult) {
+  let keep: 'first' | undefined;
+  let joint: 'refuse' | 'remove' = 'refuse';
+  for (let i = 0; i < 3; i++) {
+    const res = await commit(label, run(keep, joint));
+    if (res === 'joint') {
+      if (!(await askConfirm(`${lastError}\n\nThe member is continuous there after the join. Join and remove ${/the connection/.test(lastError) ? 'it' : 'them'}?`, { title: 'Join members', ok: 'Join and remove' }))) return;
+      joint = 'remove';
+      continue;
+    }
+    if (res === 'conflict') {
+      if (!(await askConfirm(`${lastError}\n\nJoin them keeping the properties of the first member?`, { title: 'Join members', ok: 'Keep first' }))) return;
+      keep = 'first';
+      continue;
+    }
+    return;
+  }
 }
 
 let lastError = '';
@@ -469,7 +497,7 @@ let lastError = '';
  * the next click (else the tool resets to its first step); `keepFirst`: keep only
  * the first picked member (trim boundary, match source).
  */
-export async function commit(label: string, fn: (d: Project) => M.ModifyResult, reset = false, keepFirst = false): Promise<'ok' | 'conflict' | 'error'> {
+export async function commit(label: string, fn: (d: Project) => M.ModifyResult, reset = false, keepFirst = false): Promise<'ok' | 'conflict' | 'joint' | 'error'> {
   let r: M.ModifyResult | null = null;
   try {
     st().apply(label, (d) => {
@@ -478,13 +506,12 @@ export async function commit(label: string, fn: (d: Project) => M.ModifyResult, 
   } catch (e) {
     lastError = (e as Error).message;
     clearPreview();
-    if (e instanceof M.ModifyError && e.code === 'conflict') return 'conflict';
+    if (e instanceof M.ModifyError && (e.code === 'conflict' || e.code === 'joint')) return e.code;
     notify(lastError, 'error');
     return 'error';
   }
   const res = r as unknown as M.ModifyResult;
-  const extra = res.warnings.length ? ` ${res.warnings[0]}${res.warnings.length > 1 ? ` (+${res.warnings.length - 1} more)` : ''}` : '';
-  notify(`${res.message}${extra}`);
+  notify(resultText(res));
   const live = res.members.filter((id) => st().project.members[id]);
   if (live.length) st().select({ members: live });
   const s = ms();
@@ -572,13 +599,17 @@ export function toolEnter() {
 
 function each(d: Project, ids: Id[], op: (d: Project, id: Id) => M.ModifyResult): M.ModifyResult {
   const rs = ids.map((id) => op(d, id));
-  return { members: rs.flatMap((r) => r.members), removed: rs.flatMap((r) => r.removed), message: rs.length === 1 ? rs[0].message : `${rs[0].message.split(' ')[0]} ${rs.length} members.`, warnings: rs.flatMap((r) => r.warnings) };
+  return {
+    members: rs.flatMap((r) => r.members),
+    removed: rs.flatMap((r) => r.removed),
+    message: rs.length === 1 ? rs[0].message : `${rs[0].message.split(' ')[0]} ${rs.length} members.`,
+    warnings: rs.flatMap((r) => r.warnings),
+    connections: M.mergeSummaries(...rs.map((r) => r.connections)),
+  };
 }
 
 async function commitJoinMany(ids: Id[]) {
-  const go = (keep?: 'first') => (d: Project) => M.joinMembers(d, ids, { maxGap: ms().options.join.maxGap, keep });
-  const res = await commit('Join', go());
-  if (res === 'conflict' && (await askConfirm(`${lastError}\n\nJoin them keeping the properties of the first member?`, { title: 'Join members', ok: 'Keep first' }))) await commit('Join', go('first'));
+  await joinAsking('Join', (keep, jointConnections) => (d: Project) => M.joinMembers(d, ids, { maxGap: ms().options.join.maxGap, keep, jointConnections }));
 }
 
 function rotateNow(angle: number) {
@@ -1064,7 +1095,7 @@ function previewFor(tool: ModifyTool, ptr: ToolPointer): Overlay | null {
         return ov;
       }
       const id = s.members[0];
-      if (m && m !== id) return tryOp((d) => M.extendToMember(d, id, m, { to: o.extend.to, gap: o.extend.gap, end: s.end, mode: o.extend.mode }));
+      if (m && m !== id) return tryOp((d) => M.extendToMember(d, id, m, { to: o.extend.to, gap: o.extend.gap || undefined, end: s.end, mode: o.extend.mode }));
       if (!ptr.point) return baseOverlay();
       const w = M.wireOf(p, p.members[id]);
       const station = dot(sub(ptr.point, w.a), w.d);

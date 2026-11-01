@@ -9,7 +9,7 @@ import { PROFILES, getProfile, type Profile } from '../library/profiles';
 import type { Vec3 } from '../model/types';
 import { centreAt, emptyOut, inward, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type ProfilePartOut, type Trim } from './common';
 import type { MemberGeom } from '../derive/memberGeom';
-import { P, addBolts, addPlate, ceilTo, dot, edgeDist, holeAt, intOf, longSlot, madd, memberHole, offsets, pitchFor, profileHole, scale, sectionFrame, v3 } from './kit';
+import { P, addBolts, addPlate, ceilTo, dot, edgeDist, holeAt, intOf, longSlot, madd, memberHole, offsets, pitchFor, profileHole, scale, sectionFrame, sideOf, v3 } from './kit';
 
 interface Pair {
   a: MemberGeom;
@@ -160,6 +160,7 @@ export const sleeveSplice: ConnectionDef = {
   label: 'Sleeve (spigot) splice',
   description: 'Internal sleeve across a movement gap in hollow mullions — fixed (round holes) or sliding (slotted sleeve).',
   needsMain: true,
+  gravity: true,
   params: [
     P.sel('mode', 'Joint', ['sliding', 'fixed']),
     P.sel('sleeve', 'Sleeve section', SLEEVES),
@@ -170,6 +171,7 @@ export const sleeveSplice: ConnectionDef = {
     P.count('bolts', 'Bolts per side', 2),
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.num('slot', 'Sleeve slot, sliding side (0 = long slot)', 0),
+    P.side('boltSide', 'Bolt head side (±1 across member)'),
   ],
   trims: (ctx) => halfTrims(ctx, num(ctx.v.gap, 20) / 2),
   build(ctx) {
@@ -213,6 +215,7 @@ export const sleeveSplice: ConnectionDef = {
     const sleeve: ProfilePartOut = { key: 'sleeve', name: sliding ? 'Sleeve (sliding)' : 'Sleeve (fixed)', profile: prof.name, frame, length: Ls, holes: [] };
     out.profiles.push(sleeve);
     const Y = b.frame.y;
+    const Yh = scale(Y, sideOf(v.boltSide));
     for (const [g, d, slides] of [
       [b, dB, bSlides],
       [a, dA, !bSlides],
@@ -226,8 +229,8 @@ export const sleeveSplice: ConnectionDef = {
         key: g === b ? 'bolts-b' : 'bolts-a',
         bolt,
         grade: str(v.grade, '8.8'),
-        heads: pts.map((p) => madd(p, Y, Math.max(a.w, b.w) / 2)),
-        dir: scale(Y, -1),
+        heads: pts.map((p) => madd(p, Yh, Math.max(a.w, b.w) / 2)),
+        dir: scale(Yh, -1),
         grip: Math.max(a.w, b.w),
       });
     }

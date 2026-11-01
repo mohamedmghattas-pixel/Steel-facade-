@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useStore } from '../../state/store';
 import { Field, Modal, NumberInput, ProfilePicker, Segmented, Select, TextInput, parseList } from '../widgets';
 import { copyMembers, facadeGrid, newId, ROLE_LABEL } from '../../core/model/ops';
+import { connectionSummaryText } from '../../core/model/connectionFollow';
 import { AUTO_DEFAULTS, runAutoConnectOptions } from './autoConnectOptions';
 import { runAutoConnect } from '../actions';
 import { DXF_JOIN_TOLERANCE, dxfWorldSegments, explodeDxf, importDxfWireframe, previewDxfImport, readDxf, UNIT_NAMES, type DxfImportOptions } from '../../core/io/dxfImport';
@@ -272,7 +273,9 @@ function ArrayDialog({ onClose }: { onClose: () => void }) {
           className="primary-btn"
           disabled={!sel.length}
           onClick={() => {
-            apply('Array', (p) => void copyMembers(p, sel, d, Math.max(1, Math.round(count))));
+            let text = '';
+            apply('Array', (p) => void copyMembers(p, sel, d, Math.max(1, Math.round(count)), (x) => (text = connectionSummaryText(x))));
+            if (text) useStore.getState().notify(`Array copied. ${text}`);
             onClose();
           }}
         >

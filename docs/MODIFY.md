@@ -12,6 +12,8 @@ message for the user and leaves the model unchanged.
 | Part | File |
 | --- | --- |
 | Operations (pure, tested) | `src/core/model/modify.ts` |
+| Connections follow the operations (reconcile pass, summary) | `src/core/model/connectionFollow.ts` |
+| Connection parameter transforms (mirror, reverse, rotate, flip side) | `src/core/connections/transform.ts`, `ParamSpec.flip` in the connection types |
 | Mirrored sections in parts | `src/core/derive/model.ts` (`mirroredPartFrame`), `src/core/model/geometry.ts` (`sectionShift`), `src/core/geometry/endPrep.ts` (`fitPlane`) |
 | Shared with the wireframe check | `memberPropsDiff` (`src/core/wireframe/analyze.ts`), `repointMemberRefs`, `pieceAt` (`src/core/wireframe/apply.ts`) |
 | Interactive tools (state, preview, typed input) | `src/ui/modifyTools.ts` |
@@ -19,7 +21,7 @@ message for the user and leaves the model unchanged.
 | Options bar, context menu, Operations section | `src/ui/ModifyPanels.tsx`, `src/ui/modify.css` |
 | Viewer hooks (hover, press / drag, click, right-click, preview overlay) | `src/viewer/Viewer.ts` |
 | Assistant tools | `src/assistant/modules/modify.ts` |
-| Tests | `tests/modify.test.ts` |
+| Tests | `tests/modify.test.ts`, `tests/connectionsFollow.test.ts` (connections, every type) |
 
 ## 1. Using the tools
 
@@ -34,6 +36,8 @@ message for the user and leaves the model unchanged.
   - The member is selected if it was not already.
   - A menu lists the operations for the selection (one member, two members, or many), with their shortcuts.
   - "Here" items (*Split here*, *Break 30 mm gap here*, *Delete segment here*) use the clicked point on the member's axis.
+- **Right-click a connection:** it is selected if it was not already; the menu has *Flip connection side* to the other face (local y) or the other depth side (local z) (§7a).
+- **After an operation** the status toast says what happened to the connections (*Connections: 1 moved, 2 re-pointed, 1 removed (Splice plates).*).
 - **Properties → Operations** (members selected):
   - length, angle to horizontal and to vertical; with two members, the angle between them
   - Split in N, at crossings
@@ -72,9 +76,9 @@ While a modify tool is active, digits, `-` and `=` go to the typed input (the vi
   - The **longest piece** keeps its id and properties (with *keep first*, the first picked).
   - The outer ends keep their end preparations and extensions, re-expressed in the joined member's frame. A piece drawn the other way round is handled.
   - Connections, end-preparation targets (mitre / fit `to`) and welded plates of the absorbed pieces are re-pointed to the joined member. This uses the wireframe check's `repointMemberRefs`.
+  - **Connections on a node between the pieces:** those whose supported member is one of the pieces (a splice, a stack-joint bracket, a cleat of a piece) are removed and reported — the member is continuous there. Joints of other members on that node (a transom's cleat on a stack node) are re-pointed to the joined member. With `jointConnections: 'refuse'` the join is refused instead (`code: 'joint'`, the connections in `detail`); the UI does that first and asks *Join and remove …?*.
   - End preparations at the joint are dropped (reported). Orphan nodes are removed. A node used by other members stays as a through-node.
 - **Refused when:**
-  - **a connection sits on a node between the pieces** (`code: 'connection'`; delete it first)
   - the pieces' properties differ (`code: 'conflict'`): profile, role, material, finish, phase / zone / batch, manual mark (the wireframe check's `memberPropsDiff`), or the **physical** section placement (orientation and position across the line, through the section's symmetry). Raw rotation values do not count, so pieces drawn in opposite directions join when their sections sit the same way.
   - The UI then asks *Keep first?* and retries with `keep: 'first'`.
 
@@ -144,6 +148,13 @@ Moving an end uses `moveMemberEnd` (§6):
 The face distance is the same function the connections use (`faceDistance`,
 [CONNECTION_GEOMETRY.md §4.3](CONNECTION_GEOMETRY.md)): a transom at 30° in plan into an SHS 100 stops 50 / cos 30° = 57.74 mm from the axis.
 
+**Extend to a face on a connected end.** An end that carries a joint (a connection with a main member) is never pulled off the joint:
+- the wire end goes to the other member's **axis** (where a freshly applied connection has it), and the connection's trim cuts the member back to the face;
+- a `gap` given (`g10` in the tool) sets the connection's clearance (`ConnectionDef.faceGap`: the `gap` of fin plates, cleats, double angles, seats, saddles, shear blocks and welded joints), so the parts are exactly those of a fresh connection with that gap (tested); without one the connection keeps its own;
+- types whose cut-back is not face + gap (end plates, stubs, clamps, tee cleats …) keep their own cut-back (reported).
+
+A free end goes to the face plus the gap, as before.
+
 **Extend tool:**
 - Click near the end to change.
 - Then click a member (extend to its axis or face, as set in the options bar), click a point (the end goes to its projection on the axis), or type:
@@ -174,8 +185,8 @@ The two pieces copy the member. Close the gap with **Join** (collinear, max gap 
 | Mode | Moves |
 | --- | --- |
 | `node` | the node: every member and connection on it follows |
-| `detach` | only this member's end: it gets its own node at `to` (an existing node there is reused); connections at the old node that concern only this member go with it, the others stay and are reported |
-| `auto` | `node` when nothing else uses the node, else `detach` |
+| `detach` | only this member's end: it gets its own node at `to` (an existing node there is reused); the connections of this end go with it (§10), those of other members stay |
+| `auto` | `node` when no other member ends there and no connection of another member sits on it, else `detach` |
 
 A node moved onto another node is merged into it.
 
@@ -190,7 +201,7 @@ A node moved onto another node is merged into it.
 **Nodes:**
 - The selected members move as a rigid group.
 - A node also used by members outside the selection is left to them: the group gets its own node there.
-- Connections at such a node that involve only the group move with it. Others stay (reported).
+- A connection moves with its supported member (§10); one whose members all moved moves entirely. A joint whose main member did not move keeps it if the moved end still meets it, takes a member the end now meets (a transom mirrored between two mullions: each cleat goes to the mullion its end lands on), else it is reported.
 - Coincident nodes merge afterwards.
 
 **Sections follow the map:**
@@ -203,9 +214,8 @@ A node moved onto another node is merged into it.
 - **Welded plates:** mirrored plates keep a right-handed frame, with the flat pattern, holes and bend lines mirrored.
 
 **Connections:**
-- Their side parameters (fin plate / cleat side across the member, bracket side along its depth) are flipped where the member's local axis flipped relative to the mapped one, so the parts follow.
-- *Copy* also copies the welded plates, mitre partners within the set and the connections whose members are all copied.
-- A mirror reports that asymmetric connection parameters (offsets, slot directions) should be checked.
+- Their parameters follow the map for every type (sides, fin sides, bolt head sides, survey offsets, lug sides, template flags — [CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)): the parts are the rotated / mirrored image of the originals (tested for all 30 types and their variants).
+- *Copy* also copies the welded plates, mitre partners within the set and the connections whose supported member is copied. Their main member is the copied main, else the original one where it still meets the copy (a transom copied up its mullions keeps them), else the member the copied end lands on; a joint with none is not copied (reported).
 
 **Operations:**
 - `rotateMembers(ids, point, dir, deg)`
@@ -223,6 +233,16 @@ A node moved onto another node is merged into it.
 | Mirror | pick the members; then two points of a mirror line on the work plane (the plane contains the work-plane normal), three points, a member's axis, or Enter / `wp` for the work plane itself | copy is on by default |
 | Offset | pick the members; click the side, or type the distance (a negative value is the other side) or `@dx,dy,dz` | `y` / `z` / `n` direction, `c` toggles copy |
 
+## 7a. Flip connection side
+
+`flipConnectionSide(connectionIds, axis)` mirrors connections to the other side of their supported member, the member unchanged:
+- `y`: the other face across the member (through its local xz plane): fin plate / cleat side, bracket fin side, bolt head side …
+- `z`: the other side in depth (through its local xy plane): the concrete side of a bracket …
+
+The parameters are transformed by the same rules as a mirror, so the parts are the reflection of the old ones through that plane. Refused when nothing changes (the connection is symmetric about that plane).
+
+**UI:** right-click a connection → *Flip connection side (other face, local y)* / *(other depth side, local z)*; connection properties → *Flip side ↔ (y)* / *Flip side ↕ (z)* (disabled when symmetric). **Assistant:** `connection_flip_side`.
+
 ## 8. Section operations ("over the profiles")
 
 | Function | Does |
@@ -238,7 +258,7 @@ A node moved onto another node is merged into it.
 **Reverse:**
 - The section stays where it is physically: rotation, mirror flag and alignment are re-posed.
 - End preparations and extensions stay on their physical ends, with saw angles and cope sides re-expressed.
-- Connection side parameters follow.
+- Connection parameters are re-expressed in the new axes (sides, bolt sides; a lug side when the main member is reversed), so the parts stay where they are.
 - Joints whose movement (slotted) end was automatic (the member's end node) get it set explicitly, so the slots stay where they were.
 - RHS and other doubly symmetric sections never need the mirror flag. A channel reverses with z flipped. An angle needs the flag.
 
@@ -271,24 +291,41 @@ A node moved onto another node is merged into it.
 | `modify_match` | source, targets, fields |
 | `modify_reverse` | — |
 | `modify_measure` | length, angles, angle between two members |
+| `connection_flip_side` | connections (ids, else the selected), axis `y` / `z` |
 
 - Members are chosen by `filter`: `ids`, `selected` (the default), `all`, `role`, `profile` or `direction`, as in the core tools.
 - Planes are `{ kind: level | grid | workPlane | x | y | z | points | plane, … }`.
-- Replies carry the message, the resulting member ids (selected in the view) and the warnings.
+- Replies carry the message, the resulting member ids (selected in the view), the warnings and `connections`: the summary line and the ids moved, re-pointed, mirrored / re-oriented, copied and removed. `edit_geometry` (move, copy, mirror) reports the same summary; its mirror now mirrors sections and connections too.
 
 ## 10. Rules for connections, end preparations and plates
 
+Every operation takes a snapshot of the connections, runs, then reconciles them
+(`followConnections`, `src/core/model/connectionFollow.ts`; also used by Move,
+Copy and Array in `ops.ts`):
+
+- **A connection belongs to the end of its supported member** (`secondary[0]`). When that end gets another node (extended, stretched with *detach*, moved with a group, corner / tee join, close gap), the connection moves to it. It is never left at the old node.
+- **Main member:** kept while it still meets the node — the node is on its axis (1 mm) or inside its section box (an end extended into the main member keeps the joint: the parts are placed from the main face, so they do not move). After a split it is the piece that contains the node; at a cut between pieces the one continuing upwards (`pieceAt`, as Auto-connect picks it). When the end landed on another member (extend / join to member, corner join, a moved or copied group) that member becomes the main. Otherwise the connection stays on the member end and one warning names the joint.
+- **Stack-joint members** (`secondary[1..]` of a slab bracket) that no longer end at the node are dropped from the connection (reported).
+- **Parameters** follow rigid maps and reverses ([CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)).
+- **Summary:** `ModifyResult.connections` lists the connections moved, re-pointed, mirrored / re-oriented, copied and removed; the status toast shows it (*Connections: 2 moved, 1 re-pointed.*), the assistant replies carry it.
+
 | Operation | Connections | End preparations | Welded plates |
 | --- | --- | --- | --- |
-| Join | re-pointed to the joined member; refused if one sits between the pieces | outer ends kept (converted), inner ends dropped | re-pointed |
-| Split / break | follow the piece at their node; break refused with one in the gap | kept at their ends; new cut ends square | to the piece they sit on |
-| Extend / stretch | follow a moved node; with *detach*, ones that concern only this member follow, others stay (reported) | kept | — |
-| Trim / delete segment | of the removed piece: deleted (reported) | of the removed piece: gone | of the removed piece: deleted |
-| Rotate / mirror / offset | follow the nodes; side parameters flipped where the axis flipped; copies copy the connections whose members are all copied | converted to the new frame | mapped (mirrored plates stay right-handed) |
-| Reverse | side parameters and automatic movement ends kept physically | swapped to the other field, angles converted | — |
+| Join / close gap | of the joined pieces: re-pointed; on the joint, of the pieces: removed (reported; the UI asks first); joints of other members there: re-pointed to the joined member | outer ends kept (converted), inner ends dropped | re-pointed |
+| Split / divide / stock lengths / at crossings | stay on the piece at their node; a split main is re-pointed to the piece that contains the node (the upper one at a cut) | kept at their ends; new cut ends square | to the piece they sit on |
+| Break | as split; refused with a connection in the gap | as split | as split |
+| Extend / exact length / to a plane / stretch | move with the end; main kept while it meets the end, else reported | kept | — |
+| Extend to member | move with the end; the member extended to becomes the main; *face* on a connected end keeps the wire on the axis and sets the joint gap (§4) | kept | — |
+| Corner join / join to member | move with the end; the other member becomes the main where the old one no longer meets | kept | — |
+| Stretch a shared node (*node*) | every member and connection on the node follows | kept | — |
+| Trim / delete segment | of the removed piece: deleted (listed); a joint at the cut whose main was the removed piece: re-pointed to the kept piece | of the removed piece: gone | of the removed piece: deleted |
+| Rotate / mirror / offset / move | move with their supported member, parameters mapped (image of the parts); copies copy them (main resolved as in §7) | converted to the new frame | mapped (mirrored plates stay right-handed) |
+| Reverse | parameters re-expressed: physically unchanged; automatic movement ends pinned | swapped to the other field, angles converted | — |
+| Flip connection side | parameters mirrored through the member's xz / xy plane; member unchanged | — | — |
 | Section ops / match | unchanged (connections follow the box) | match copies saw cuts and copes | — |
 
-After every operation, `connectionIssues` reports connections whose supported member no longer ends at their node, or whose main member no longer meets it.
+After every operation the joints of the changed members are checked: a main
+member that no longer meets its joint is reported once.
 
 ## 11. Member vectors
 
@@ -301,8 +338,10 @@ Two single helpers in `modify.ts` are the place for stored directions (a surface
 ## Limits
 
 - **Axes and preview:** operations work on the wire line (straight members). The preview runs the operation on a copy of nodes, members, connections and plates on every hover; it is fast on facade-size models, and on very large models it can lag.
-- **Connection parameters:** connections are re-pointed, flipped for their side parameters, or reported. Other asymmetric connection parameters (offsets, slot directions) are not mirrored. The side table covers fin plates, angle and tee cleats, wall angles, slab brackets and the concrete brackets; other types keep their parameters.
-- **Moving ends under connections:** extending or stretching an end that carries a connection whose main member stays where it is leaves the connection at its node. It is reported, not re-placed.
-- **Offset along the normal:** members do not carry a surface normal yet, so it falls back to local z (reported).
-- **Mirror section:** members only. Connection profiles (cleats) are not mirrored.
+- **Connections without a main member that meets them:** a joint whose end was moved off its main member (extended past it, offset out of the facade plane) stays on the member end with its old main and one warning; re-apply or move it back. It is not re-placed on another member unless the operation put the end onto one (extend / join to member, corner join, moved or copied groups).
+- **Gravity-referenced connections** (slab and facade brackets, seated angles, sleeve splices) keep their vertical rule: after a mirror about a horizontal plane or a rotation about a horizontal axis they are rebuilt with the seat under the member and the bracket's vertical up, not mirrored.
+- **Cross-bracing centre plates** are centred on their node: extending a split brace off the crossing moves the plate with it.
+- **Copies** of joints whose main member is neither copied nor met by the copied end are not made (reported).
+- **Offset along the normal:** members without a surface normal fall back to local z (reported).
+- **Mirror section:** members only. Connection profile parts (cleats, tees) have no mirror flag; they are placed through their own frames, so the angle of a mirrored joint is still the mirror image of the original one.
 - **Measure:** angles are between axes (wire lines), not section faces.

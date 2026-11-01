@@ -6,9 +6,10 @@
  */
 import { useStore, type ModifyTool } from '../state/store';
 import type { Id, Project, Vec3 } from '../core/model/types';
-import { askConfirm, askText } from './askState';
+import { askText } from './askState';
 import * as M from '../core/model/modify';
-import { commit, planeFromToken, useModify } from './modifyTools';
+import { commit, joinAsking, planeFromToken, useModify } from './modifyTools';
+import { flippableAxes } from '../core/connections/transform';
 import { setTool } from './actions';
 
 const st = () => useStore.getState();
@@ -38,7 +39,13 @@ async function askNumber(text: string, value: number, title: string): Promise<nu
 
 function each(d: Project, ids: Id[], op: (d: Project, id: Id) => M.ModifyResult): M.ModifyResult {
   const rs = ids.map((id) => op(d, id));
-  return { members: rs.flatMap((r) => r.members), removed: rs.flatMap((r) => r.removed), message: rs.length === 1 ? rs[0].message : `Done on ${rs.length} members.`, warnings: rs.flatMap((r) => r.warnings) };
+  return {
+    members: rs.flatMap((r) => r.members),
+    removed: rs.flatMap((r) => r.removed),
+    message: rs.length === 1 ? rs[0].message : `Done on ${rs.length} members.`,
+    warnings: rs.flatMap((r) => r.warnings),
+    connections: M.mergeSummaries(...rs.map((r) => r.connections)),
+  };
 }
 
 /** Start a modify tool (with the selection where the tool uses one). */
@@ -54,9 +61,7 @@ export async function joinSelection() {
   const p = st().project;
   const col = ids.every((id) => M.collinear(p, p.members[ids[0]], p.members[id]));
   if (!col && ids.length !== 2) return notify('Join: the members are not on one line; a corner or T join takes two members.', 'error');
-  const go = (keep?: 'first') => (d: Project) => (col ? M.joinMembers(d, ids, { keep, maxGap: 1000 }) : M.cornerJoin(d, ids[0], ids[1]));
-  const r = await commit(col ? 'Join' : 'Corner join', go());
-  if (r === 'conflict' && (await askConfirm(`The members differ. Join them keeping the properties of the first selected member?`, { title: 'Join members', ok: 'Keep first' }))) await commit('Join', go('first'));
+  await joinAsking(col ? 'Join' : 'Corner join', (keep, jointConnections) => (d: Project) => (col ? M.joinMembers(d, ids, { keep, maxGap: 1000, jointConnections }) : M.cornerJoin(d, ids[0], ids[1])));
 }
 
 export function cornerSelection() {
@@ -71,7 +76,25 @@ export function teeSelection(splitB = false) {
 
 export function closeGapSelection() {
   const ids = need(2, 'Close gap');
-  if (ids) void commit('Close gap', (d) => M.closeGap(d, ids[0], ids[1]));
+  if (ids) void joinAsking('Close gap', (keep, jointConnections) => (d: Project) => M.closeGap(d, ids[0], ids[1], { keep, jointConnections }));
+}
+
+// Connections -------------------------------------------------------------------
+
+export const selConnections = (): Id[] => st().selection.connections.filter((id) => st().project.connections[id]);
+
+/** Flip the selected connections to the other face ('y') or the other depth side ('z') of their member. */
+export function flipConnectionsSide(axis: 'y' | 'z', ids: Id[] = selConnections()) {
+  if (!ids.length) return notify('Flip connection side: select connections first.', 'error');
+  void commit(axis === 'y' ? 'Flip connection side' : 'Flip connection depth side', (d) => M.flipConnectionSide(d, ids, axis));
+}
+
+/** The flip axes that change at least one of these connections (for enabling the commands). */
+export function flipAxes(ids: Id[] = selConnections()): ('y' | 'z')[] {
+  const p = st().project;
+  const out = new Set<'y' | 'z'>();
+  for (const id of ids) for (const a of flippableAxes(p, p.connections[id])) out.add(a);
+  return [...out];
 }
 
 // Split -----------------------------------------------------------------------

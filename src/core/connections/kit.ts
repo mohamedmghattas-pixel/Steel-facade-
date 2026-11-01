@@ -23,6 +23,7 @@ import {
   plateOn,
   type ConnCtx,
   type ConnectionOut,
+  type FlipFactor,
   type Hole2D,
   type ParamSpec,
   type PlateOut,
@@ -30,8 +31,9 @@ import {
   type WorldHole,
 } from './common';
 
-export const ceilTo = (n: number, step = 5): number => Math.ceil(n / step - 1e-9) * step;
-export const floorTo = (n: number, step = 5): number => Math.floor(n / step + 1e-9) * step;
+// The tolerance absorbs the rounding of rotated / mirrored member axes (rotations are stored to 1e-6°).
+export const ceilTo = (n: number, step = 5): number => Math.ceil(n / step - 1e-6) * step;
+export const floorTo = (n: number, step = 5): number => Math.floor(n / step + 1e-6) * step;
 export const clamp = (n: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, n));
 export const sgn = (n: number): 1 | -1 => (n < 0 ? -1 : 1);
 
@@ -150,8 +152,12 @@ export const P = {
   bolt: (key: string, label: string, d: string): ParamSpec => ({ key, label, kind: 'bolt', default: d }),
   grade: (key = 'grade', d = '8.8'): ParamSpec => ({ key, label: 'Bolt grade', kind: 'select', default: d, options: BOLT_GRADES_SHORT }),
   anchorType: (d = 'expansion', options = ANCHOR_TYPES): ParamSpec => ({ key: 'anchorType', label: 'Anchor type', kind: 'select', default: d, options }),
-  side: (key = 'side', label = 'Side (±1)', d = 1): ParamSpec => ({ key, label, kind: 'select', default: String(d), options: ['1', '-1'] }),
+  /** A ±1 side select; `flip` = the joint axes it is signed along (mirror / flip rule, default the member's local y). */
+  side: (key = 'side', label = 'Side (±1)', d = 1, flip: readonly FlipFactor[] = ['y']): ParamSpec => ({ key, label, kind: 'select', default: String(d), options: ['1', '-1'], flip }),
 };
+
+/** A parameter spec with a mirror / flip rule (ParamSpec.flip). */
+export const flips = (spec: ParamSpec, ...flip: FlipFactor[]): ParamSpec => ({ ...spec, flip });
 
 /** Read a ±1 side parameter given as number or "1"/"-1". */
 export function sideOf(v: ParamValue | undefined, d: 1 | -1 = 1): 1 | -1 {

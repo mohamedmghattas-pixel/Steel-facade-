@@ -23,7 +23,7 @@ import { ConnectionMovementInfo, MovementSettingsSection } from './dialogs/Movem
 import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
 import { GroupingProps } from './dialogs/ManagementDialogs';
 import { clearMemberNormals, openOrientDialog } from './surfaceActions';
-import { ModifyOpsSection } from './ModifyPanels';
+import { FlipSideButtons, ModifyOpsSection } from './ModifyPanels';
 import { changeProfile } from '../core/model/modify';
 
 export function SidePanel() {
@@ -328,6 +328,7 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
           Open in library…
         </button>
       </div>
+      <FlipSideButtons ids={peers.map((x) => x.id)} />
       {specs.map((ps) => (
         <Field key={ps.key} label={ps.label}>
           {ps.kind === 'number' && <NumberInput value={v[ps.key] as number} mixed={mixed(ps.key)} unit={ps.unit} onChange={(n) => setParam(ps.key, n)} />}

@@ -34,10 +34,11 @@ export const slabBracket: ConnectionDef = {
   label: 'Slab bracket',
   description: 'Mullion-to-slab bracket with slotted fin and anchored back plate.',
   needsMain: false,
+  gravity: true,
   params: [
     { key: 'mount', label: 'Mount', kind: 'select', default: 'edge', options: ['edge', 'top'] },
-    { key: 'side', label: 'Slab side (±1 along mullion depth)', kind: 'number', default: 1 },
-    { key: 'finSide', label: 'Fin side (±1 along mullion local y)', kind: 'number', default: 1 },
+    { key: 'side', label: 'Slab side (±1 along mullion depth)', kind: 'number', default: 1, flip: ['z'] },
+    { key: 'finSide', label: 'Fin side (±1 along mullion local y)', kind: 'number', default: 1, flip: ['y'] },
     { key: 'standoff', label: 'Wire line to slab face', kind: 'number', default: 150, unit: 'mm' },
     { key: 'dz', label: 'Height offset (edge mount)', kind: 'number', default: -100, unit: 'mm' },
     { key: 'finT', label: 'Fin thickness', kind: 'number', default: 10, unit: 'mm' },
@@ -77,7 +78,7 @@ export const slabBracket: ConnectionDef = {
     { key: 'gap', label: 'Stack joint gap, manual', kind: 'number', default: 20, unit: 'mm' },
     { key: 'surveyOut', label: 'Survey adjustment, out of plane (+ towards slab)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'surveyVert', label: 'Survey adjustment, vertical (+ up)', kind: 'number', default: 0, unit: 'mm' },
-    { key: 'surveyAlong', label: 'Survey adjustment, along facade (+ local y)', kind: 'number', default: 0, unit: 'mm' },
+    { key: 'surveyAlong', label: 'Survey adjustment, along facade (+ local y)', kind: 'number', default: 0, unit: 'mm', flip: ['y'] },
   ],
   trims(ctx) {
     const { c, node, geom } = ctx;

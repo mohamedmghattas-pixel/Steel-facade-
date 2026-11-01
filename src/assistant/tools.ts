@@ -9,7 +9,6 @@ import {
   addLine,
   autoAssign,
   copyMembers,
-  mirrorMembers,
   deleteConnections,
   deleteMembers,
   facadeGrid,
@@ -21,6 +20,8 @@ import {
   updateMembers,
 } from '../core/model/ops';
 import { dist } from '../core/model/geometry';
+import { mirrorMembers as mirrorModify } from '../core/model/modify';
+import { connectionSummaryText, type ConnectionSummary } from '../core/model/connectionFollow';
 import { AUTO_DEFAULTS, CONNECTIONS, applyConnection, autoConnect, paramSpecs } from '../core/connections/registry';
 import { getProfile, profileFromDef, searchProfiles } from '../core/library/profiles';
 import { MATERIALS } from '../core/library/materials';
@@ -142,7 +143,7 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: 'edit_geometry',
-    description: 'Move, copy (array) or delete members, split lines at their crossings, or mirror (copy) members in a plane (mirrorPoint + mirrorNormal; surface normals are reflected).',
+    description: 'Move, copy (array) or delete members, split lines at their crossings, or mirror (copy) members in a plane (mirrorPoint + mirrorNormal; sections, surface normals and connections are mirrored). Connections go with moved members and are copied with copies.',
     input_schema: {
       type: 'object',
       properties: {
@@ -548,18 +549,23 @@ export async function runTool(name: string, input: Json): Promise<string> {
       if (!ids.length && action !== 'split') throw new Error('No members match the filter.');
       const delta = input.delta ? pt(input.delta as number[]) : { x: 0, y: 0, z: 0 };
       let created: Id[] = [];
+      let conns: ConnectionSummary | undefined;
       s.apply(`Assistant: ${action}`, (d) => {
-        if (action === 'move') moveItems(d, ids, [], delta);
-        else if (action === 'copy') created = copyMembers(d, ids, delta, Math.max(1, Number(input.count ?? 1)));
+        if (action === 'move') conns = moveItems(d, ids, [], delta);
+        else if (action === 'copy') created = copyMembers(d, ids, delta, Math.max(1, Number(input.count ?? 1)), (x) => (conns = x));
         else if (action === 'delete') deleteMembers(d, ids);
         else if (action === 'split') splitAtIntersections(d, ids.length ? ids : undefined);
         else if (action === 'mirror') {
           if (!input.mirrorNormal) throw new Error('mirror needs mirrorNormal (and mirrorPoint, default the origin).');
-          created = mirrorMembers(d, ids, input.mirrorPoint ? pt(input.mirrorPoint as number[]) : { x: 0, y: 0, z: 0 }, pt(input.mirrorNormal as number[]));
+          // Mirrored copies with their sections and connections mirrored (modify toolkit).
+          const r = mirrorModify(d, ids, { point: input.mirrorPoint ? pt(input.mirrorPoint as number[]) : { x: 0, y: 0, z: 0 }, normal: pt(input.mirrorNormal as number[]) }, { copy: true });
+          created = r.members;
+          conns = r.connections;
         }
       });
       if (created.length) s.select({ members: created });
-      return out({ action, members: ids.length, created: created.length });
+      const cs = conns ? connectionSummaryText(conns) : '';
+      return out({ action, members: ids.length, created: created.length, ...(cs ? { connections: cs, connectionWarnings: conns!.warnings } : {}) });
     }
 
     case 'search_profiles': {

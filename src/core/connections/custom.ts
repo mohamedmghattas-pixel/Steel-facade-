@@ -61,6 +61,19 @@ export function templateVars(ctx: ConnCtx, t: CustomTemplate, j: Joint | null): 
   return vars;
 }
 
+/**
+ * Per-connection mirror flags of a template joint: V (= W × U in the joint frame,
+ * local y in the member frame) and W (= local z) reversed. Their flip rules follow
+ * the template's frame, so mirroring the members toggles them consistently.
+ */
+function mirrorSpecs(t: CustomTemplate | undefined): ParamSpec[] {
+  const joint = (t?.frame ?? 'member') === 'joint';
+  return [
+    { key: 'mirrorV', label: 'Mirrored across (v reversed)', kind: 'bool', default: false, flip: joint ? ['z', 'det'] : ['y'], help: 'Set by Mirror and Flip connection side: the template v offsets are measured the other way.' },
+    { key: 'mirrorW', label: 'Mirrored in depth (w reversed)', kind: 'bool', default: false, flip: ['z'], help: 'Set by Mirror and Flip connection side: the template w offsets are measured the other way.' },
+  ];
+}
+
 export const VAR_HELP = 'Variables: your parameters, h_sec / b_sec (secondary section height / width), h_main / b_main, depth_main (main member depth along the secondary), face (node → main face). Functions: max, min, round, ceil, floor, abs, ceilto(x, step).';
 
 export const customConnection: ConnectionDef = {
@@ -68,11 +81,12 @@ export const customConnection: ConnectionDef = {
   label: 'Custom connection',
   description: 'Built from a template of plates and bolt groups in the project library.',
   needsMain: false,
-  params: [{ key: 'template', label: 'Template', kind: 'text', default: '' }],
+  params: [{ key: 'template', label: 'Template', kind: 'text', default: '' }, ...mirrorSpecs(undefined)],
   paramsFor(c, p) {
     const t = templateFor(p, c.params.template);
     const list: ParamSpec[] = [{ key: 'template', label: 'Template', kind: 'template', default: t?.id ?? '' }];
     for (const prm of t?.params ?? []) list.push({ key: prm.key, label: prm.label || prm.key, kind: 'number', default: prm.default, unit: 'mm' });
+    list.push(...mirrorSpecs(t));
     return list;
   },
   trims(ctx) {
@@ -99,9 +113,13 @@ export const customConnection: ConnectionDef = {
     // Joint frame: U into the secondary, W = its local z (up). 'joint' frames are
     // right-handed (V = W × U, flips with U at the end node); legacy 'member'
     // frames keep V = local y (left-handed at the end node).
+    // Mirrored joints (mirror, Flip connection side) reverse V and / or W: the template's v / w are
+    // then measured the other way, so the plates are the mirror image (CONNECTION_GEOMETRY.md §15).
     const U = j.dIn;
-    const W = j.sec.frame.z;
-    const V = (t.frame ?? 'member') === 'joint' ? cross(W, U) : j.sec.frame.y;
+    const W0 = j.sec.frame.z;
+    const V0 = (t.frame ?? 'member') === 'joint' ? cross(W0, U) : j.sec.frame.y;
+    const V = ctx.v.mirrorV === true ? scale(V0, -1) : V0;
+    const W = ctx.v.mirrorW === true ? scale(W0, -1) : W0;
     const O = madd(centreAt(j.sec, ctx.node), U, j.face);
     const E = (e: string) => evalExpr(e, vars);
     for (const pl of t.plates) {

@@ -1,14 +1,18 @@
 /**
  * Assistant tools for the member / profile modify operations (core/model/modify.ts):
  * join, split, extend / trim, break, move end, rotate / mirror / offset, section
- * operations, match properties, reverse and measure. Every edit goes through
- * store.apply (one undo step); a refusal comes back as an error with the reason.
+ * operations, match properties, reverse, measure, and flipping connections to the
+ * other side of their member. Every edit goes through store.apply (one undo
+ * step); a refusal comes back as an error with the reason. Replies carry what
+ * happened to the connections (moved with their member ends, re-pointed,
+ * mirrored / re-oriented, copied, removed).
  */
 import type { ToolModule, Json } from './types';
 import { useStore } from '../../state/store';
 import type { Id, MemberRole, Project, Vec3 } from '../../core/model/types';
 import { MEMBER_ROLES } from '../../core/model/types';
 import { memberDirection } from '../../core/model/ops';
+import type { ConnectionSummary } from '../../core/model/connectionFollow';
 import {
   MATCH_FIELDS,
   angleBetween,
@@ -20,7 +24,9 @@ import {
   extendBy,
   extendToMember,
   extendToPlane,
+  flipConnectionSide,
   joinMembers,
+  mergeSummaries,
   joinToMember,
   matchProperties,
   measureMember,
@@ -45,6 +51,7 @@ import {
   wireOf,
   type MatchField,
   type ModifyResult,
+  connectionSummaryText,
   type PlaneSpec,
   type Plane3,
 } from '../../core/model/modify';
@@ -148,6 +155,21 @@ function planeOf(p: Project, x: unknown): Plane3 {
   return resolvePlane(p, spec);
 }
 
+/** What happened to the connections, for the reply (ids and counts). */
+function connectionReport(s: ConnectionSummary | undefined): Json | undefined {
+  if (!s) return undefined;
+  const n = s.moved.length + s.repointed.length + s.transformed.length + s.copied.length + s.removed.length;
+  if (!n) return undefined;
+  return {
+    summary: connectionSummaryText(s),
+    moved: s.moved,
+    repointed: s.repointed,
+    transformed: s.transformed,
+    copied: s.copied,
+    removed: s.removed.map((r) => ({ id: r.id, type: r.label })),
+  };
+}
+
 /** Run an operation as one undo step; select its result; return the report. */
 function run(label: string, op: (d: Project) => ModifyResult): Json {
   let r: ModifyResult | null = null;
@@ -156,7 +178,8 @@ function run(label: string, op: (d: Project) => ModifyResult): Json {
   });
   const res = r as unknown as ModifyResult;
   if (res.members.length) st().select({ members: res.members.filter((id) => st().project.members[id]) });
-  return { message: res.message, members: res.members, removed: res.removed, warnings: res.warnings };
+  const connections = connectionReport(res.connections);
+  return { message: res.message, members: res.members, removed: res.removed, warnings: res.warnings, ...(connections ? { connections } : {}) };
 }
 
 export const modifyModule: ToolModule = {
@@ -164,7 +187,7 @@ export const modifyModule: ToolModule = {
     {
       name: 'modify_join',
       description:
-        'Join members. Collinear members sharing a node, or with a small gap / overlap (maxGap, default 100 mm), become one member (the longest keeps its id; refused when a connection sits on the joint, or when properties differ unless keep = "first"). Two non-collinear members: mode corner (default) extends / trims both to where their axes meet (3D, within tol, default 50 mm) and merges the ends; mode tee extends the first member\'s end onto the second\'s axis (splitB also splits the second there).',
+        'Join members. Collinear members sharing a node, or with a small gap / overlap (maxGap, default 100 mm), become one member (the longest keeps its id; connections of the pieces on the joint, e.g. a splice, are removed and reported; refused when properties differ unless keep = "first"). Two non-collinear members: mode corner (default) extends / trims both to where their axes meet (3D, within tol, default 50 mm) and merges the ends; mode tee extends the first member\'s end onto the second\'s axis (splitB also splits the second there).',
       input_schema: {
         type: 'object',
         properties: {
@@ -200,7 +223,7 @@ export const modifyModule: ToolModule = {
     {
       name: 'modify_extend',
       description:
-        'Extend or shorten members along their own axis: by `distance` (negative shortens) at end start / end / both; to an exact `length` (anchor start, end or centre kept); to another member `toMember` (to: axis, or face = its true outer face, plus gap); or to a plane (level, grid line, work plane …; the nearer end unless `end`).',
+        'Extend or shorten members along their own axis: by `distance` (negative shortens) at end start / end / both; to an exact `length` (anchor start, end or centre kept); to another member `toMember` (to: axis, or face = its true outer face, plus gap); or to a plane (level, grid line, work plane …; the nearer end unless `end`). Connections on a moved end go with it; face on an end with a joint keeps the wire on the axis and sets the joint gap.',
       input_schema: {
         type: 'object',
         properties: {
@@ -298,6 +321,15 @@ export const modifyModule: ToolModule = {
       input_schema: { type: 'object', properties: { filter } },
     },
     {
+      name: 'connection_flip_side',
+      description:
+        'Flip connections to the other side of their supported member, the member unchanged: axis y = the other face across the member (fin plate / cleat side, bracket fin side, bolt head side …), z = the other side in depth (bracket concrete side …). The parts become the mirror image through the member\'s local xz (y) or xy (z) plane. Refused when nothing changes (symmetric). Connections by ids, else the selected ones.',
+      input_schema: {
+        type: 'object',
+        properties: { connections: { type: 'array', items: str }, axis: { type: 'string', enum: ['y', 'z'] } },
+      },
+    },
+    {
       name: 'modify_measure',
       description: 'Measure members: length, angle to horizontal / vertical and plan bearing of each; with two members also the 3D angle between their axes, the included angle at a shared node and their gap. Changes nothing.',
       input_schema: { type: 'object', properties: { members: { type: 'array', items: str, minItems: 1 } }, required: ['members'] },
@@ -331,6 +363,7 @@ export const modifyModule: ToolModule = {
             const r = op(d, id);
             out.members.push(...r.members);
             out.warnings.push(...r.warnings);
+            out.connections = mergeSummaries(out.connections, r.connections);
             out.message = ids.length === 1 ? r.message : `${label}: ${ids.length} members into ${out.members.length} pieces.`;
           }
           return out;
@@ -352,7 +385,13 @@ export const modifyModule: ToolModule = {
       const each = (label: string, op: (d: Project, id: Id) => ModifyResult) =>
         run(label, (d) => {
           const rs = ids.map((id) => op(d, id));
-          return { members: ids, removed: [], message: rs.length === 1 ? rs[0].message : `${label}: ${rs.length} members.`, warnings: rs.flatMap((r) => r.warnings) };
+          return {
+            members: ids,
+            removed: [],
+            message: rs.length === 1 ? rs[0].message : `${label}: ${rs.length} members.`,
+            warnings: rs.flatMap((r) => r.warnings),
+            connections: mergeSummaries(...rs.map((r) => r.connections)),
+          };
         });
       if (typeof input.length === 'number') return each('Set length', (d, id) => setLength(d, id, input.length as number, (input.anchor as 'start' | 'end' | 'centre') ?? 'start', mode));
       if (typeof input.toMember === 'string') {
@@ -451,6 +490,20 @@ export const modifyModule: ToolModule = {
     modify_reverse: (input) => {
       const ids = members(st().project, input.filter as Filter);
       return run('Reverse', (d) => reverseMembers(d, ids));
+    },
+    connection_flip_side: (input) => {
+      const p = st().project;
+      const given = (input.connections as Id[] | undefined) ?? st().selection.connections;
+      const ids = given.filter((id) => p.connections[id]);
+      if (!ids.length) throw new Error('No connections: pass connection ids or ask the user to select connections.');
+      const axis = (input.axis as 'y' | 'z' | undefined) ?? 'y';
+      let r: ModifyResult | null = null;
+      st().apply(`Flip connection side (${axis})`, (d) => {
+        r = flipConnectionSide(d, ids, axis);
+      });
+      const res = r as unknown as ModifyResult;
+      st().select({ members: [], nodes: [], connections: ids });
+      return { message: res.message, warnings: res.warnings, flipped: res.connections?.transformed ?? [] };
     },
     modify_measure: (input) => {
       const p = st().project;

@@ -98,6 +98,18 @@ export interface Trim {
   amount: number;
 }
 
+/**
+ * An axis of a joint whose physical direction a parameter depends on:
+ * `x`, `y`, `z` = the supported member's (secondary[0]) local axes, `mx`, `my`,
+ * `mz` = the main member's, `det` = the handedness of the map (−1 for a
+ * reflection, so a direction built as a cross product of two member axes flips
+ * with it). See transform.ts and docs/CONNECTION_GEOMETRY.md §15.
+ */
+export type FlipFactor = 'x' | 'y' | 'z' | 'mx' | 'my' | 'mz' | 'det';
+
+/** How each joint axis maps under an operation: −1 where the new axis points against the image of the old one. */
+export type JointFlip = Record<FlipFactor, 1 | -1>;
+
 export interface ParamSpec {
   key: string;
   label: string;
@@ -106,6 +118,16 @@ export interface ParamSpec {
   unit?: string;
   options?: string[];
   help?: string;
+  /**
+   * Mirror / flip rule: the parameter is signed along the product of these
+   * joint axes. When an operation flips that product (mirror, reverse, rotate,
+   * Flip connection side) the value is mirrored: numbers and "±1" strings
+   * negated, booleans toggled, select options exchanged through `swap`.
+   * Absent: the parameter does not depend on a side (lengths, sizes, counts).
+   */
+  flip?: readonly FlipFactor[];
+  /** Select options exchanged when `flip` is −1 (left ↔ right …); options not listed stay. */
+  swap?: Readonly<Record<string, string>>;
 }
 
 export interface ConnCtx {
@@ -128,6 +150,23 @@ export interface ConnectionDef {
   paramsFor?(c: Connection, p: Project): ParamSpec[];
   trims?(ctx: ConnCtx): Trim[];
   build(ctx: ConnCtx): ConnectionOut;
+  /**
+   * Parameter transform beyond the declarative `ParamSpec.flip` rules (which
+   * run first), for values that do not simply change sign. Edits `params`.
+   */
+  transform?(params: Record<string, ParamValue>, flip: JointFlip, c: Connection, p: Project): void;
+  /**
+   * Parameter holding the clearance between the main member face and the
+   * supported member's cut end (the trim is face + this value). "Extend to
+   * face" on a connected end sets it instead of moving the wire off the joint.
+   */
+  faceGap?: string;
+  /**
+   * Geometry referenced to world up (a seat under the member, a bracket's
+   * vertical, the sliding upper member): kept under maps that do not reverse
+   * world Z; a map that turns the vertical rebuilds it by the same rule.
+   */
+  gravity?: boolean;
 }
 
 export const emptyOut = (): ConnectionOut => ({

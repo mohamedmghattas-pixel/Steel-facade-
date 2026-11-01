@@ -69,6 +69,11 @@ export function ViewportPanel() {
       onToolClick: (t, info) => isModifyTool(t) && toolClick(t, info),
       onContextMenu: (hit, x, y, info) => {
         const s = useStore.getState();
+        if (hit?.kind === 'connection') {
+          // Right-click on a connection outside the selection selects it; the menu has the connection commands.
+          if (!s.selection.connections.includes(hit.id)) s.select({ members: [], nodes: [], connections: [hit.id] });
+          return openModifyMenu({ x, y, member: null, point: null, connection: hit.id });
+        }
         if (hit?.kind !== 'member') return;
         // Right-click on a member outside the selection selects it.
         if (!s.selection.members.includes(hit.id)) s.select({ members: [hit.id] });

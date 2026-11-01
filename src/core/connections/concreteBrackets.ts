@@ -77,10 +77,11 @@ export const helpingHand: ConnectionDef = {
   label: 'Helping-hand bracket',
   description: 'Rainscreen L bracket: angle anchored to the wall or slab edge, mullion bolted to the projecting leg (fixed or sliding point).',
   needsMain: false,
+  gravity: true,
   params: [
     P.sel('variant', 'Variant', ['fixed point', 'sliding point']),
     P.sel('angle', 'Bracket angle (projecting leg × wall leg)', HH_ANGLES, 'L 150x100x10'),
-    P.side('side', 'Concrete side (±1 along member depth)'),
+    P.side('side', 'Concrete side (±1 along member depth)', 1, ['z']),
     P.side('finSide', 'Bracket side (±1 across member)'),
     P.num('standoff', 'Wire line to concrete face', 120),
     P.num('along', 'Bracket centre from node (into member)', 150),
@@ -176,13 +177,14 @@ export const castInChannel: ConnectionDef = {
   label: 'Cast-in channel bracket',
   description: 'Bracket on a cast-in anchor channel (slab edge or slab top) with T-bolts; adjustable in three directions.',
   needsMain: false,
+  gravity: true,
   params: [
     P.sel('mount', 'Mount', ['slab edge', 'slab top']),
     P.sel('channel', 'Channel (width/height)', CHANNELS, '40/22'),
     P.bolt('tBolt', 'T-bolt', 'M12'),
     P.num('tPitch', 'T-bolt spacing along channel', 100),
     P.num('chanEdge', 'Channel axis from slab edge (slab top)', 100),
-    P.side('side', 'Concrete side (±1 along member depth)'),
+    P.side('side', 'Concrete side (±1 along member depth)', 1, ['z']),
     P.side('finSide', 'Bracket side (±1 across member)'),
     P.num('standoff', 'Wire line to slab edge', 150),
     P.num('along', 'Bracket centre from node (edge mount)', 150),
@@ -321,10 +323,11 @@ export const embedPlate: ConnectionDef = {
   label: 'Embed plate + fin',
   description: 'Cast-in plate with headed studs, flush in the slab edge or top, with a welded fin bolted to the mullion.',
   needsMain: false,
+  gravity: true,
   params: [
     P.sel('mount', 'Mount', ['slab edge', 'slab top']),
     P.sel('finWeld', 'Fin weld', ['site weld', 'shop weld']),
-    P.side('side', 'Concrete side (±1 along member depth)'),
+    P.side('side', 'Concrete side (±1 along member depth)', 1, ['z']),
     P.side('finSide', 'Fin side (±1 across member)'),
     P.num('standoff', 'Wire line to slab edge', 150),
     P.num('along', 'Fin centre from node (edge mount)', 150),
@@ -433,7 +436,7 @@ export const soffitHanger: ConnectionDef = {
     P.num('finT', 'Fin thickness', 10),
     P.num('finW', 'Fin width', 80),
     P.num('finDrop', 'Fin drop below plate', 200),
-    P.side('finSide', 'Single fin side (±1)'),
+    P.side('finSide', 'Fin side (±1; twin fins: bolt head side)'),
     P.bolt('bolt', 'Bolt', 'M16'),
     P.grade(),
     P.count('bolts', 'Bolts', 2),
@@ -475,7 +478,8 @@ export const soffitHanger: ConnectionDef = {
     const Cn = centreAt(g, node);
     const under = madd(Cn, dIn, tP); // plate underside on the member axis
     const fs = sideOf(v.finSide);
-    const sides = twin ? [1, -1] : [fs];
+    // Twin fins: both sides, bolt heads on the finSide fin (so a mirrored hanger is the mirror image).
+    const sides = twin ? [fs, -fs] : [fs];
     const aOff = Math.max(30, (anchor.washerOD ?? 24) / 2 + 10);
     const yA = g.w / 2 + finT + aOff;
     const W = num(v.plateW, 0) || ceilTo(2 * (yA + ea + aSlot / 2), 5);
@@ -658,9 +662,10 @@ export const adjustableBracket: ConnectionDef = {
   label: '3-way adjustable bracket',
   description: 'Wall angle + slide bracket with slots in three directions (along, out of plane, vertical); optional serrated plates.',
   needsMain: false,
+  gravity: true,
   params: [
     P.sel('angle', 'Wall angle', ADJ_ANGLES, 'L 100x100x10'),
-    P.side('side', 'Concrete side (±1 along member depth)'),
+    P.side('side', 'Concrete side (±1 along member depth)', 1, ['z']),
     P.side('finSide', 'Bracket side (±1 across member)'),
     P.num('standoff', 'Wire line to concrete face', 150),
     P.num('along', 'Fin centre from node (into member)', 150),
@@ -945,6 +950,7 @@ export const anchorPlate: ConnectionDef = {
     P.num('gap', 'Member end gap (fin)', 10),
     P.num('finT', 'Fin thickness', 10),
     P.num('finL', 'Fin length', 120),
+    P.side('finSide', 'Fin side (±1 across member)'),
     P.bolt('bolt', 'Bolt (fin)', 'M12'),
     P.grade(),
     P.num('slot', 'Fin slot along member (extra)', 17),
@@ -972,6 +978,8 @@ export const anchorPlate: ConnectionDef = {
     const Y = g.frame.y;
     const Z = g.frame.z;
     const Cn = centreAt(g, node);
+    // The fin (plate + fin fixing) sits on the finSide face of the member.
+    const YF = scale(Y, sideOf(v.finSide));
     const pattern = str(v.pattern, '4 (rectangle)');
     const yA = g.w / 2 + c;
     const zA = g.h / 2 + c;
@@ -1020,8 +1028,8 @@ export const anchorPlate: ConnectionDef = {
         key: 'fin',
         name: 'Fin plate',
         t: finT,
-        at: madd(madd(madd(Cn, Y, g.w / 2), dIn, t), Z, -finH / 2),
-        outward: Y,
+        at: madd(madd(madd(Cn, YF, g.w / 2), dIn, t), Z, -finH / 2),
+        outward: YF,
         x: dIn,
         y: Z,
         outline: rect(finL, finH),
@@ -1029,8 +1037,8 @@ export const anchorPlate: ConnectionDef = {
       });
       const p = madd(Cn, dIn, s);
       holeAt(f, p, bolt.hole, slot, dIn);
-      addBolts(out, { key: 'bolts', bolt, grade: str(v.grade, '8.8'), heads: [madd(p, Y, g.w / 2 + finT)], dir: scale(Y, -1), grip: finT + g.w });
-      memberHole(out, g, p, Y, bolt.hole);
+      addBolts(out, { key: 'bolts', bolt, grade: str(v.grade, '8.8'), heads: [madd(p, YF, g.w / 2 + finT)], dir: scale(YF, -1), grip: finT + g.w });
+      memberHole(out, g, p, YF, bolt.hole);
     }
     return out;
   },

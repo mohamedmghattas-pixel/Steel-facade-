@@ -88,12 +88,13 @@ export const finPlate: ConnectionDef = {
   label: 'Fin plate',
   description: 'Plate welded to the main member, bolted through the side of the secondary.',
   needsMain: true,
+  faceGap: 'gap',
   params: [
     { key: 't', label: 'Plate thickness', kind: 'number', default: 10, unit: 'mm' },
     { key: 'length', label: 'Plate length', kind: 'number', default: 100, unit: 'mm' },
     { key: 'height', label: 'Plate height (0 = auto)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'gap', label: 'Gap to main', kind: 'number', default: 10, unit: 'mm' },
-    { key: 'side', label: 'Side (±1)', kind: 'number', default: 1 },
+    { key: 'side', label: 'Side (±1)', kind: 'number', default: 1, flip: ['y'] },
     { key: 'position', label: 'Position', kind: 'select', default: 'side', options: ['side', 'knife (centred, slotted member)'] },
     { key: 'bolt', label: 'Bolt', kind: 'bolt', default: 'M12' },
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
@@ -167,11 +168,12 @@ export const angleCleat: ConnectionDef = {
   label: 'Angle cleat',
   description: 'Angle bolted to the main member face and to the side of the secondary.',
   needsMain: true,
+  faceGap: 'gap',
   params: [
     { key: 'profile', label: 'Angle', kind: 'profile', default: 'L 60x60x6' },
     { key: 'length', label: 'Cleat length (0 = auto)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'gap', label: 'Gap to main', kind: 'number', default: 10, unit: 'mm' },
-    { key: 'side', label: 'Side (±1)', kind: 'number', default: 1 },
+    { key: 'side', label: 'Side (±1)', kind: 'number', default: 1, flip: ['y'] },
     { key: 'bolt', label: 'Bolt', kind: 'bolt', default: 'M12' },
     { key: 'grade', label: 'Bolt grade', kind: 'text', default: '8.8' },
     { key: 'bolts', label: 'Bolts per leg', kind: 'number', default: 1 },
@@ -330,6 +332,7 @@ export const welded: ConnectionDef = {
   label: 'Welded',
   description: 'Secondary cut to the face of the main member and shop welded (one assembly).',
   needsMain: true,
+  faceGap: 'gap',
   params: [{ key: 'gap', label: 'Gap', kind: 'number', default: 0, unit: 'mm' }],
   trims(ctx) {
     const j = joint(ctx);

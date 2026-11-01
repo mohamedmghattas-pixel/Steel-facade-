@@ -502,6 +502,16 @@ the end, both 20 mm from their main face (test "5. custom joint frame",
 `tests/geometryFixes.test.ts`). Centred plates (`v = 0`) are mirror-symmetric
 about the transom mid-length (§12.4, "custom both ends").
 
+**Mirrored template joints.** Two per-connection flags reverse the frame:
+`mirrorV` (`V → −V`) and `mirrorW` (`W → −W`) (`customConnection.build`,
+`src/core/connections/custom.ts`). They are set by Mirror, Rotate, Reverse and
+Flip connection side through template-dependent flip rules (§15): `mirrorV`
+flips with `z·det` in the joint frame (`V = W × U`) and with `y` in the member
+frame (`V = ŷ`), `mirrorW` with `z`. Reversing the axis instead of negating
+the formulas keeps one template for every joint and mirrors everything that is
+measured along it (contact corner, plate side `sgn(v)`, centred plates, bolt
+heads).
+
 **Notes / caveats:** templates saved before this frame existed have no
 `frame`; `migrateProject` sets `frame: 'member'` (`src/state/storage.ts:51,66-86`)
 so their geometry does not change. There `V = ŷ_sec` at both ends: left-handed
@@ -1003,7 +1013,19 @@ Plate notation in the tables below: `[P | n_out | x, y]` means
   removed over the slot length (the plate lies in the web plane).
 - `side` / `finSide` of the built-in types are member-local, so mirrored
   joints at the two ends of a member are not mirror images in the joint view.
-  Custom templates with the joint frame are joint-local (§4.4).
+  Custom templates with the joint frame are joint-local (§4.4). Operations that
+  mirror, rotate or reverse members transform these parameters (§15), so a
+  mirrored joint is the mirror image of the original.
+- Bolt head sides: `doubleAngle`, `shearBlock`, `splicePlates` and
+  `sleeveSplice` take `boltSide` (±1 along the secondary's `ŷ`, default +1 =
+  the previous heads), `saddleBracket` takes `boltSide` along `A = dIn × x̂m`;
+  `hangerRod` / `tieBack` take `side` (±1 on the lug normal `nL = dIn × x̂m`:
+  tab / tongue side and pin head); `anchorPlate` takes `finSide` (fin variant);
+  `soffitHanger` twin fins put the bolt heads on the `finSide` fin. Defaults
+  give the geometry of earlier versions.
+- An angle brace laps the gusset with the back of its vertical leg: local −y,
+  or +y when its section is mirrored (`Member.mirrorSection`), so a mirrored
+  brace gets the mirrored gusset.
 
 ---
 
@@ -1222,6 +1244,15 @@ Assemblies: `M1 = {mullion, fin plate}`: welded, and the main is the member
    - Every preview profile (`:50-57`) and every select / bool variant
      (`:59-68`) must derive.
    - `applyConnection` must place the type (`:82-`).
+   - `npx vitest run tests/connectionsFollow.test.ts`: mirror, reverse,
+     rotate, move, extend and Flip side must give the image of the parts.
+9. **Mirror and flip rules** (§15): give every parameter signed along a
+   member axis (a side, an offset across the member, a bolt head side) a
+   `flip` rule (`P.side(key, label, d, flip)` or `flips(spec, …)` in
+   `kit.ts`), a select with mirrored options a `swap`, and set `gravity` when
+   the geometry is placed from world up. A hard-coded side (`+ŷ`, a cross
+   product sign) needs a ±1 parameter with a rule, or the mirror test fails.
+   Set `faceGap` to the clearance parameter when the trim is face + it.
 
 Invariants to respect:
 
@@ -1331,3 +1362,80 @@ fixed; each item says what changed and where. Tests: `tests/geometryFixes.test.t
     default `'one'` = previous output; Fabrication panel and assistant
     `set_fabrication_settings`); one-wall holes go on the face of their wall
     (§11).
+
+---
+
+## 15. Transform rules: mirror, reverse, rotate, flip side
+
+Operations that map a joint (Rotate, Mirror, Offset / Move, Reverse, their
+copies, and *Flip connection side*) leave every connection's parts the image of
+the old ones: the mirror image after a mirror, rigidly moved after a rotate or
+move, physically unchanged after a reverse. The builders place every part from
+the member frames (§3.1) and the parameters, so the frames are compared, not
+the parts (`src/core/connections/transform.ts`):
+
+```
+for each joint axis k ∈ {x, y, z (supported member), mx, my, mz (main member)}:
+   f_k = sign( k_new · M(k_old) )        M = linear part of the map; reverse: identity
+f_det = −1 for a reflection (mirror, Flip connection side), +1 otherwise
+```
+
+`|cos| < 0.5` counts as +1 (an axis that did not follow the map). A parameter
+declares the axes it is signed along in `ParamSpec.flip`; when the product of
+those factors is −1 it is mirrored: numbers and `"±1"` strings negated,
+booleans toggled, selects exchanged through `ParamSpec.swap`.
+`ConnectionDef.transform(params, flip, c, p)` takes anything that is not a
+plain sign change (no built-in type needs it). A direction built as the cross
+product of two member axes picks up `det`: `A = dIn × x̂m` maps to
+`f_mx·det·M(A)`. The reconcile pass (`followConnections`,
+[MODIFY.md §10](MODIFY.md)) applies the transform to every connection whose
+supported member was mapped (and, for a reverse, whose main member was).
+
+*Flip connection side* is the same transform with the reflection through the
+supported member's local xz plane (`y`: the other face) or xy plane (`z`: the
+other depth side) and the members unchanged (`sideFlip`): its parts are the
+reflection of the old ones through that plane.
+
+**Coverage (all 30 types):**
+
+| Type | Rule(s) | Notes |
+| --- | --- | --- |
+| `finPlate`, `angleCleat`, `teeCleat`, `wallAngle`, `gussetPlate`, `crossBrace` | `side`: y | gusset: angle braces follow `mirrorSection` (§10 notes) |
+| `slabBracket` | `side`: z, `finSide`: y, `surveyAlong`: y | `surveyOut` (along `zN`) and `surveyVert` (along `up`) need none; gravity (`dz`, `up`) |
+| `helpingHand`, `castInChannel`, `embedPlate`, `adjustableBracket` | `side`: z, `finSide`: y | gravity (`bracketFrame.up`) |
+| `soffitHanger` | `finSide`: y | twin fins: bolt head side |
+| `anchorPlate` | `finSide`: y | fin variant |
+| `doubleAngle`, `shearBlock`, `splicePlates`, `sleeveSplice` | `boltSide`: y | sleeve splice: gravity (the sliding upper member) |
+| `saddleBracket` | `boltSide`: mx·det | |
+| `hangerRod`, `tieBack` | `side`: mx·det | |
+| `custom` | `mirrorV`: z·det (joint frame) or y (member frame), `mirrorW`: z | §4.4 |
+| `endPlate`, `welded`, `baseplate`, `stiffenedBase`, `endCap`, `flangeClamp`, `stubBracket`, `endPlateSplice` | — | symmetric about both member planes through the joint |
+| `seatedAngle` | — | gravity: the seat is the downward face (§10.3) |
+
+Slots and their directions are built along member or plate axes, so they
+follow the frames; no type has an angle parameter.
+
+**Gravity-referenced geometry** (`ConnectionDef.gravity`: `slabBracket`,
+`helpingHand`, `castInChannel`, `embedPlate`, `adjustableBracket`,
+`seatedAngle`, `sleeveSplice`) is placed from world up: a bracket's vertical,
+the seat under the member, the sliding upper member. Maps that keep world Z
+(a mirror about a vertical plane, a rotation about a vertical axis, any move)
+give the image; a map that turns the vertical (a mirror about a horizontal
+plane, a rotation about a horizontal axis) rebuilds these parts by the same
+rule (the seat stays under the member), which is the intended detail, not the
+image.
+
+**Tests** (`tests/connectionsFollow.test.ts`) on the representative joint of
+every catalogue entry, every select / bool / side variant and the custom
+starter templates in both frames and with both flags: the world point sets of
+the plate outlines (both faces), profile parts (section corners at both ends),
+hole centres and slot ends (plates, profile parts, members), end slots, bolts
+(head point and shank direction), welds (part centroids) and the joint
+members' cut-back ends equal the image within 0.5 mm after a mirror about two
+vertical planes (moved and copied), a reverse of the supported and of the main
+member, a rotation about a vertical axis, a move, an extension of the
+supported end, and Flip side in y and z. Skipped by design: Flip `y` of
+`seatedAngle` on a transom (its local y is world up) and Flip `z` of the
+inclined braces (`gussetPlate`, `crossBrace`: the main member is not symmetric
+about that plane); the extension of a `crossBrace` split brace (the centre
+plate is centred on its node and follows it).

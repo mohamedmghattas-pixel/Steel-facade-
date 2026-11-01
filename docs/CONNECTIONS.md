@@ -161,6 +161,28 @@ parameter sets of any type and appear in the same library category.
 flat, angle or hollow section get a gusset plate where they end on another
 member (set `braceJoint: 'none'` to switch it off).
 
+## Member operations, mirror and flip side
+
+Connections follow the modify operations ([MODIFY.md §10](MODIFY.md)): they
+move with the end of their supported member, keep or take the main member
+that meets that end, and are copied with copied members. Mirror, rotate,
+reverse and **Flip connection side** (right-click a connection, its properties,
+or the assistant's `connection_flip_side`) transform the parameters so the
+parts are the mirror / rotated image or stay in place
+([CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)). For that every type
+declares which parameters are signed along a member axis (`ParamSpec.flip`):
+
+- sides: `side` of fin plates, cleats, tee cleats, wall angles, gussets, centre
+  plates; `side` (concrete, local z) and `finSide` (local y) of the brackets;
+- bolt head sides `boltSide` of double angles, shear blocks, splice plates,
+  sleeve splices and U-saddles; the lug side `side` of hanger rods and
+  tie-backs; `finSide` of the anchor plate fin and of soffit hanger fins (twin
+  fins: the bolt head side); `surveyAlong` of slab brackets;
+- custom templates: per-connection flags `mirrorV` / `mirrorW` that reverse the
+  template's v / w axis.
+
+The defaults give the geometry of earlier versions.
+
 ## Detailing rules used by the defaults
 
 All defaults pass `runCodeChecks` with no errors for both EN 1993-1-8 and
@@ -238,7 +260,12 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
      (head-side face of the grip, shank direction, grip — every hole must lie
      on a bolt axis so the checks match it), welds via `weldedTo` / `out.welds`;
    - use `edgeDist`, `pitchFor`, `longSlot` for defaults and push a plain
-     warning to `out.warnings` when the geometry does not fit.
+     warning to `out.warnings` when the geometry does not fit;
+   - give every parameter signed along a member axis a `flip` rule
+     (`P.side(key, label, d, ['z'])`, `flips(spec, …)`), set `gravity` when parts
+     are placed from world up and `faceGap` when the trim is face + a gap
+     ([CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)); avoid hard-coded
+     sides (`+ŷ` bolt heads): make them a ±1 parameter.
 3. Register it in `CONNECTIONS` (`registry.ts`); add it to `COLLINEAR_TYPES`,
    `ONE_PER_NODE` or `APPLY_END` if it needs a placement rule.
 4. Add a `CATALOG` entry (`catalog.ts`): category, summary, use, members,
@@ -247,7 +274,9 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
    `previewProfiles`, `expectedWarnings`.
 5. Run `npm test`: `tests/connectionLibrary.test.ts` derives the new type on
    its joint, checks both codes, every select / bool variant, application via
-   `applyConnection` and the catalogue entry. Check it in the library preview.
+   `applyConnection` and the catalogue entry; `tests/connectionsFollow.test.ts`
+   mirrors, reverses, rotates, moves, extends and flips it and compares the
+   parts with their image. Check it in the library preview.
 6. Add a row to the catalogue above.
 
 ## Limits

@@ -1,13 +1,14 @@
 /**
  * Modify tools UI: the options bar of the active tool (in the 3D view), the
- * right-click context menu on members, and the Operations section of the member
- * properties.
+ * right-click context menu on members and connections, the Operations section
+ * of the member properties and the Flip side buttons of connection properties.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { isModifyTool, useStore, type ModifyTool } from '../state/store';
 import type { Id, Vec3 } from '../core/model/types';
 import { Icon } from './icons';
+import { CONNECTIONS } from '../core/connections/registry';
 import { NumberInput, Segmented, TextInput } from './widgets';
 import { MATCH_FIELDS, MATCH_LABEL, collinear, profileSizeStep, wireOf, type SizeStepMode } from '../core/model/modify';
 import { MODIFY_KEYS, TOOL_LABEL, matchFromSelection, setOption, toolEnter, useModify, type ModifyOptions } from './modifyTools';
@@ -20,6 +21,8 @@ import {
   deleteSegmentAt,
   extendFirstToSecond,
   extendSelection,
+  flipAxes,
+  flipConnectionsSide,
   joinSelection,
   measureSelection,
   measureText,
@@ -290,6 +293,8 @@ interface MenuState {
   y: number;
   member: Id | null;
   point: Vec3 | null;
+  /** Right-click on a connection: the menu lists the connection commands for the selected connections. */
+  connection?: Id | null;
 }
 export const useModifyMenu = create<{ menu: MenuState | null }>(() => ({ menu: null }));
 
@@ -303,6 +308,19 @@ interface Item {
   key?: string;
   run: () => void;
   title?: string;
+  disabled?: boolean;
+}
+
+/** Menu of the selected connections: flip to the other face / depth side. */
+function connectionItems(ids: Id[]): Item[][] {
+  const axes = flipAxes(ids);
+  const why = (a: 'y' | 'z') => (axes.includes(a) ? undefined : `Symmetric about the member's ${a === 'y' ? 'xz' : 'xy'} plane — nothing to flip`);
+  return [
+    [
+      { label: 'Flip connection side (other face, local y)', run: () => flipConnectionsSide('y', ids), disabled: !axes.includes('y'), title: why('y') ?? 'Mirror the connection to the other face of its member; the member stays' },
+      { label: 'Flip connection side (other depth side, local z)', run: () => flipConnectionsSide('z', ids), disabled: !axes.includes('z'), title: why('z') ?? 'Mirror the connection to the other side of the member depth' },
+    ],
+  ];
 }
 
 function menuItems(ids: Id[], at: { member: Id | null; point: Vec3 | null }): Item[][] {
@@ -389,6 +407,7 @@ function gapBetween(a: Id, b: Id): number {
 export function ModifyContextMenu() {
   const menu = useModifyMenu((s) => s.menu);
   const sel = useStore((s) => s.selection.members);
+  const selConns = useStore((s) => s.selection.connections);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
   useEffect(() => {
@@ -405,12 +424,15 @@ export function ModifyContextMenu() {
     setPos({ x: Math.max(4, Math.min(menu.x, window.innerWidth - r.width - 8)), y: Math.max(4, Math.min(menu.y, window.innerHeight - r.height - 8)) });
   }, [menu, sel]);
   if (!menu) return null;
-  const ids = sel.filter((id) => useStore.getState().project.members[id]);
-  if (!ids.length) return null;
-  const groups = menuItems(ids, menu);
+  const project = useStore.getState().project;
+  const connIds = menu.connection ? selConns.filter((id) => project.connections[id]) : [];
+  const ids = connIds.length ? [] : sel.filter((id) => project.members[id]);
+  if (!ids.length && !connIds.length) return null;
+  const groups = connIds.length ? connectionItems(connIds) : menuItems(ids, menu);
+  const title = connIds.length ? (connIds.length === 1 ? (CONNECTIONS[project.connections[connIds[0]].type]?.label ?? 'Connection') : `${connIds.length} connections`) : ids.length === 1 ? 'Member' : `${ids.length} members`;
   return (
     <div ref={ref} className="ctx-menu" role="menu" style={{ left: pos?.x ?? menu.x, top: pos?.y ?? menu.y, visibility: pos ? 'visible' : 'hidden' }} onContextMenu={(e) => e.preventDefault()}>
-      <div className="ctx-title">{ids.length === 1 ? 'Member' : `${ids.length} members`}</div>
+      <div className="ctx-title">{title}</div>
       {groups.map((g, i) => (
         <div key={i} className="ctx-group">
           {g.map((it) => (
@@ -418,6 +440,7 @@ export function ModifyContextMenu() {
               key={it.label}
               role="menuitem"
               title={it.title}
+              disabled={it.disabled}
               onClick={() => {
                 closeModifyMenu();
                 it.run();
@@ -540,6 +563,22 @@ export function ModifyOpsSection({ ids }: { ids: Id[] }) {
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** Flip side buttons of the connection properties (the selected connections of one kind). */
+export function FlipSideButtons({ ids }: { ids: Id[] }) {
+  useStore((s) => s.project);
+  const axes = flipAxes(ids);
+  return (
+    <div className="btn-row">
+      <button className="link-btn" disabled={!axes.includes('y')} onClick={() => flipConnectionsSide('y', ids)} title={axes.includes('y') ? 'Mirror to the other face of the member (local y); the member stays' : 'Symmetric across the member — nothing to flip'}>
+        Flip side ↔ (y)
+      </button>
+      <button className="link-btn" disabled={!axes.includes('z')} onClick={() => flipConnectionsSide('z', ids)} title={axes.includes('z') ? 'Mirror to the other side of the member depth (local z)' : 'Symmetric in depth — nothing to flip'}>
+        Flip side ↕ (z)
+      </button>
     </div>
   );
 }

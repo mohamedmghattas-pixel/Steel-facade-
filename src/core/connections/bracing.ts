@@ -89,7 +89,9 @@ function gussetGeom(ctx: ConnCtx, out?: ConnectionOut): GussetGeom | null {
   const faceOff = dot(sub(O, Cs), n);
   const clearAt = (halfW: number) => (gap + faceOff + halfW * Math.abs(dot(wdir, n))) / cosN;
   const e = edgeDist(bolt.name);
-  const side = kind === 'angle' ? -1 : sideOf(v.side);
+  // An angle brace laps the gusset with the back of its vertical leg: at local −y, or +y when its section is mirrored.
+  const leg = sec.member.mirrorSection ? 1 : -1;
+  const side = kind === 'angle' ? leg : sideOf(v.side);
   let lateral = scale(sec.frame.z, 0);
   let contact: number;
   let ss: number[];
@@ -114,7 +116,7 @@ function gussetGeom(ctx: ConnCtx, out?: ConnectionOut): GussetGeom | null {
       const washer = (bolt.washerOD ?? 2 * bolt.d) / 2;
       const zg = Math.max(a.t + (a.r ?? 0) + washer, Math.min(a.h - e, 0.55 * a.h));
       lateral = scale(sec.frame.z, -a.h / 2 + zg);
-      contact = -sec.w / 2;
+      contact = (leg * sec.w) / 2;
     } else contact = side * (sec.w / 2);
   }
   return { j, kind, nG, n, ax, O, ss, trim, lateral, contact, side, ...g } as GussetGeom;
@@ -202,7 +204,7 @@ export const gussetPlate: ConnectionDef = {
       endSlot(out, sec, j.end, madd(Cs, dIn, g.trim), nG, tk, g.knifeEnd! - g.trim);
     } else {
       tPart = lapThickness(sec);
-      const holeOff = kind === 'angle' ? -sec.w / 2 + tPart / 2 : 0;
+      const holeOff = kind === 'angle' ? side * (sec.w / 2 - tPart / 2) : 0;
       for (const p of axis) memberHole(out, sec, madd(p, sec.frame.y, holeOff), nG, bolt.hole);
     }
     const headOff = contact + side * t;

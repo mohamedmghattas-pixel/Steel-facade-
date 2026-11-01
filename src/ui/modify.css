@@ -115,6 +115,11 @@
 .ctx-menu button:hover {
   background: var(--bg-3);
 }
+.ctx-menu button:disabled {
+  color: var(--text-3);
+  cursor: default;
+  background: transparent;
+}
 .ctx-menu kbd,
 .ops kbd {
   font: 11px var(--mono);

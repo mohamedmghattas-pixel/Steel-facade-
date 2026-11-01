@@ -144,11 +144,19 @@ describe('join', () => {
     expect(Object.keys(q.members)).toHaveLength(2);
   });
 
-  it('refuses when a connection sits on the shared node', () => {
+  // Was "refuses when a connection sits on the shared node": a connection on the joint that belongs to the
+  // joined pieces is now removed and reported (connections follow the operation); the UI asks first by
+  // calling with jointConnections: 'refuse'.
+  it('removes (and reports) a connection on the joint of the pieces; refuses on request so the UI can ask', () => {
     const p = sampleFacade();
     const node = Object.values(p.connections).find((c) => c.type === 'slabBracket' && c.secondary.length === 2)!;
-    const err = refused(() => joinMembers(p, node.secondary), 'connection');
-    expect(err.message).toMatch(/connection sits on the joint/);
+    const err = refused(() => joinMembers(p, node.secondary, { jointConnections: 'refuse' }), 'joint');
+    expect(err.message).toMatch(/Joining removes the connection on the joint \(Slab bracket\)/);
+    expect(err.detail).toEqual([node.id]);
+    const r = joinMembers(p, node.secondary);
+    expect(p.connections[node.id]).toBeUndefined();
+    expect(r.warnings.some((w) => /Removed Slab bracket on the joint/.test(w))).toBe(true);
+    expect(r.connections?.removed.map((x) => x.id)).toContain(node.id);
   });
 
   it('refuses differing properties, and joins keeping the first on request', () => {
@@ -790,7 +798,7 @@ describe('undo, assistant and connections', () => {
     const s = () => useStore.getState();
     const before = JSON.stringify(s().project);
     const node = Object.values(s().project.connections).find((c) => c.type === 'slabBracket' && c.secondary.length === 2)!;
-    expect(() => s().apply('join', (d) => void joinMembers(d, node.secondary))).toThrow(ModifyError);
+    expect(() => s().apply('join', (d) => void joinMembers(d, node.secondary, { jointConnections: 'refuse' }))).toThrow(ModifyError);
     expect(JSON.stringify(s().project)).toBe(before);
   });
 

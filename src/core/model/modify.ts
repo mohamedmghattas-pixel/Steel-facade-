@@ -10,7 +10,7 @@
  * from an existing member are written as `{ ...m, … }` so new optional member
  * fields carry over. See docs/MODIFY.md.
  */
-import type { ConnectionType, EndPrep, FreePlate, Id, Member, Project, Vec3, WorkPlane } from './types';
+import type { EndPrep, FreePlate, Id, Member, Project, Vec3, WorkPlane } from './types';
 import {
   EPS,
   add,
@@ -36,6 +36,19 @@ import {
   type Frame,
 } from './geometry';
 import { NODE_TOL, ROLE_LABEL, connectionsAtNode, deleteMembers, findNode, newId, removeOrphanNodes, splitMember } from './ops';
+import {
+  connectionChecks,
+  connectionSummaryText,
+  copyConnections,
+  followConnections,
+  mainMeets,
+  mergeSummaries,
+  snapshotConnections,
+  type ConnectionSnapshot,
+  type ConnectionSummary,
+  type FollowOptions,
+} from './connectionFollow';
+import { sideFlip, transformParams } from '../connections/transform';
 import { anglesFromNormal, centreLine, normalFromAngles, type End } from '../geometry/endPrep';
 import { getProfile, PROFILES, type Profile } from '../library/profiles';
 import { shapeOutline, shapeSignature } from '../library/shapes';
@@ -51,9 +64,10 @@ const DEG = Math.PI / 180;
 // ---------------------------------------------------------------------------
 // Results and refusals
 
-export type ModifyErrorCode = 'refused' | 'conflict' | 'connection';
+/** 'joint': joining would remove connections on the joint (Join with jointConnections: 'refuse'), see `detail`. */
+export type ModifyErrorCode = 'refused' | 'conflict' | 'connection' | 'joint';
 
-/** A refused operation. `conflict` (properties differ) can be retried with `keep: 'first'`. */
+/** A refused operation. `conflict` (properties differ) can be retried with `keep: 'first'`, `joint` with `jointConnections: 'remove'`. */
 export class ModifyError extends Error {
   constructor(
     message: string,
@@ -78,9 +92,24 @@ export interface ModifyResult {
   message: string;
   /** What the user should check: connections that no longer meet their members, dropped end preparations … */
   warnings: string[];
+  /** What happened to the connections (moved with their member ends, re-pointed, mirrored, copied, removed). */
+  connections?: ConnectionSummary;
 }
 
 const result = (members: Id[], message: string, warnings: string[] = [], removed: Id[] = []): ModifyResult => ({ members, removed, message, warnings });
+
+/**
+ * End of an operation: connections follow the members (followConnections) and
+ * their warnings join the result's. `snap` was taken before the operation.
+ */
+function finish(p: Project, snap: ConnectionSnapshot, r: ModifyResult, opts: FollowOptions = {}): ModifyResult {
+  const sum = followConnections(p, snap, opts);
+  const touched = [...r.members, ...(opts.mapped ?? [])].filter((id) => p.members[id]);
+  const checks = connectionChecks(p, touched).filter((w) => !sum.warnings.some((x) => x === w));
+  return { ...r, warnings: uniq([...r.warnings, ...sum.warnings, ...checks]), connections: mergeSummaries(r.connections, sum) };
+}
+
+export { connectionSummaryText, mergeSummaries };
 
 const f1 = (n: number) => (Math.round(n * 10) / 10).toLocaleString('en-US');
 const r6 = (n: number) => {
@@ -291,52 +320,11 @@ function setPrep(m: Member, e: End, prep: EndPrep | undefined) {
 }
 
 // ---------------------------------------------------------------------------
-// Connection side parameters. Joints placed on one side of the supported
-// member take a ±1 parameter along its local y or z; when an operation flips
-// that axis while the member stays where it is (reverse) or is transformed
-// with it (rotate, mirror), the parameter is flipped so the parts follow.
-
-const SIDE_AXES: Partial<Record<ConnectionType, Record<string, 'y' | 'z'>>> = {
-  finPlate: { side: 'y' },
-  angleCleat: { side: 'y' },
-  teeCleat: { side: 'y' },
-  wallAngle: { side: 'y' },
-  slabBracket: { side: 'z', finSide: 'y' },
-  helpingHand: { side: 'z', finSide: 'y' },
-  castInChannel: { side: 'z', finSide: 'y' },
-  embedPlate: { side: 'z', finSide: 'y' },
-  adjustableBracket: { side: 'z', finSide: 'y' },
-};
-
-/** Flip the side parameters of connections supporting `memberId` whose axis flipped. Returns how many changed. */
-function flipConnectionSides(p: Project, memberId: Id, flipY: boolean, flipZ: boolean, only?: Set<Id>): number {
-  if (!flipY && !flipZ) return 0;
-  let n = 0;
-  for (const c of Object.values(p.connections)) {
-    if (c.secondary[0] !== memberId || (only && !only.has(c.id))) continue;
-    const axes = SIDE_AXES[c.type];
-    if (!axes) continue;
-    for (const [key, axis] of Object.entries(axes)) {
-      if (!(axis === 'y' ? flipY : flipZ)) continue;
-      const spec = CONNECTIONS[c.type]?.params.find((s) => s.key === key);
-      const cur = c.params[key] ?? spec?.default ?? 1;
-      const v = Number(cur);
-      if (!Number.isFinite(v)) continue;
-      c.params[key] = typeof cur === 'string' ? String(v < 0 ? 1 : -1) : v < 0 ? 1 : -1;
-      n++;
-    }
-  }
-  return n;
-}
-
-// ---------------------------------------------------------------------------
 // Nodes and member ends
 
 export type EndMode = 'auto' | 'detach' | 'node';
 
 const refsMember = (c: { main: Id | null; secondary: Id[] }, id: Id) => c.main === id || c.secondary.includes(id);
-/** A connection that concerns only this member (a base plate, an end cap …). */
-const onlyMember = (c: { main: Id | null; secondary: Id[] }, id: Id) => c.secondary.length > 0 && c.secondary.every((s) => s === id) && (c.main === null || c.main === id);
 
 /** Members (other than `except`) with an end on node n. */
 function endsAtNode(p: Project, n: Id, except?: Id): Member[] {
@@ -364,62 +352,47 @@ function nodeAt(p: Project, pos: Vec3, except?: Id): Id {
 }
 
 /**
- * Move one end of a member to `pos`. 'node' moves the node (every member and
- * connection on it follows); 'detach' gives only this member's end a node of its
- * own (an existing node at `pos` is reused); 'auto' moves the node when nothing
- * else uses it, else detaches. Connections at the old node that concern only
- * this member go with the end; others stay and are reported.
+ * Move one end of a member to `pos` (no reconcile; the public operations call
+ * `finish`). 'node' moves the node (every member and connection on it
+ * follows); 'detach' gives only this member's end a node of its own (an
+ * existing node at `pos` is reused); 'auto' moves the node unless another
+ * member ends there or a connection of another member sits on it.
  */
-export function moveMemberEnd(p: Project, memberId: Id, end: End, pos: Vec3, mode: EndMode = 'auto'): ModifyResult {
+function moveEnd(p: Project, memberId: Id, end: End, pos: Vec3, mode: EndMode = 'auto') {
   const m = mem(p, memberId);
   const n = end === 'start' ? m.start : m.end;
   const far = p.nodes[end === 'start' ? m.end : m.start].p;
   if (dist(far, pos) < 1) refuse('The member would be shorter than 1 mm.');
-  const warnings: string[] = [];
-  const conns = connectionsAtNode(p, n);
-  const shared = endsAtNode(p, n, m.id).length > 0 || conns.some((c) => !onlyMember(c, m.id));
+  // Connections whose supported member is this one follow its end anyway (followConnections).
+  const shared = endsAtNode(p, n, m.id).length > 0 || connectionsAtNode(p, n).some((c) => c.secondary[0] !== m.id);
   if (mode === 'node' || (mode === 'auto' && !shared)) {
     p.nodes[n].p = { x: pos.x, y: pos.y, z: pos.z };
     const into = Object.values(p.nodes).find((o) => o.id !== n && dist(o.p, pos) <= NODE_TOL);
     if (into) mergeNodeInto(p, n, into.id);
-  } else {
-    const target = nodeAt(p, pos, n);
-    m[end] = target;
-    for (const c of conns) {
-      if (onlyMember(c, m.id)) c.node = target;
-      else if (refsMember(c, m.id)) warnings.push(`${connLabel(p, c.id)} stays at the old node — check that it still meets ${label(p, m)}.`);
-    }
-  }
-  warnings.push(...connectionIssues(p, [m.id]));
-  return result([m.id], `Moved the ${end} of ${label(p, m)}.`, uniq(warnings));
+  } else m[end] = nodeAt(p, pos, n);
+}
+
+/**
+ * Move one end of a member to `pos`. 'node' moves the node (every member and
+ * connection on it follows); 'detach' gives only this member's end a node of its
+ * own (an existing node at `pos` is reused); 'auto' moves the node when nothing
+ * else uses it, else detaches. The connections of this member end go with it
+ * (followConnections): a joint keeps its main member while the end still meets
+ * it, and is reported when it does not.
+ */
+export function moveMemberEnd(p: Project, memberId: Id, end: End, pos: Vec3, mode: EndMode = 'auto', opts: { landed?: Id } = {}): ModifyResult {
+  const snap = snapshotConnections(p);
+  const m = mem(p, memberId);
+  moveEnd(p, memberId, end, pos, mode);
+  const landed = opts.landed ? new Map([[`${memberId}:${end}`, opts.landed]]) : undefined;
+  return finish(p, snap, result([m.id], `Moved the ${end} of ${label(p, m)}.`), { landed });
 }
 
 const uniq = (xs: string[]) => [...new Set(xs)];
 
-/**
- * Connections touching these members whose geometry no longer works: a
- * supported member that does not end at the connection's node, or a main member
- * that neither ends at nor passes through it.
- */
+/** Connection problems after an operation (a main member that no longer meets its joint …). */
 export function connectionIssues(p: Project, memberIds: Iterable<Id>): string[] {
-  const ids = new Set(memberIds);
-  const out: string[] = [];
-  for (const c of Object.values(p.connections)) {
-    if (!c.secondary.some((s) => ids.has(s)) && !(c.main && ids.has(c.main))) continue;
-    const q = p.nodes[c.node]?.p;
-    if (!q) continue;
-    for (const s of c.secondary) {
-      const m = p.members[s];
-      if (!m) continue;
-      if (dist(p.nodes[m.start].p, q) > 1 && dist(p.nodes[m.end].p, q) > 1) out.push(`${connLabel(p, c.id)}: ${label(p, m)} no longer ends at its node.`);
-    }
-    const main = c.main ? p.members[c.main] : undefined;
-    if (main) {
-      const w = wireOf(p, main);
-      if (pointSegment(q, w.a, w.b).d > 1) out.push(`${connLabel(p, c.id)}: the main member ${label(p, main)} no longer meets its node.`);
-    }
-  }
-  return out;
+  return connectionChecks(p, memberIds);
 }
 
 // ---------------------------------------------------------------------------
@@ -463,36 +436,45 @@ export function splitAtStations(p: Project, memberId: Id, stations: number[]): I
   return pieces;
 }
 
-function splitDone(p: Project, ids: Id[], what: string): ModifyResult {
+/**
+ * Result of a split: connections at the ends stay on their pieces, a main
+ * member split at a joint is re-pointed to the piece that contains the node
+ * (followConnections).
+ */
+function splitDone(p: Project, snap: ConnectionSnapshot, ids: Id[], what: string): ModifyResult {
   const n = ids.length;
   if (n < 2) refuse(`Nothing to split ${what}.`);
-  return result(ids, `Split into ${n} pieces ${what}.`, connectionIssues(p, ids));
+  return finish(p, snap, result(ids, `Split into ${n} pieces ${what}.`));
 }
 
 /** Split at the point of the member's axis nearest to `point`. */
 export function splitAtPoint(p: Project, memberId: Id, point: Vec3): ModifyResult {
+  const snap = snapshotConnections(p);
   const w = wireOf(p, mem(p, memberId));
   const s = stationOf(w, point);
   if (s < 1 || s > w.L - 1) refuse('Pick a point inside the member, at least 1 mm from its ends.');
-  return splitDone(p, splitAtStations(p, memberId, [s]), `at ${f1(s)} mm`);
+  return splitDone(p, snap, splitAtStations(p, memberId, [s]), `at ${f1(s)} mm`);
 }
 
 /** Split at a distance from the start or end node. */
 export function splitAtDistance(p: Project, memberId: Id, distance: number, from: End = 'start'): ModifyResult {
+  const snap = snapshotConnections(p);
   const w = wireOf(p, mem(p, memberId));
   const s = from === 'start' ? distance : w.L - distance;
   if (!(s >= 1 && s <= w.L - 1)) refuse(`${f1(distance)} mm is outside the member (length ${f1(w.L)} mm).`);
-  return splitDone(p, splitAtStations(p, memberId, [s]), `at ${f1(distance)} mm from the ${from}`);
+  return splitDone(p, snap, splitAtStations(p, memberId, [s]), `at ${f1(distance)} mm from the ${from}`);
 }
 
 /** Split into n equal parts. */
 export function splitInto(p: Project, memberId: Id, n: number): ModifyResult {
+  const snap = snapshotConnections(p);
   const k = Math.round(n);
   if (!(k >= 2 && k <= 1000)) refuse('Split into 2 … 1000 parts.');
   const w = wireOf(p, mem(p, memberId));
   if (w.L / k < 1) refuse('The parts would be shorter than 1 mm.');
   return splitDone(
     p,
+    snap,
     splitAtStations(
       p,
       memberId,
@@ -504,6 +486,7 @@ export function splitInto(p: Project, memberId: Id, n: number): ModifyResult {
 
 /** Split into pieces of a fixed length (e.g. stock length) from one end, with the remainder at the other. */
 export function splitAtLengths(p: Project, memberId: Id, length: number, from: End = 'start'): ModifyResult {
+  const snap = snapshotConnections(p);
   if (!(length >= 1)) refuse('The piece length must be at least 1 mm.');
   const w = wireOf(p, mem(p, memberId));
   if (length >= w.L - 1) refuse(`The member (${f1(w.L)} mm) is not longer than ${f1(length)} mm.`);
@@ -511,7 +494,7 @@ export function splitAtLengths(p: Project, memberId: Id, length: number, from: E
   for (let d = length; d < w.L - 1; d += length) ds.push(from === 'start' ? d : w.L - d);
   if (ds.length > 1000) refuse('That would make more than 1000 pieces.');
   const rem = w.L - ds.length * length;
-  return splitDone(p, splitAtStations(p, memberId, ds), `of ${f1(length)} mm (remainder ${f1(rem)} mm at the ${other(from)})`);
+  return splitDone(p, snap, splitAtStations(p, memberId, ds), `of ${f1(length)} mm (remainder ${f1(rem)} mm at the ${other(from)})`);
 }
 
 // Planes ----------------------------------------------------------------------
@@ -575,6 +558,7 @@ function planeStation(w: Wire, pl: Plane3): number | null {
 
 /** Split every member that the plane crosses (inside its span). */
 export function splitAtPlane(p: Project, memberIds: Id[], plane: Plane3): ModifyResult {
+  const snap = snapshotConnections(p);
   const out: Id[] = [];
   let cut = 0;
   for (const id of memberIds) {
@@ -591,7 +575,7 @@ export function splitAtPlane(p: Project, memberIds: Id[], plane: Plane3): Modify
     out.push(...pieces);
   }
   if (!cut) refuse('The plane does not cross any of the members inside their length.');
-  return result(out, `Split ${cut} member${cut === 1 ? '' : 's'} at the plane.`, connectionIssues(p, out));
+  return finish(p, snap, result(out, `Split ${cut} member${cut === 1 ? '' : 's'} at the plane.`));
 }
 
 const mtPair = (a: Member, b: Member) => (isMainRole(a.role) && isSecondaryRole(b.role)) || (isSecondaryRole(a.role) && isMainRole(b.role));
@@ -603,6 +587,7 @@ const mtPair = (a: Member, b: Member) => (isMainRole(a.role) && isSecondaryRole(
  * continuous (the new node is a through-node on them).
  */
 export function splitAtCrossingMembers(p: Project, memberIds: Id[], opts: { mullionTransomOnly?: boolean; tol?: number } = {}): ModifyResult {
+  const snap = snapshotConnections(p);
   const tol = opts.tol ?? 1;
   const out: Id[] = [];
   let cuts = 0;
@@ -627,7 +612,7 @@ export function splitAtCrossingMembers(p: Project, memberIds: Id[], opts: { mull
     out.push(...pieces);
   }
   if (!cuts) refuse(opts.mullionTransomOnly ? 'No mullion–transom junction lies inside these members.' : 'Nothing crosses these members inside their length.');
-  return result(out, `Split at ${cuts} crossing${cuts === 1 ? '' : 's'}${opts.mullionTransomOnly ? ' (mullion–transom junctions only)' : ''}.`, connectionIssues(p, out));
+  return finish(p, snap, result(out, `Split at ${cuts} crossing${cuts === 1 ? '' : 's'}${opts.mullionTransomOnly ? ' (mullion–transom junctions only)' : ''}.`));
 }
 
 // ---------------------------------------------------------------------------
@@ -640,6 +625,13 @@ export interface JoinOptions {
   tol?: number;
   /** Properties when they differ: refuse (default) or keep the first member's. */
   keep?: 'longest' | 'first';
+  /**
+   * Connections on a node between the pieces whose supported member is one of
+   * them (a splice, a stack-joint bracket, a joint of a piece): removed and
+   * reported (default), or refused (`code: 'joint'`, the connections in
+   * `detail`) so the UI can ask first.
+   */
+  jointConnections?: 'remove' | 'refuse';
 }
 
 const PARALLEL = Math.cos(1 * DEG);
@@ -658,11 +650,14 @@ export function collinear(p: Project, a: Member, b: Member, tol = 2): boolean {
  * a small gap or overlap into one member. The longest piece (or the first with
  * `keep: 'first'`) keeps its id and properties; the outer ends keep their end
  * preparations and extensions; connections, end-preparation targets and welded
- * plates of the absorbed pieces are re-pointed to it. Refused when a connection
- * sits on a node between the pieces, or (without keep 'first') when their
- * properties or section placement differ.
+ * plates of the absorbed pieces are re-pointed to it. A connection on a node
+ * between the pieces whose supported member is one of them (a splice …) is
+ * removed and reported (or refused, `jointConnections: 'refuse'`); joints of
+ * other members on that node are re-pointed to the joined member. Refused
+ * (without keep 'first') when the properties or section placement differ.
  */
 export function joinMembers(p: Project, memberIds: Id[], opts: JoinOptions = {}): ModifyResult {
+  const snap = snapshotConnections(p);
   const ids = [...new Set(memberIds)].filter((id) => p.members[id]);
   if (ids.length < 2) refuse('Select two or more members to join.');
   const maxGap = opts.maxGap ?? 100;
@@ -693,14 +688,15 @@ export function joinMembers(p: Project, memberIds: Id[], opts: JoinOptions = {})
   const first = span[0];
   const last = span.reduce((x, y) => (y.s1 > x.s1 ? y : x));
   const outer = new Set([first.n0, last.n1]);
-  // Connections on the nodes between the pieces block the join.
+  // Connections on the nodes between the pieces: those of the pieces themselves go (the member is continuous there).
   const inner = new Set<Id>();
   for (const s of span) for (const n of [s.n0, s.n1]) if (!outer.has(n)) inner.add(n);
-  const blocking = Object.values(p.connections).filter((c) => inner.has(c.node));
-  if (blocking.length)
+  const joined = new Set(ids);
+  const blocking = Object.values(p.connections).filter((c) => inner.has(c.node) && joined.has(c.secondary[0]));
+  if (blocking.length && opts.jointConnections === 'refuse')
     refuse(
-      `A connection sits on the joint (${blocking.map((c) => `${connLabel(p, c.id)}`).join(', ')}) — delete it first.`,
-      'connection',
+      `Joining removes ${blocking.length === 1 ? 'the connection' : `${blocking.length} connections`} on the joint (${uniq(blocking.map((c) => connLabel(p, c.id))).join(', ')}).`,
+      'joint',
       blocking.map((c) => c.id),
     );
   // Properties and section placement.
@@ -721,6 +717,8 @@ export function joinMembers(p: Project, memberIds: Id[], opts: JoinOptions = {})
   }
   if (conflicts.length && opts.keep !== 'first')
     refuse(`The members differ (${conflicts.join('; ')}). Join keeping the first member's properties, or make them match first.`, 'conflict', conflicts);
+  const removedJoint = uniq(blocking.map((c) => connLabel(p, c.id)));
+  for (const c of blocking) delete p.connections[c.id];
   // The joined member keeps the keeper's direction (stations run along it).
   const startPiece = first;
   const endPiece = last;
@@ -758,11 +756,12 @@ export function joinMembers(p: Project, memberIds: Id[], opts: JoinOptions = {})
   for (const id of absorbed) delete p.members[id];
   // A mitre against a now-absorbed partner that points at the keeper itself is meaningless.
   removeOrphanNodes(p);
-  const warnings = [...connectionIssues(p, [keeper.id])];
+  const warnings: string[] = [];
+  if (removedJoint.length) warnings.push(`Removed ${removedJoint.join(', ')} on the joint: the member is continuous there now.`);
   if (dropped) warnings.push(`${dropped} end preparation${dropped === 1 ? '' : 's'} at the joint ${dropped === 1 ? 'was' : 'were'} removed.`);
   if (conflicts.length) warnings.push(`Kept the properties of ${label(p, keeper)}; differences: ${conflicts.join('; ')}.`);
   const gapText = gaps.length ? ` (closed ${gaps.map((g) => (g > 0 ? `${f1(g)} mm gap` : `${f1(-g)} mm overlap`)).join(', ')})` : '';
-  return result([keeper.id], `Joined ${ms.length} members into ${label(p, keeper)}, ${f1(wireOf(p, keeper).L)} mm${gapText}.`, warnings, absorbed);
+  return finish(p, snap, result([keeper.id], `Joined ${ms.length} members into ${label(p, keeper)}, ${f1(wireOf(p, keeper).L)} mm${gapText}.`, warnings, absorbed));
 }
 
 /** Close the gap between two collinear members (the inverse of Break): join them across the gap. */
@@ -799,17 +798,23 @@ export function cornerJoin(p: Project, aId: Id, bId: Id, opts: { tol?: number; k
   const Q = cl!.mid;
   const ea: End = opts.keepA ? other(opts.keepA) : endToward(cl!.s);
   const eb: End = opts.keepB ? other(opts.keepB) : endToward(cl!.t);
+  const snap = snapshotConnections(p);
   const moved = [dist(p.nodes[a[ea]].p, Q), dist(p.nodes[b[eb]].p, Q)];
-  const w1 = moveMemberEnd(p, aId, ea, Q, opts.mode ?? 'auto').warnings;
-  const w2 = moveMemberEnd(p, bId, eb, Q, opts.mode ?? 'auto').warnings;
+  moveEnd(p, aId, ea, Q, opts.mode ?? 'auto');
+  moveEnd(p, bId, eb, Q, opts.mode ?? 'auto');
   const na = p.members[aId][ea];
   const nb = p.members[bId][eb];
   if (na !== nb && p.nodes[na] && p.nodes[nb]) mergeNodeInto(p, nb, na);
   const angle = Math.acos(Math.min(1, Math.abs(dot(cl!.A.d, cl!.B.d)))) / DEG;
-  return result(
-    [aId, bId],
-    `Corner at ${f1(angle)}°: ${label(p, a)} ${ea} moved ${f1(moved[0])} mm, ${label(p, b)} ${eb} moved ${f1(moved[1])} mm${cl!.gap > 0.5 ? ` (axes ${f1(cl!.gap)} mm apart, met midway)` : ''}.`,
-    uniq([...w1, ...w2, ...connectionIssues(p, [aId, bId])]),
+  return finish(
+    p,
+    snap,
+    result(
+      [aId, bId],
+      `Corner at ${f1(angle)}°: ${label(p, a)} ${ea} moved ${f1(moved[0])} mm, ${label(p, b)} ${eb} moved ${f1(moved[1])} mm${cl!.gap > 0.5 ? ` (axes ${f1(cl!.gap)} mm apart, met midway)` : ''}.`,
+    ),
+    // Each end landed on the other member: it becomes the main of a joint whose main no longer meets.
+    { landed: new Map([[`${aId}:${ea}`, bId], [`${bId}:${eb}`, aId]]) },
   );
 }
 
@@ -834,23 +839,26 @@ export function joinToMember(p: Project, aId: Id, bId: Id, opts: { end?: End | '
   const A = cl!.A;
   const end: End =
     opts.end && opts.end !== 'auto' ? opts.end : dist(A.a, Qb) <= dist(A.b, Qb) ? 'start' : 'end';
+  const snap = snapshotConnections(p);
   let target: Id | null = null;
-  const warnings: string[] = [];
   if (opts.splitB && sB > 1 && sB < B.L - 1) {
     const pieces = splitAtStations(p, bId, [sB]);
     if (pieces.length > 1) target = p.members[pieces[0]].end;
   }
   target ??= findNode(p, Qb, 1) ?? null;
   const moved = dist(p.nodes[a[end]].p, Qb);
-  warnings.push(...moveMemberEnd(p, aId, end, target ? p.nodes[target].p : Qb, opts.mode ?? 'auto').warnings);
+  moveEnd(p, aId, end, target ? p.nodes[target].p : Qb, opts.mode ?? 'auto');
   const n = p.members[aId][end];
   if (target && n !== target) mergeNodeInto(p, n, target);
   const node = p.members[aId][end];
   const onB = opts.splitB ? Object.values(p.members).filter((m) => m.id !== aId && (m.start === node || m.end === node)).map((m) => m.id) : [bId];
-  return result(
-    [aId, ...onB],
-    `${label(p, a)} ${end} ${moved > 0.5 ? `moved ${f1(moved)} mm onto` : 'joined to'} ${label(p, b)}${opts.splitB ? ', which is split there' : ''}.`,
-    uniq([...warnings, ...connectionIssues(p, [aId, bId])]),
+  // A's end landed on B: B (or its piece at the node) becomes the main of A's joint there.
+  const onto = onB.find((id) => p.members[id] && mainMeets(p, p.members[id], node)) ?? bId;
+  return finish(
+    p,
+    snap,
+    result([aId, ...onB], `${label(p, a)} ${end} ${moved > 0.5 ? `moved ${f1(moved)} mm onto` : 'joined to'} ${label(p, b)}${opts.splitB ? ', which is split there' : ''}.`),
+    { landed: new Map([[`${aId}:${end}`, onto]]) },
   );
 }
 
@@ -865,12 +873,12 @@ export function extendBy(p: Project, memberId: Id, distance: number, end: End | 
   const w = wireOf(p, m);
   const L = w.L + distance * (end === 'both' ? 2 : 1);
   if (L < 1) refuse(`The member (${f1(w.L)} mm) would be shorter than 1 mm.`);
-  const warnings: string[] = [];
+  const snap = snapshotConnections(p);
   for (const e of endsOf(end)) {
     const pos = e === 'start' ? pointAt(w, -distance) : pointAt(w, w.L + distance);
-    warnings.push(...moveMemberEnd(p, memberId, e, pos, mode).warnings);
+    moveEnd(p, memberId, e, pos, mode);
   }
-  return result([memberId], `${distance >= 0 ? 'Extended' : 'Shortened'} ${label(p, m)} by ${f1(Math.abs(distance))} mm at the ${end === 'both' ? 'both ends' : end} → ${f1(L)} mm.`, uniq(warnings));
+  return finish(p, snap, result([memberId], `${distance >= 0 ? 'Extended' : 'Shortened'} ${label(p, m)} by ${f1(Math.abs(distance))} mm at the ${end === 'both' ? 'both ends' : end} → ${f1(L)} mm.`));
 }
 
 /** Set the exact length, keeping the start, the end or the centre in place. */
@@ -879,19 +887,29 @@ export function setLength(p: Project, memberId: Id, length: number, anchor: End 
   const m = mem(p, memberId);
   const w = wireOf(p, m);
   const d = length - w.L;
-  const warnings: string[] = [];
+  const snap = snapshotConnections(p);
   if (anchor === 'centre') {
-    warnings.push(...moveMemberEnd(p, memberId, 'start', pointAt(w, -d / 2), mode).warnings);
-    warnings.push(...moveMemberEnd(p, memberId, 'end', pointAt(w, w.L + d / 2), mode).warnings);
-  } else if (anchor === 'start') warnings.push(...moveMemberEnd(p, memberId, 'end', pointAt(w, length), mode).warnings);
-  else warnings.push(...moveMemberEnd(p, memberId, 'start', pointAt(w, w.L - length), mode).warnings);
-  return result([memberId], `${label(p, m)} is now ${f1(length)} mm (${anchor === 'centre' ? 'centre' : anchor} kept).`, uniq(warnings));
+    moveEnd(p, memberId, 'start', pointAt(w, -d / 2), mode);
+    moveEnd(p, memberId, 'end', pointAt(w, w.L + d / 2), mode);
+  } else if (anchor === 'start') moveEnd(p, memberId, 'end', pointAt(w, length), mode);
+  else moveEnd(p, memberId, 'start', pointAt(w, w.L - length), mode);
+  return finish(p, snap, result([memberId], `${label(p, m)} is now ${f1(length)} mm (${anchor === 'centre' ? 'centre' : anchor} kept).`));
+}
+
+/** Joint connections (with a main member) on this end of the member. */
+function jointsAtEnd(p: Project, m: Member, end: End) {
+  return Object.values(p.connections).filter((c) => c.node === m[end] && c.secondary[0] === m.id && c.main !== null);
 }
 
 /**
  * Extend or trim a member end along its own axis to another member: to where
  * its axis passes closest to the other's axis ('axis'), or to the other's outer
  * face there ('face', the true face distance the connections use, plus `gap`).
+ * The end's connections go with it and the other member becomes their main.
+ * An end that carries a joint is never pulled off the joint by 'face': its wire
+ * goes to the other member's axis (as for a freshly applied connection) and the
+ * joint cuts it back to the face; a `gap` given sets the joint's clearance
+ * (ConnectionDef.faceGap), so the parts are those of a fresh connection.
  */
 export function extendToMember(
   p: Project,
@@ -912,6 +930,35 @@ export function extendToMember(
   let target = QA;
   const warnings: string[] = [];
   const to = opts.to ?? 'axis';
+  const snap = snapshotConnections(p);
+  const joints = to === 'face' ? jointsAtEnd(p, a, end) : [];
+  if (joints.length) {
+    // Keep the joint: the wire stays on the axis, the connection trim produces the cut-back.
+    const set: string[] = [];
+    const own: string[] = [];
+    for (const c of joints) {
+      const key = CONNECTIONS[c.type]?.faceGap;
+      if (key && opts.gap !== undefined) {
+        c.params[key] = opts.gap;
+        set.push(connLabel(p, c.id));
+      } else own.push(connLabel(p, c.id));
+    }
+    const note = [
+      set.length ? `${uniq(set).join(', ')} now ${set.length === 1 ? 'cuts' : 'cut'} it back to the face + ${f1(opts.gap ?? 0)} mm` : '',
+      own.length ? `${uniq(own).join(', ')} ${own.length === 1 ? 'sets' : 'set'} the cut-back at the face` : '',
+    ]
+      .filter(Boolean)
+      .join('; ');
+    const moved = dist(p.nodes[a[end]].p, target);
+    if (moved > 0.01) moveEnd(p, memberId, end, target, opts.mode ?? 'auto');
+    if (cl!.gap > 1) warnings.push(`The axes pass ${f1(cl!.gap)} mm apart; the end stops where ${label(p, a)} passes closest.`);
+    return finish(
+      p,
+      snap,
+      result([memberId], `The ${end} of ${label(p, a)} stays on the axis of ${label(p, b)} (joint kept); ${note}.`, warnings),
+      { landed: new Map([[`${memberId}:${end}`, toId]]) },
+    );
+  }
   if (to === 'face') {
     const gB = memberGeom(p, b);
     const cA = centreLine(p, a);
@@ -925,9 +972,11 @@ export function extendToMember(
   } else if (opts.gap) target = madd(QA, dIn, opts.gap);
   if (cl!.gap > 1) warnings.push(`The axes pass ${f1(cl!.gap)} mm apart; the end stops where ${label(p, a)} passes closest.`);
   const moved = stationOf(A, target) - (end === 'start' ? 0 : A.L);
-  warnings.push(...moveMemberEnd(p, memberId, end, target, opts.mode ?? 'auto').warnings);
+  moveEnd(p, memberId, end, target, opts.mode ?? 'auto');
   const grow = end === 'start' ? -moved : moved;
-  return result([memberId], `${grow >= 0 ? 'Extended' : 'Trimmed'} the ${end} of ${label(p, a)} by ${f1(Math.abs(grow))} mm to the ${to} of ${label(p, b)}.`, uniq(warnings));
+  return finish(p, snap, result([memberId], `${grow >= 0 ? 'Extended' : 'Trimmed'} the ${end} of ${label(p, a)} by ${f1(Math.abs(grow))} mm to the ${to} of ${label(p, b)}.`, uniq(warnings)), {
+    landed: new Map([[`${memberId}:${end}`, toId]]),
+  });
 }
 
 /** Extend or trim a member end along its axis to a plane (level, grid line, work plane …). */
@@ -937,9 +986,10 @@ export function extendToPlane(p: Project, memberId: Id, plane: Plane3, opts: { e
   const s = planeStation(w, plane);
   if (s === null) refuse('The member runs parallel to the plane.');
   const end: End = opts.end && opts.end !== 'auto' ? opts.end : Math.abs(s!) <= Math.abs(s! - w.L) ? 'start' : 'end';
-  const res = moveMemberEnd(p, memberId, end, pointAt(w, s!), opts.mode ?? 'auto');
+  const snap = snapshotConnections(p);
+  moveEnd(p, memberId, end, pointAt(w, s!), opts.mode ?? 'auto');
   const grow = end === 'start' ? -s! : s! - w.L;
-  return result([memberId], `${grow >= 0 ? 'Extended' : 'Trimmed'} the ${end} of ${label(p, m)} by ${f1(Math.abs(grow))} mm to the plane.`, res.warnings);
+  return finish(p, snap, result([memberId], `${grow >= 0 ? 'Extended' : 'Trimmed'} the ${end} of ${label(p, m)} by ${f1(Math.abs(grow))} mm to the plane.`));
 }
 
 /** Station on A where B cuts it: their segments cross, or A's axis meets B's span, within tol. */
@@ -970,16 +1020,31 @@ export function trimAtBoundary(p: Project, memberId: Id, boundaryId: Id, keep: E
   if (s === null) refuse(`${label(p, bnd)} does not cross ${label(p, m)}.`);
   if (s! < 1 || s! > w.L - 1) refuse(`${label(p, m)} already ends at ${label(p, bnd)}.`);
   const keepStart = typeof keep === 'string' ? keep === 'start' : stationOf(w, keep) < s!;
+  const snap = snapshotConnections(p);
   const pieces = splitAtStations(p, memberId, [s!]);
   if (pieces.length < 2) refuse('Could not cut the member there.');
   const [kept, drop] = keepStart ? [pieces[0], pieces[1]] : [pieces[1], pieces[0]];
+  keepCutJoints(p, drop, [kept]);
   const lost = Object.values(p.connections).filter((c) => refsMember(c, drop)).map((c) => `${connLabel(p, c.id)}`);
   const plates = Object.values(p.plates ?? {}).filter((pl) => pl.weldedTo === drop).length;
   deleteMembers(p, [drop]);
-  const warnings = [...connectionIssues(p, [kept])];
+  const warnings: string[] = [];
   if (lost.length) warnings.push(`Removed with the trimmed piece: ${lost.join(', ')}.`);
   if (plates) warnings.push(`Removed ${plates} plate${plates === 1 ? '' : 's'} welded to the trimmed piece.`);
-  return result([kept], `Trimmed ${label(p, m)} at ${label(p, bnd)}: ${f1(keepStart ? s! : w.L - s!)} mm kept, ${f1(keepStart ? w.L - s! : s!)} mm removed.`, warnings, [drop]);
+  return finish(p, snap, result([kept], `Trimmed ${label(p, m)} at ${label(p, bnd)}: ${f1(keepStart ? s! : w.L - s!)} mm kept, ${f1(keepStart ? w.L - s! : s!)} mm removed.`, warnings, [drop]));
+}
+
+/**
+ * Before a cut piece is deleted: joints of other members at the cut whose main
+ * member is that piece go to the kept piece that still meets them (they sit on
+ * the kept part).
+ */
+function keepCutJoints(p: Project, drop: Id, kept: Id[]) {
+  for (const c of Object.values(p.connections)) {
+    if (c.main !== drop || c.secondary.includes(drop)) continue;
+    const to = kept.find((id) => p.members[id] && mainMeets(p, p.members[id], c.node));
+    if (to) c.main = to;
+  }
 }
 
 /** Stations along a member where other members cross it or end on it (within tol). */
@@ -1016,6 +1081,7 @@ export function deleteSegment(p: Project, memberId: Id, pick: Vec3, opts: { tol?
   const s = Math.min(w.L, Math.max(0, stationOf(w, pick)));
   const lo = [...xs].reverse().find((x) => x < s) ?? 0;
   const hi = xs.find((x) => x > s) ?? w.L;
+  const snap = snapshotConnections(p);
   const pieces = splitAtStations(p, memberId, [lo, hi].filter((x) => x > 0 && x < w.L));
   // The piece whose span (on the original line) contains the pick.
   const drop =
@@ -1026,11 +1092,12 @@ export function deleteSegment(p: Project, memberId: Id, pick: Vec3, opts: { tol?
     }) ?? pieces[0];
   if (pieces.length < 2) refuse('Could not cut the segment out — the crossings are too close to the ends.');
   const keep = pieces.filter((id) => id !== drop);
+  keepCutJoints(p, drop, keep);
   const lost = Object.values(p.connections).filter((c) => refsMember(c, drop)).map((c) => `${connLabel(p, c.id)}`);
   deleteMembers(p, [drop]);
-  const warnings = [...connectionIssues(p, keep)];
+  const warnings: string[] = [];
   if (lost.length) warnings.push(`Removed with the segment: ${lost.join(', ')}.`);
-  return result(keep, `Deleted the ${f1(hi - lo)} mm segment of ${label(p, m)} between ${lo > 0 ? 'crossings' : 'its start and a crossing'}${hi < w.L ? '' : ' and its end'}.`, warnings, [drop]);
+  return finish(p, snap, result(keep, `Deleted the ${f1(hi - lo)} mm segment of ${label(p, m)} between ${lo > 0 ? 'crossings' : 'its start and a crossing'}${hi < w.L ? '' : ' and its end'}.`, warnings, [drop]));
 }
 
 // ---------------------------------------------------------------------------
@@ -1058,6 +1125,7 @@ export function breakMember(p: Project, memberId: Id, at: number | Vec3, gap = 3
     return ps.d < 1 && st > s0 - 0.5 && st < s1 + 0.5;
   });
   if (inGap.length) refuse(`A connection sits in the gap (${inGap.map((c) => `${connLabel(p, c.id)}`).join(', ')}).`, 'connection');
+  const snap = snapshotConnections(p);
   const pieces = splitAtStations(p, memberId, [s0, s1]);
   if (pieces.length < 3) refuse('Could not open the gap there.');
   const [first, middle, last] = pieces;
@@ -1082,9 +1150,9 @@ export function breakMember(p: Project, memberId: Id, at: number | Vec3, gap = 3
       return ps.d < NODE_TOL && st > s0 + 0.5 && st < s1 - 0.5;
     });
   });
-  const warnings = [...connectionIssues(p, [first, last])];
+  const warnings: string[] = [];
   if (lost.length) warnings.push(`${lost.length} member end${lost.length === 1 ? '' : 's'} in the gap no longer touch the member.`);
-  return result([first, last], `Opened a ${f1(gap)} mm gap in ${label(p, m)} at ${f1(s)} mm${side === 'both' ? '' : ` (towards the ${side})`}.`, warnings);
+  return finish(p, snap, result([first, last], `Opened a ${f1(gap)} mm gap in ${label(p, m)} at ${f1(s)} mm${side === 'both' ? '' : ` (towards the ${side})`}.`, warnings));
 }
 
 // ---------------------------------------------------------------------------
@@ -1153,13 +1221,17 @@ const mapAxes = (ax: Axes, T: RigidMap): Axes => ({ x: T.vector(ax.x), y: T.vect
  * of the members are mapped (moving: members attached to them stretch, as with
  * Move). Sections follow the map — a mirror mirrors the section, not only the
  * line (mirrorSection is toggled for asymmetric profiles) — end preparations are
- * re-expressed, welded plates are mapped, and connection side parameters follow.
- * Copies also copy welded plates, mitre partners within the set, and the
- * connections whose members are all copied.
+ * re-expressed and welded plates are mapped. Connections move with their
+ * supported member and their parameters follow the map, so their parts are the
+ * rotated / mirrored image (followConnections). Copies also copy welded plates,
+ * mitre partners within the set, and the connections whose supported members
+ * are all copied (their main: the copied main, the original one where it still
+ * meets the copy, or the member the copied end lands on).
  */
 export function transformMembers(p: Project, memberIds: Id[], T: RigidMap, opts: { copy?: boolean; what?: string } = {}): ModifyResult {
   const ids = [...new Set(memberIds)].filter((id) => p.members[id]);
   if (!ids.length) refuse('Select the members first.');
+  const snap = snapshotConnections(p);
   const set = new Set(ids);
   const before = new Map(ids.map((id) => [id, { pose: sectionPose(p, p.members[id]), axes: memberAxes(p, p.members[id]) }]));
   const nodes = new Set<Id>();
@@ -1170,7 +1242,7 @@ export function transformMembers(p: Project, memberIds: Id[], T: RigidMap, opts:
   const map = new Map<Id, Id>();
   const out: Id[] = [];
   const warnings: string[] = [];
-  let copiedConns = 0;
+  const what = opts.what ?? 'Transformed';
   if (opts.copy) {
     for (const n of nodes) map.set(n, nodeAt(p, T.point(p.nodes[n].p)));
     const idMap = new Map<Id, Id>();
@@ -1199,73 +1271,49 @@ export function transformMembers(p: Project, memberIds: Id[], T: RigidMap, opts:
       }
       settle(p, m, before.get(id)!, T);
     }
-    for (const c of Object.values(p.connections)) {
-      const members = [c.main, ...c.secondary].filter((x): x is Id => !!x);
-      if (!members.length || !members.every((x) => idMap.has(x)) || !map.has(c.node)) continue;
-      const cid = newId('c');
-      p.connections[cid] = { ...structuredClone(c), id: cid, node: map.get(c.node)!, main: c.main ? idMap.get(c.main)! : null, secondary: c.secondary.map((x) => idMap.get(x)!) };
-      copiedConns++;
+    const copies = copyConnections(p, idMap, map, warnings);
+    return finish(
+      p,
+      snap,
+      result(out, `${what} ${out.length} member${out.length === 1 ? '' : 's'} (copies)${copies.size ? ` with ${copies.size} connection${copies.size === 1 ? '' : 's'}` : ''}.`, warnings),
+      { map: T, copies },
+    );
+  }
+  // A node also used by members outside the set is left to them: the set gets its own
+  // node there (moved), so the group moves rigidly instead of dragging its neighbours.
+  // The connections of the set's member ends go with them (followConnections).
+  for (const n of [...nodes]) {
+    const outside = endsAtNode(p, n).some((o) => !set.has(o.id)) || connectionsAtNode(p, n).some((c) => [c.main, ...c.secondary].some((x) => x && !set.has(x)));
+    if (!outside) {
+      p.nodes[n].p = T.point(p.nodes[n].p);
+      continue;
     }
-    for (const [id, nid] of idMap) {
-      const b = before.get(id)!;
-      const ax = memberAxes(p, p.members[nid]);
-      const tA = mapAxes(b.axes, T);
-      const only = new Set(Object.values(p.connections).filter((c) => c.secondary[0] === nid).map((c) => c.id));
-      flipConnectionSides(p, nid, dot(ax.y, tA.y) < 0, dot(ax.z, tA.z) < 0, only);
-    }
-  } else {
-    // A node also used by members outside the set is left to them: the set gets its own
-    // node there (moved), so the group moves rigidly instead of dragging its neighbours.
-    // Connections at such a node that concern only the set move with it.
-    for (const n of [...nodes]) {
-      const outside = endsAtNode(p, n).some((o) => !set.has(o.id)) || connectionsAtNode(p, n).some((c) => [c.main, ...c.secondary].some((x) => x && !set.has(x)));
-      if (!outside) {
-        p.nodes[n].p = T.point(p.nodes[n].p);
-        continue;
-      }
-      const nn = newId('n');
-      p.nodes[nn] = { id: nn, p: T.point(p.nodes[n].p) };
-      for (const id of ids) {
-        const m = p.members[id];
-        if (m.start === n) m.start = nn;
-        if (m.end === n) m.end = nn;
-      }
-      for (const c of connectionsAtNode(p, n)) {
-        const ms = [c.main, ...c.secondary].filter((x): x is Id => !!x);
-        if (ms.length && ms.every((x) => set.has(x))) c.node = nn;
-        else if (ms.some((x) => set.has(x))) warnings.push(`${connLabel(p, c.id)} stays with the members that did not move.`);
-      }
-      nodes.add(nn);
-    }
-    for (const pl of Object.values(p.plates ?? {})) {
-      const m = pl.weldedTo ? p.members[pl.weldedTo] : undefined;
-      if (m && set.has(m.id)) Object.assign(pl, mapPlate(pl, T));
-    }
+    const nn = newId('n');
+    p.nodes[nn] = { id: nn, p: T.point(p.nodes[n].p) };
     for (const id of ids) {
       const m = p.members[id];
-      settle(p, m, before.get(id)!, T);
-      const ax = memberAxes(p, m);
-      const tA = mapAxes(before.get(id)!.axes, T);
-      flipConnectionSides(p, id, dot(ax.y, tA.y) < 0, dot(ax.z, tA.z) < 0);
-      out.push(id);
+      if (m.start === n) m.start = nn;
+      if (m.end === n) m.end = nn;
     }
-    // Coincident nodes after the move merge (as Move does).
-    const moved = [...nodes];
-    for (const n of moved) {
-      if (!p.nodes[n]) continue;
-      const into = Object.values(p.nodes).find((o) => o.id !== n && dist(o.p, p.nodes[n].p) <= NODE_TOL);
-      if (into) mergeNodeInto(p, n, into.id);
-    }
-    warnings.push(...connectionIssues(p, out.filter((id) => p.members[id])));
+    // The connections of the set's member ends there go with them now, before coincident nodes merge.
+    for (const c of connectionsAtNode(p, n)) if (set.has(c.secondary[0])) c.node = nn;
+    nodes.add(nn);
   }
-  if (T.improper && (opts.copy ? copiedConns : Object.values(p.connections).some((c) => c.secondary.some((s) => set.has(s)))))
-    warnings.push('Connections were mirrored with their members; check asymmetric connection parameters (offsets, slot directions).');
-  const what = opts.what ?? 'Transformed';
-  return result(
-    out.filter((id) => p.members[id]),
-    `${what} ${out.length} member${out.length === 1 ? '' : 's'}${opts.copy ? ' (copies)' : ''}${copiedConns ? ` with ${copiedConns} connection${copiedConns === 1 ? '' : 's'}` : ''}.`,
-    uniq(warnings),
-  );
+  for (const pl of Object.values(p.plates ?? {})) {
+    const m = pl.weldedTo ? p.members[pl.weldedTo] : undefined;
+    if (m && set.has(m.id)) Object.assign(pl, mapPlate(pl, T));
+  }
+  for (const id of ids) {
+    settle(p, p.members[id], before.get(id)!, T);
+    out.push(id);
+  }
+  // Coincident nodes after the move merge (as Move does).
+  for (const n of [...nodes]) {
+    if (!p.nodes[n]) continue;
+    const into = Object.values(p.nodes).find((o) => o.id !== n && dist(o.p, p.nodes[n].p) <= NODE_TOL);
+    if (into) mergeNodeInto(p, n, into.id);
+  }
+  return finish(p, snap, result(out.filter((id) => p.members[id]), `${what} ${out.length} member${out.length === 1 ? '' : 's'}.`, warnings), { map: T, mapped: set, findMain: true });
 }
 
 /** Re-pose a mapped member's section and re-express its end preparations in its new frame. */
@@ -1324,21 +1372,26 @@ export function offsetMembers(p: Project, memberIds: Id[], distance: number, dir
   // Different vectors per member: copies each by its own; moves end by end, so an
   // end shared with a member that moves differently gets its own node.
   const out: Id[] = [];
+  const snap = snapshotConnections(p);
+  const sums: (ConnectionSummary | undefined)[] = [];
   for (const id of ids) {
     const d = deltas.get(id)!;
     if (copy) {
       const r = transformMembers(p, [id], translationMap(d), { copy });
       out.push(...r.members);
       warnings.push(...r.warnings);
+      sums.push(r.connections);
       continue;
     }
     const w = wireOf(p, p.members[id]);
-    warnings.push(...moveMemberEnd(p, id, 'start', add(w.a, d), 'auto').warnings);
-    warnings.push(...moveMemberEnd(p, id, 'end', add(w.b, d), 'auto').warnings);
+    moveEnd(p, id, 'start', add(w.a, d), 'auto');
+    moveEnd(p, id, 'end', add(w.b, d), 'auto');
     for (const pl of Object.values(p.plates ?? {})) if (pl.weldedTo === id) pl.origin = add(pl.origin, d);
     out.push(id);
   }
-  return result(out, `${copy ? 'Offset copies of' : 'Offset'} ${ids.length} members by ${f1(distance)} mm along each member's local ${typeof dir === 'object' ? 'vector' : dir}.`, uniq(warnings));
+  const res = result(out, `${copy ? 'Offset copies of' : 'Offset'} ${ids.length} members by ${f1(distance)} mm along each member's local ${typeof dir === 'object' ? 'vector' : dir}.`, uniq(warnings));
+  if (copy) return { ...res, connections: mergeSummaries(...sums) };
+  return finish(p, snap, res, { findMain: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -1546,6 +1599,7 @@ export function matchProperties(p: Project, sourceId: Id, targetIds: Id[], field
 export function reverseMembers(p: Project, memberIds: Id[]): ModifyResult {
   const ids = memberIds.filter((id) => p.members[id]);
   if (!ids.length) refuse('Select the members first.');
+  const snap = snapshotConnections(p);
   let pinned = 0;
   for (const id of ids) {
     const m = p.members[id];
@@ -1563,16 +1617,51 @@ export function reverseMembers(p: Project, memberIds: Id[]): ModifyResult {
     setPrep(m, 'end', convertPrep(sp, 'start', from, 'end', to));
     m.startExt = ee;
     m.endExt = se;
-    flipConnectionSides(p, id, dot(to.y, from.y) < 0, dot(to.z, from.z) < 0);
     for (const { c, slotted } of autoEnds) {
       if (isMovementEnd(p, c) === slotted) continue;
       c.params.slotted = slotted ? 'yes (slotted)' : 'no (fixed)';
       pinned++;
     }
   }
-  const warnings = connectionIssues(p, ids);
+  const warnings: string[] = [];
   if (pinned) warnings.push(`${pinned} joint${pinned === 1 ? '' : 's'} had the automatic movement end; it is now set explicitly so the slots stay where they were.`);
-  return result(ids, `Reversed ${ids.length} member${ids.length === 1 ? '' : 's'}.`, warnings);
+  // The members stay physically: connection parameters are re-expressed in the new axes (identity map).
+  return finish(p, snap, result(ids, `Reversed ${ids.length} member${ids.length === 1 ? '' : 's'}.`, warnings), { map: { vector: (v) => v, improper: false }, mapped: new Set(ids), mainOnly: true });
+}
+
+// ---------------------------------------------------------------------------
+// Flip connection side
+
+/**
+ * Flip connections to the other side of their supported member, the member
+ * unchanged: 'y' mirrors them to the other face across the member (through its
+ * local xz plane), 'z' to the other side in depth (through its local xy plane).
+ * The parameters are transformed by the same rules as a mirror
+ * (connections/transform.ts), so the parts are the reflection of the old ones.
+ * Refused when none of the connections changes (symmetric for that axis).
+ */
+export function flipConnectionSide(p: Project, connectionIds: Id[], axis: 'y' | 'z' = 'y'): ModifyResult {
+  const ids = [...new Set(connectionIds)].filter((id) => p.connections[id]);
+  if (!ids.length) refuse('Select the connections to flip first.');
+  const done: Id[] = [];
+  const same: string[] = [];
+  for (const id of ids) {
+    const c = p.connections[id];
+    const f = sideFlip(p, c, axis);
+    if (f && transformParams(p, c, f).length) done.push(id);
+    else same.push(connLabel(p, id));
+  }
+  const where = axis === 'y' ? 'the other face (local y)' : 'the other side in depth (local z)';
+  if (!done.length) refuse(`${uniq(same).join(', ')} ${same.length === 1 ? 'is' : 'are'} symmetric about ${axis === 'y' ? 'the member\'s xz plane' : 'the member\'s xy plane'} — nothing to flip${axis === 'y' ? '; try the depth side (z)' : '; try the other face (y)'}.`);
+  const members = uniq(done.flatMap((id) => [p.connections[id].secondary[0]].filter(Boolean)));
+  const sum: ConnectionSummary = { moved: [], repointed: [], transformed: done, copied: [], removed: [], warnings: [] };
+  return {
+    members: [],
+    removed: [],
+    message: `Flipped ${done.length} connection${done.length === 1 ? '' : 's'} to ${where}${members.length === 1 ? ` of ${label(p, p.members[members[0]])}` : ''}.`,
+    warnings: same.length ? [`Unchanged (symmetric for this flip): ${uniq(same).join(', ')}.`] : [],
+    connections: sum,
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ import { askConfirm } from './askState';
 import { ConnectionMovementInfo, MovementSettingsSection } from './dialogs/MovementDialogs';
 import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
 import { GroupingProps } from './dialogs/ManagementDialogs';
+import { ModifyOpsSection } from './ModifyPanels';
+import { changeProfile } from '../core/model/modify';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -108,8 +110,12 @@ function MemberProps({ ids }: { ids: string[] }) {
           value={profile.value as string | null}
           mixed={profile.mixed}
           onChange={(v) => {
-            const mat = v ? getProfile(v)?.material : undefined;
-            patch('Profile', mat ? { profile: v, material: mat } : { profile: v });
+            // The wire line keeps its place on the section (modify.changeProfile); the profile's material comes along.
+            let warn = '';
+            apply('Profile', (d) => {
+              warn = changeProfile(d, ids, v).warnings[0] ?? '';
+            });
+            if (warn) useStore.getState().notify(warn);
           }}
         />
       </Field>
@@ -152,6 +158,17 @@ function MemberProps({ ids }: { ids: string[] }) {
           />
         </Field>
       </div>
+      <label className="check-row" title="Mirror the section about the wire line's local z: channels, angles, Z and custom outlines open the other way">
+        <input
+          type="checkbox"
+          checked={ms.every((m) => !!m.mirrorSection)}
+          ref={(el) => {
+            if (el) el.indeterminate = c((m) => !!m.mirrorSection).mixed;
+          }}
+          onChange={(e) => apply('Mirror section', (d) => ids.forEach((id) => (e.target.checked ? (d.members[id].mirrorSection = true) : delete d.members[id].mirrorSection)))}
+        />{' '}
+        Mirrored section
+      </label>
       <div className="row2">
         <Field label="Across (local y)">
           <Segmented<Align>
@@ -193,6 +210,7 @@ function MemberProps({ ids }: { ids: string[] }) {
         </Field>
       </div>
       <EndPrepSection ids={ids} />
+      <ModifyOpsSection ids={ids} />
       <button className="secondary-btn wide-btn" onClick={() => useStore.getState().set({ dialog: 'applyConnection' })}>
         <Icon name="bracket" size={15} /> Apply a connection to {ms.length === 1 ? 'this member' : `these ${ms.length} members`}…
       </button>
@@ -223,6 +241,7 @@ function WirePosition({ ms, ids }: { ms: Member[]; ids: string[] }) {
       <SectionPreview
         profile={prof}
         size={124}
+        mirror={ms.every((m) => !!m.mirrorSection)}
         mode={mode}
         alignY={ay}
         alignZ={az}

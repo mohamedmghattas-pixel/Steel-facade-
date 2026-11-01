@@ -665,6 +665,11 @@ function AboutDialog({ onClose }: { onClose: () => void }) {
         Shortcuts: S select · L line · P polyline · M move · C copy · O ortho · F fit · 1–4 views · Del delete · Ctrl+Z / Ctrl+Y undo/redo · Esc cancel.
       </p>
       <p className="muted">
+        Modify (right-click a member for the menu): J join · K split · E extend / trim end · T trim · B break (gap) · G stretch · R rotate · Shift+M mirror · Shift+O
+        offset · V reverse · Shift+P match properties · Shift+R section tool · ] / [ rotate section ±90° · Shift+F flip 180° · Shift+X mirror section · + / − next /
+        previous size. In a modify tool: type numbers (distance, N, angle, x,y,z), Enter accepts the defaults, Esc steps back, a second Esc leaves the tool.
+      </p>
+      <p className="muted">
         Section tables and connection geometry are for detailing. Check member sizes, bolts and anchors with a structural engineer, and verify NC files against your machine
         before cutting.
       </p>

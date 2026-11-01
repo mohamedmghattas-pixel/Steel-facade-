@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { useStore } from '../state/store';
+import { isModifyTool, useStore } from '../state/store';
 import { saveAutosave } from '../state/storage';
 import { TopBar } from './TopBar';
 import { ToolRail } from './ToolRail';
@@ -12,6 +12,9 @@ import { AskDialog } from './ask';
 import { ProfileSketcherHost } from './ProfileSketcher';
 import { ProfileImportHost } from './ProfileImportDialog';
 import { deleteSelection, setTool } from './actions';
+import { escapeTool, toolEnter } from './modifyTools';
+import { ModifyContextMenu, closeModifyMenu, useModifyMenu } from './ModifyPanels';
+import { mirrorSectionSelection, rotateSectionSelection, stepSizeSelection } from './modifyActions';
 
 export function App() {
   const outputsOpen = useStore((s) => s.outputs.open);
@@ -39,6 +42,7 @@ export function App() {
       <Dialogs />
       <ProfileImportHost />
       <ProfileSketcherHost />
+      <ModifyContextMenu />
       <AskDialog />
       {toast && <Toast key={toast.n} text={toast.text} kind={toast.kind} />}
     </div>
@@ -57,6 +61,9 @@ function Toast({ text, kind }: { text: string; kind: 'info' | 'error' }) {
     </div>
   );
 }
+
+/** Keys that start typed input for the modify tools. */
+const TYPED_KEYS = /^[0-9@=\-/<>.]$/;
 
 function useKeyboard() {
   useEffect(() => {
@@ -82,12 +89,97 @@ function useKeyboard() {
         return;
       }
       if (mod) return;
+      // Modify tools and section quick operations (shift combinations first).
+      if (useModifyMenu.getState().menu && e.key === 'Escape') {
+        closeModifyMenu();
+        return;
+      }
+      if (e.shiftKey && !e.altKey) {
+        const k = e.key.toLowerCase();
+        const shiftTool = ({ m: 'mirror', o: 'offset', p: 'match', r: 'section' } as const)[k as 'm' | 'o' | 'p' | 'r'];
+        if (shiftTool) {
+          e.preventDefault();
+          setTool(shiftTool);
+          return;
+        }
+        if (k === 'f') {
+          e.preventDefault();
+          rotateSectionSelection(180);
+          return;
+        }
+        if (k === 'x') {
+          e.preventDefault();
+          mirrorSectionSelection();
+          return;
+        }
+      }
+      // A number (or = @ / < > -) typed while a modify tool is active goes to the typed-input box.
+      if (isModifyTool(s.tool) && TYPED_KEYS.test(e.key)) {
+        const box = document.querySelector<HTMLInputElement>('.coord-input');
+        if (box) {
+          box.focus();
+          return;
+        }
+      }
+      if (e.key === 'Enter' && isModifyTool(s.tool)) {
+        e.preventDefault();
+        toolEnter();
+        return;
+      }
+      switch (e.key) {
+        case 'j':
+        case 'J':
+          setTool('join');
+          return;
+        case 'k':
+        case 'K':
+          setTool('split');
+          return;
+        case 'e':
+        case 'E':
+          setTool('extend');
+          return;
+        case 't':
+        case 'T':
+          setTool('trim');
+          return;
+        case 'b':
+        case 'B':
+          setTool('break');
+          return;
+        case 'g':
+        case 'G':
+          setTool('stretch');
+          return;
+        case 'r':
+        case 'R':
+          setTool('rotate');
+          return;
+        case 'v':
+        case 'V':
+          setTool('reverse');
+          return;
+        case ']':
+          rotateSectionSelection(90);
+          return;
+        case '[':
+          rotateSectionSelection(-90);
+          return;
+        case '+':
+        case '=':
+          stepSizeSelection(1);
+          return;
+        case '-':
+          stepSizeSelection(-1);
+          return;
+      }
       switch (e.key) {
         case '/':
           e.preventDefault();
           s.set({ sidePanel: 'assistant', assistantFocus: Date.now() });
           break;
         case 'Escape':
+          if (isModifyTool(s.tool) && escapeTool()) break;
           if (s.tool !== 'select') setTool('select');
           else s.clearSelection();
           break;

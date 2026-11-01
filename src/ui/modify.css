@@ -1,0 +1,167 @@
+/* Modify tools: options bar, context menu, Operations section (ModifyPanels.tsx). */
+
+.viewport-overlay.bottom-center {
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 40px);
+  justify-content: center;
+}
+
+.viewport-canvas[data-tool='join'],
+.viewport-canvas[data-tool='split'],
+.viewport-canvas[data-tool='extend'],
+.viewport-canvas[data-tool='trim'],
+.viewport-canvas[data-tool='break'],
+.viewport-canvas[data-tool='stretch'],
+.viewport-canvas[data-tool='rotate'],
+.viewport-canvas[data-tool='mirror'],
+.viewport-canvas[data-tool='offset'],
+.viewport-canvas[data-tool='reverse'],
+.viewport-canvas[data-tool='match'],
+.viewport-canvas[data-tool='section'] {
+  cursor: crosshair;
+}
+
+.modify-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 6px 10px;
+  background: rgb(22 27 35 / 0.94);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.35);
+  font-size: 12px;
+  color: var(--text-2);
+}
+.modify-bar > strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  font-weight: 600;
+}
+.modify-bar .grow {
+  flex: 1 1 0;
+}
+.mt-num {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+.mt-num .num-input input {
+  width: 64px;
+}
+.mt-num > input[type='text'] {
+  width: 150px;
+}
+.mt-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.mt-fields {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  max-width: 640px;
+}
+
+.ctx-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 250px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 14px 36px rgb(0 0 0 / 0.5);
+  font-size: 12.5px;
+}
+.ctx-title {
+  padding: 4px 10px 2px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.ctx-group + .ctx-group {
+  border-top: 1px solid var(--line);
+  margin-top: 3px;
+  padding-top: 3px;
+}
+.ctx-menu button {
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.ctx-menu button:hover {
+  background: var(--bg-3);
+}
+.ctx-menu kbd,
+.ops kbd {
+  font: 11px var(--mono);
+  color: var(--text-3);
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+
+.ops {
+  margin-top: 10px;
+}
+.ops-measure {
+  margin: 2px 0 8px;
+  font-size: 11.5px;
+}
+.ops-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 6px;
+  margin-bottom: 6px;
+}
+.ops-row .secondary-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.ops-row .num-input input {
+  width: 46px;
+}
+.ops-row .segmented button {
+  padding: 3px 6px;
+}
+.ops-label {
+  width: 52px;
+  color: var(--text-3);
+  font-size: 12px;
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 2px 0 8px;
+  color: var(--text-2);
+  cursor: pointer;
+}

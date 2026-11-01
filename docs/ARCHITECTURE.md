@@ -23,7 +23,7 @@ commit `f40691b` (2026-10-31).
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
 | Connections | 30 parametric types plus user templates with formula parameters |
 | Detailing rules | 46 catalogued rules (AISC 360-22, EN 1993-1-8, EN 1090-2, EN ISO 1461, ASTM A123) plus 8 movement rules |
-| Assistant | 53 tools: 23 core tools plus 6 feature modules |
+| Assistant | 54 tools: 23 core tools plus 6 feature modules |
 
 Source size by area (TypeScript lines):
 
@@ -173,7 +173,7 @@ Numbers and claims in docs come from running code, not from memory.
 ### 3.1 Layers and data flow
 
 ```
-             user (UI, keyboard, viewport)            assistant (53 tools)
+             user (UI, keyboard, viewport)            assistant (54 tools)
                          │                                    │
                          ▼                                    ▼
               store.apply(label, fn) ◄───────────────── runTool(name, input)
@@ -276,6 +276,22 @@ lists and NC files cannot disagree.
   are stored per drawing and applied after generation.
 - **Fingerprint:** a content hash (with edits, without title block and revision
   table) drives "changed since issue" and the revision workflow.
+- **Sheet layout engine** (`layout.ts`): one packer places the blocks of a sheet
+  (notes and legends above the revision table, tables in a bottom band) with
+  collision checks against the reserved regions (frame, title block, revision
+  table) and each other. Overflow is never drawn; `finalize` continues it on
+  further sheets of the same drawing (`<id>#n`, same number, sheet n/N), where
+  `packColumns` flows it in columns, splitting tables at rows.
+- **Layout check** (`layoutCheck.ts`): `checkSheetLayout(d)` reports block
+  overlaps, blocks outside the frame or over the title block / revision table,
+  lettering below 1.8 / 2.5 mm and overlapping marks; tests run it on every sheet.
+- **Zoning** (`zoning.ts`, `zoneView.ts`): facade parts from recursive best-fit
+  planes (folds), view frames (world or normal to the facade), the legible scale
+  from a mark placement test (`labels.ts`), zones at grid lines / levels / member
+  lines with overlap, one assembly per zone; zone sheets with key plans and
+  match lines for the GA front and plan and per phase for erection sequences.
+  The zone plan is cached on the drawing context so the GA and the erection
+  sequences share it.
 - **Rendering:** one entity model renders to SVG (preview, PDF through
   svg2pdf.js) and DXF R12.
 
@@ -306,7 +322,7 @@ lists and NC files cannot disagree.
 
 ### 3.10 Assistant (`src/assistant`)
 
-- **Tools:** 53 tools defined as JSON schemas. `runTool` calls the same store
+- **Tools:** 54 tools defined as JSON schemas. `runTool` calls the same store
   actions as the UI, so every assistant change is undoable. Feature areas
   register a `ToolModule`.
 - **API-key session** (normal browser):

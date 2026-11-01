@@ -32,7 +32,9 @@ import { designation, finalize, newSheet, type DrawCtx } from './compose';
 import { drawingNumber, seriesNumber } from './register';
 import { cutPrism, drawCut, hatch, partPrism, projectPrism, viewLabel, type ViewAxes } from './section';
 import { blit, entsBox } from './viewLayout';
-import { drawGaView } from './gaDrawing';
+import { drawGaView, zoneInfo } from './gaDrawing';
+import { zoneNumber, zonePlanFor, zoneSheetLayout, zoningSettings, type Zone, type ZonePlan } from './zoning';
+import { drawZoneView, keyPlanBlock, zoneNotes } from './zoneView';
 
 const V = (x: number, y: number, z: number): Vec3 => ({ x, y, z });
 const LOCAL: ViewAxes = { R: V(1, 0, 0), U: V(0, 1, 0), D: V(0, 0, 1) };
@@ -261,8 +263,12 @@ export function setoutDrawings(ctx: DrawCtx): Drawing[] {
   for (const g of groups) perLevel.set(g.level.id, (perLevel.get(g.level.id) ?? 0) + 1);
   const seen = new Map<string, number>();
   const levelSeen = new Map<string, number>();
+  // Sheets along one slab edge (a long edge split to stay at 1:20) are zones of it, joined by match lines.
+  const edgeKey = (g: SetoutGroup) => `${g.level.id}-${facing(g.n)}`;
+  const edges = new Map<string, number[]>();
+  groups.forEach((g, i) => edges.set(edgeKey(g), [...(edges.get(edgeKey(g)) ?? []), i]));
   return groups.map((g, i) => {
-    const key = `${g.level.id}-${facing(g.n)}`;
+    const key = edgeKey(g);
     const k = (seen.get(key) ?? 0) + 1;
     seen.set(key, k);
     const j = (levelSeen.get(g.level.id) ?? 0) + 1;
@@ -270,11 +276,67 @@ export function setoutDrawings(ctx: DrawCtx): Drawing[] {
     const n = perLevel.get(g.level.id)!;
     // Stable id (revisions and edits stay with the sheet when other levels are added).
     const id = `setout-${key}${k > 1 ? `-${k}` : ''}`;
-    return setoutDrawing(ctx, g, id, i + 1, n > 1 ? `${j}/${n}` : '');
+    const list = edges.get(key)!;
+    const R = V(g.n.y, -g.n.x, 0);
+    const edge =
+      list.length > 1
+        ? {
+            index: list.indexOf(i),
+            numbers: list.map((x) => seriesNumber(ctx.p, 'E', x + 1)),
+            spans: list.map((x) => {
+              const al = groups[x].brackets.map((b) => dot(b.node, R));
+              return [Math.min(...al), Math.max(...al)] as [number, number];
+            }),
+          }
+        : undefined;
+    return setoutDrawing(ctx, g, id, i + 1, n > 1 ? `${j}/${n}` : '', edge);
   });
 }
 
-function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, part: string): Drawing {
+/** Schematic key plan of a slab edge split over several sheets: one box per sheet, this one hatched. */
+function edgeKeyPlan(edge: SetoutEdge, w: number): Block {
+  const lo = Math.min(...edge.spans.map((x) => x[0]));
+  const hi = Math.max(...edge.spans.map((x) => x[1]));
+  const L = Math.max(1, hi - lo);
+  return {
+    w,
+    h: 22,
+    right: true,
+    id: 'keyplan:edge',
+    draw: (sh, x, yTop) => {
+      sh.text({ x, y: yTop - 3.6 }, 'KEY PLAN', TEXT.small, 'start', 'text', 0, true);
+      sh.text({ x: x + 22, y: yTop - 3.6 }, `slab edge · ${edge.spans.length} sheets · not to scale`, TEXT.label, 'start');
+      const y0 = yTop - 18;
+      const y1 = yTop - 8;
+      const k = (w - 2) / L;
+      edge.spans.forEach(([a, b], i) => {
+        // Each sheet covers up to halfway to its neighbours.
+        const a1 = i ? (edge.spans[i - 1][1] + a) / 2 : lo;
+        const b1 = i < edge.spans.length - 1 ? (b + edge.spans[i + 1][0]) / 2 : hi;
+        const xa = x + 1 + (a1 - lo) * k;
+        const xb = x + 1 + (b1 - lo) * k;
+        const box = [
+          { x: xa, y: y0 },
+          { x: xb, y: y0 },
+          { x: xb, y: y1 },
+          { x: xa, y: y1 },
+        ];
+        if (i === edge.index) hatch(sh, [box], { spacing: 1.2, angle: 45 });
+        sh.poly(box, true, i === edge.index ? 'visible' : 'medium');
+        sh.text({ x: (xa + xb) / 2, y: y0 - 3.4 }, edge.numbers[i], TEXT.label, 'middle');
+      });
+    },
+  };
+}
+
+interface SetoutEdge {
+  /** This sheet's place along the edge, the sheets' numbers and their spans along it (mm). */
+  index: number;
+  numbers: string[];
+  spans: [number, number][];
+}
+
+function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, part: string, edge?: SetoutEdge): Drawing {
   const { p } = ctx;
   const size = p.drawings.settings.sheet;
   const s = newSheet(size, ctx);
@@ -373,6 +435,7 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
       }),
     );
   }
+  if (edge) blocks.unshift(edgeKeyPlan(edge, s.tb.w - 4));
   const areas = packBlocks(s, size, blocks);
 
   // Model extent in plan (along, off), mm.
@@ -585,8 +648,21 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
     balloon(S, { x: at.x, y: at.y + 1 }, { x, y: rowY }, b.mark || '?', TEXT.normal, `balloon:plan:${b.cid}`);
     lastX = x;
   }
+  // Match lines to the sheets before and after along the same slab edge.
+  if (edge) {
+    const yb = yLow - 18;
+    const yt = Math.max(entsBox(S.ents).y1, rowY) + 4;
+    const ends: [number, number, 'start' | 'end'][] = [];
+    if (edge.index > 0) ends.push([xL, edge.index - 1, 'start']);
+    if (edge.index < edge.numbers.length - 1) ends.push([xR, edge.index + 1, 'end']);
+    for (const [x, other, anchor] of ends)
+      S.withTag({ id: `match:${anchor === 'start' ? 'left' : 'right'}` }, () => {
+        S.line({ x, y: yb }, { x, y: yt }, 'match');
+        S.text({ x, y: yb - 3.6 }, `MATCH LINE — SEE DRAWING ${edge.numbers[other]}`, TEXT.small, anchor);
+      });
+  }
   const vb = entsBox(S.ents);
-  viewLabel(S, (vb.x0 + vb.x1) / 2, vb.y0 - 7, `SETTING-OUT PLAN ${g.level.name} ${fmtLevel(g.level.z)}`, scaleLabel(den));
+  viewLabel(S, (vb.x0 + vb.x1) / 2, vb.y0 - 7, `SETTING-OUT PLAN ${g.level.name} ${fmtLevel(g.level.z)}${edge ? ` — ZONE ${edge.index + 1}` : ''}`, scaleLabel(den));
   const box = entsBox(S.ents);
   const d = { x: (area.x0 + area.x1) / 2 - (box.x0 + box.x1) / 2, y: Math.min((area.y0 + area.y1) / 2 - (box.y0 + box.y1) / 2, area.y1 - 2 - box.y1) };
   blit(s, S, d, 'view:plan');
@@ -596,7 +672,7 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
     id,
     kind: 'setout',
     mark: `SO-${g.level.name}`,
-    title: `Bracket setting-out – ${lvTitle}${part ? ` (${part})` : ''}`,
+    title: `Bracket setting-out – ${lvTitle}${edge ? ` – zone ${edge.index + 1} of ${edge.numbers.length}` : part ? ` (${part})` : ''}`,
     subtitle: `${g.brackets.length} bracket${g.brackets.length === 1 ? '' : 's'} (${marks.join(', ')}) · ${g.brackets.reduce((t, b) => t + b.anchors.length, 0)} anchors`,
     scale: scaleLabel(den),
     number: seriesNumber(p, 'E', index),
@@ -779,6 +855,8 @@ export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
   const phaseIndex = new Map<Assembly, number>();
   phases.forEach((ph, i) => ph.assemblies.forEach((a) => phaseIndex.set(a, i)));
   const size = p.drawings.settings.gaSheet;
+  const plan = zonePlanFor(ctx, 'front');
+  if (plan) return zonedSequenceDrawings(ctx, plan, phases, derived, asmOf, phaseIndex);
   return phases.map((ph, k) => {
     const s = newSheet(size, ctx);
     const mass = (list: Assembly[]) => list.reduce((t, a) => t + a.mass, 0);
@@ -855,6 +933,123 @@ export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
       viewports: [gv.viewport],
     });
   });
+}
+
+const SEQ_COLS: TableSpec['cols'] = [
+  { head: 'Mark', w: 12 },
+  { head: 'Qty', w: 9, align: 'end' },
+  { head: 'Main part', w: 40 },
+  { head: 'kg', w: 12, align: 'end' },
+  { head: 'Assembly drawing', w: 32 },
+];
+
+/**
+ * Erection sequences of a divided front elevation: one sheet per phase and zone
+ * (where the phase has assemblies in the zone), each with the key plan, the
+ * sequence legend, the line key and the zone's assemblies of the phase. Match
+ * lines refer to the same phase's sheet of the adjacent zone, else to the GA
+ * zone sheet.
+ */
+function zonedSequenceDrawings(
+  ctx: DrawCtx,
+  plan: ZonePlan,
+  phases: SequencePhase[],
+  derived: boolean,
+  asmOf: Map<string, Assembly>,
+  phaseIndex: Map<Assembly, number>,
+): Drawing[] {
+  const { p, dm } = ctx;
+  const size = plan.size;
+  const gaBase = drawingNumber(p, 'ga-front');
+  const mass = (list: Assembly[]) => list.reduce((t, a) => t + a.mass, 0);
+  const zoneOf = new Map<Assembly, number>();
+  for (const z of plan.zones) for (const a of z.assemblies) zoneOf.set(a, z.index);
+  const sheets: { k: number; ph: SequencePhase; zone: Zone; list: Assembly[] }[] = [];
+  phases.forEach((ph, k) => {
+    for (const zone of plan.zones) {
+      const list = ph.assemblies.filter((a) => zoneOf.get(a) === zone.index);
+      if (list.length) sheets.push({ k, ph, zone, list });
+    }
+  });
+  const has = new Set(sheets.map((x) => `${x.k}|${x.zone.index}`));
+  const ref = (k: number, i: number) => (has.has(`${k}|${i}`) ? zoneNumber(seriesNumber(p, 'ES', k + 1), i) : zoneNumber(gaBase, i));
+  const ov = zoningSettings(p).overlap;
+  return sheets.map(({ k, ph, zone, list }) => {
+    const s = newSheet(size, ctx);
+    const L = zoneSheetLayout(size, s.tb);
+    const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
+    s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+    const legend: TableSpec = {
+      title: derived ? 'Erection sequence (default: by floor, bottom-up)' : 'Erection sequence',
+      cols: [
+        { head: 'Seq', w: 9, align: 'end' },
+        { head: 'Phase', w: 52 },
+        { head: 'Asm', w: 10, align: 'end' },
+        { head: 'kg', w: 14, align: 'end' },
+        { head: 'Status', w: 26 },
+      ],
+      rows: phases.map((x, i) => [i + 1, x.name, x.assemblies.length, mass(x.assemblies).toFixed(0), i < k ? 'erected' : i === k ? 'THIS PHASE' : 'later']),
+    };
+    const notes = [
+      `Erection sequence ${k + 1} of ${phases.length}, zone ${zone.index} of ${plan.zones.length}: assemblies of this phase drawn extra wide, assemblies erected in earlier phases narrow; later phases are not shown.`,
+      ...(derived ? ['No erection phases are defined in the project — default sequence by floor, bottom-up.'] : []),
+      ...zoneNotes(plan, zone, ov).slice(0, zone.frame.kind === 'normal' ? 2 : 1),
+      'Erect to EN 1090-2 and the erection method statement; keep the frame stable at every stage (temporary bracing as required).',
+    ];
+    const rows = uniqueRows(list, dm).map((r) => [r.mark, r.qty, r.main, r.kg, drawingNumber(p, `asm-${r.mark}`)]);
+    const blocks: Block[] = [
+      notesBlock('Erection notes', notes, s.tb.w),
+      tableBlock(legend, true),
+      { ...lineKey(k, ph), right: true },
+      tableBlock({ title: `Assemblies in phase ${k + 1}, zone ${zone.index}`, cols: SEQ_COLS, rows }),
+    ];
+    packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
+    const gv = drawZoneView(ctx, s, plan, zone, L, {
+      group: 'view:front',
+      style: (pt) => {
+        const a = asmOf.get(pt.ref);
+        const i = a ? (phaseIndex.get(a) ?? Infinity) : Infinity;
+        return i < k ? 'thin' : i === k ? 'heavy' : null;
+      },
+      mark: (a) => phaseIndex.get(a) === k,
+      label: [`ERECTION SEQUENCE ${k + 1}/${phases.length} — ZONE ${zone.index}`, `${zone.direction} · ${ph.name}`, zone.name],
+      ref: (i) => ref(k, i),
+    });
+    const number = zoneNumber(seriesNumber(p, 'ES', k + 1), zone.index);
+    return finalize(ctx, s, size, {
+      id: `seq-${ph.id}-z${zone.index}`,
+      kind: 'sequence',
+      mark: `SEQ-${k + 1}-Z${zone.index}`,
+      title: `Erection sequence ${k + 1}/${phases.length} – Zone ${zone.index} of ${plan.zones.length}`,
+      subtitle: `${ph.name} · ${list.length} assemblies · ${mass(list).toFixed(0)} kg${derived ? ' · default sequence by floor' : ''}`,
+      scale: scaleLabel(plan.den),
+      number,
+      viewports: [gv.viewport],
+      zone: zoneInfo(zone, plan, (i) => ref(k, i), list),
+    });
+  });
+}
+
+/** Line key of an erection sequence sheet: samples of the line styles. */
+function lineKey(k: number, ph: SequencePhase): Block {
+  return {
+    w: 70,
+    h: 18,
+    id: 'legend:lines',
+    draw: (sh, x, yTop) => {
+      sh.text({ x, y: yTop - 3.6 }, 'Line key', TEXT.small, 'start', 'text', 0, true);
+      const rowsK: [DLayer | null, string][] = [
+        ['heavy', `Phase ${k + 1}: ${ph.name}`],
+        ['thin', 'Erected in earlier phases'],
+        [null, 'Later phases: not shown'],
+      ];
+      rowsK.forEach(([layer, label], i) => {
+        const y = yTop - 8 - i * 4.5;
+        if (layer) sh.line({ x, y: y + 0.8 }, { x: x + 12, y: y + 0.8 }, layer);
+        sh.text({ x: x + 15, y }, label, TEXT.label, 'start');
+      });
+    },
+  };
 }
 
 function uniqueRows(list: Assembly[], dm: DerivedModel) {

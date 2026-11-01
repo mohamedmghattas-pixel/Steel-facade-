@@ -6,6 +6,7 @@ import { nestPlates } from '../core/optimize/plateNesting';
 import { DrawingEditor } from './DrawingEditor';
 import { GaCutsDialog } from './dialogs/DrawingDialogs';
 import type { Drawing } from '../core/drawings/types';
+import { checkSheetLayout } from '../core/drawings/layoutCheck';
 import { drawingsFor, exportAnchorScheduleCsv, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
@@ -247,11 +248,28 @@ function DrawingsView() {
       return [] as Drawing[];
     }
   }, [project]);
-  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed' | 'erection'>('all');
+  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed' | 'erection' | 'layout'>('all');
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [cutsOpen, setCutsOpen] = useState(false);
+  // Layout check of every sheet (overlapping blocks, frame / title block, lettering heights, overlapping marks).
+  const layoutIssues = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of drawings) {
+      const n = checkSheetLayout(d).length;
+      if (n) m.set(d.id, n);
+    }
+    return m;
+  }, [drawings]);
   const list = drawings.filter(
-    (d) => kind === 'all' || (kind === 'changed' ? d.changed : kind === 'erection' ? d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence' : d.kind === kind),
+    (d) =>
+      kind === 'all' ||
+      (kind === 'changed'
+        ? d.changed
+        : kind === 'layout'
+          ? layoutIssues.has(d.id)
+          : kind === 'erection'
+            ? d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence'
+            : d.kind === kind),
   );
   // Follow the sheet by id, so it stays selected when sheets are added or removed.
   const d = list.find((x) => x.id === currentId) ?? list[0];
@@ -272,6 +290,7 @@ function DrawingsView() {
             ...(hasErection ? [{ value: 'erection' as const, label: 'Erection', title: 'Setting-out plans, anchor schedules, erection sequences' }] : []),
             { value: 'assembly', label: 'Asm' },
             { value: 'part', label: 'Part' },
+            ...(layoutIssues.size ? [{ value: 'layout' as const, label: `Layout ⚠ ${layoutIssues.size}`, title: 'Sheets with layout problems (overlapping blocks, lettering too small, overlapping marks)' }] : []),
           ]}
           onChange={(k) => setKind(k)}
         />
@@ -281,7 +300,19 @@ function DrawingsView() {
               <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
               <span className="dwg-no">
                 {x.number}
+                {(x.sheetCount ?? 1) > 1 ? (
+                  <span className="sheet-of" title={`Sheet ${x.sheetIndex} of ${x.sheetCount} of this drawing`}>
+                    {' '}
+                    {x.sheetIndex}/{x.sheetCount}
+                  </span>
+                ) : null}
                 {x.edited ? <span className="edited" title="Edited by hand"> ✎</span> : null}
+                {layoutIssues.has(x.id) ? (
+                  <span className="layout-warn" title={`${layoutIssues.get(x.id)} layout problem(s) — see above the sheet`}>
+                    {' '}
+                    ⚠
+                  </span>
+                ) : null}
               </span>
               <span className={`rev ${x.changed ? 'changed' : ''}`} title={x.changed ? (x.revisions.length ? `Changed since rev ${x.rev}` : 'Not issued yet') : x.status}>
                 {x.rev}
@@ -289,7 +320,9 @@ function DrawingsView() {
               </span>
             </button>
           ))}
-          {!list.length && <p className="muted pad">{kind === 'changed' ? 'Every drawing is issued and up to date.' : 'No drawings yet — assign profiles first.'}</p>}
+          {!list.length && (
+            <p className="muted pad">{kind === 'changed' ? 'Every drawing is issued and up to date.' : kind === 'layout' ? 'No layout problems.' : 'No drawings yet — assign profiles first.'}</p>
+          )}
         </div>
         <div className="btn-col">
           <button className="primary-btn" disabled={!drawings.length} onClick={() => set({ dialog: 'issueDrawings' })} title="Record a new revision (ISO 7200 revision index) for drawings">

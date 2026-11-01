@@ -8,7 +8,7 @@ FacadeSteel produces a numbered drawing set:
 - assembly drawings
 - part (fabrication) drawings
 
-Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*).
+Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*). Every sheet is laid out by one layout engine that keeps its blocks apart, continues long tables on further sheets and checks the result (see *Sheet layout*). Large facades are divided into zones, one sheet per zone (see *Large facades: zones*).
 
 By default the sheets follow the ISO technical-drawing standards and EN 1090-2 for steel execution. You can switch the set to an **ASME / AISC** profile under *Outputs → Drawings → Drawing settings*.
 
@@ -26,10 +26,10 @@ The table below shows how each standard is applied. The implementation follows t
 | Views | ISO 128-3 | Every part and assembly sheet has ELEVATION, PLAN and SECTION A–A, labelled. Long members use **interrupted views** with narrow break lines, so the cross-section stays at true scale. Dimensions always show true lengths. |
 | Sections | ISO 128-3, ISO 128-50 | The cutting-plane line (long-dash dotted, wide at the ends) carries arrows for the viewing direction and the letter A. Cut material gets 45° hatching, with adjacent parts at a different angle or spacing. |
 | Line types and widths | ISO 128-2 (line group 0.5) | Visible outlines are continuous wide 0.5 mm. Dimension, extension and leader lines are continuous narrow 0.25 mm. Hidden edges are dashed narrow (12d dash, 3d gap). Centre lines are long-dash dotted narrow. The title block and grid use 0.35 mm, the frame 0.7 mm. DXF layers are named after these line types. |
-| Lettering | ISO 3098 | Lettering is a type-B style at heights of 1.8, 2.5, 3.5, 5 and 7 mm. The drawing number uses 5 mm bold. |
+| Lettering | ISO 3098 | Lettering is a type-B style at heights of 1.8, 2.5, 3.5, 5 and 7 mm. The drawing number uses 5 mm bold. Notes and tables are at least 1.8 mm high on paper, marks and item references at least 2.5 mm (checked by the layout check). |
 | Dimensioning | ISO 129-1 | Dimension lines end in closed filled arrowheads, with the value above the line, readable from the bottom or the right. Hole positions use chain dimensions. Coordinate positions use running dimensions, with the origin marked by a small circle. |
 | Scales | ISO 5455 | Only 1:1, 1:2, 1:5, 1:10, 1:20, 1:50, 1:100, 1:200, 1:500 … are used. The main scale appears in the title block. |
-| Item references | ISO 6433 | Each part mark sits in a balloon, with a leader ending in a dot on the part. Identical parts share one reference. |
+| Item references | ISO 6433 | Each part mark sits in a balloon, with a leader ending in a dot on the part. Identical parts share one reference. Assembly marks on GA and erection views are placed clear of each other (see *Mark placement*). |
 | Parts lists | ISO 7573 | Columns are item, quantity, designation (profile – length, ISO 5261 style), material, mass, and the referenced part drawing number. |
 | Welding symbols | ISO 2553 (system A), ISO 4063 | The symbol has an arrow line and a continuous reference line with a dashed identification line. The fillet symbol sits on the arrow side with the throat **a** (for example `a4`). A circle marks weld-all-round, and the process number (e.g. 135 MAG) goes in the tail. |
 | Execution and fabrication notes | EN 1090-2 and referenced standards | General notes cover these points (each only where relevant to the sheet):<ul><li>Execution class and steel grades: EN 10025-2, EN 10219-1.</li><li>Holes and deburring, normal clearance.</li><li>Thermal cutting to EN ISO 9013.</li><li>Welding to EN ISO 3834-3, welders to EN ISO 9606-1, quality level ISO 5817 C.</li><li>Welded-assembly tolerances: ISO 13920-BF.</li><li>Galvanizing to EN ISO 1461, with vent and drain holes to EN ISO 14713-2.</li><li>Painting to ISO 12944.</li><li>Bolts EN ISO 4014/4017, nuts EN ISO 4032, washers EN ISO 7089.</li></ul> |
@@ -58,6 +58,7 @@ The table below shows how each standard is applied. The implementation follows t
 - An assembly schedule (mark → quantity → main part → mass → **assembly drawing number**).
 - The site bolt and anchor schedule.
 - The cutting planes of section cuts and the circles of detail callouts, each with its letter and the number of the sheet that shows it.
+- When the elevation or plan is divided into zones (see *Large facades: zones*), the GA sheet becomes the overall view: the whole facade at the scale that fits, the zone outlines with their labels (Z1, Z2 …) and sheet numbers, and a **zone index** (zone → drawing → view → extent → assemblies) instead of the assembly schedule. Each zone sheet (`-GA-01-Z2` …) shows its part of the view with grids, levels and marks and lists its own assemblies.
 
 ### Section and detail sheets
 See *Sections and details* below.
@@ -111,7 +112,7 @@ Each cut gets its own sheet (`-SD-NN`), listed in the register after the GA shee
 There is no ISO standard for the content of facade erection drawings. FacadeSteel follows **typical facade-contractor practice** for what is shown, and applies the ISO conventions above for how it is drawn: lines ISO 128-2, lettering ISO 3098, dimensions ISO 129-1, scales ISO 5455, item references ISO 6433, title block ISO 7200. The erection drawings can be left out of the set under *Drawing settings*.
 
 ### Bracket setting-out plans (`-E-NN`)
-- One plan per level (the project levels, or the slab-bracket elevations when there are none) and slab edge direction. Long edges are split over several sheets so that the plan stays at 1:20 where possible.
+- One plan per level (the project levels, or the slab-bracket elevations when there are none) and slab edge direction. Long edges are split over several sheets so that the plan stays at 1:20 where possible. The sheets of one split edge are zones of it: the title says *zone 1 of 3*, match lines at the ends of the plan refer to the sheets before and after (*MATCH LINE — SEE DRAWING …-E-04*), and a schematic key plan above the notes shows the edge divided into the sheets, this one hatched.
 - The plan is turned so that the slab edge runs along the sheet, slab side up, and shows:
   - the slab edge (continuous wide line, hatched band on the concrete side) and the facade setting-out line (mullion wire line, long-dash dotted);
   - the grid lines crossing the edge, with bubbles;
@@ -129,9 +130,54 @@ There is no ISO standard for the content of facade erection drawings. FacadeStee
 
 ### Erection sequences (`-ES-NN`)
 - One sheet per erection phase, in the phases' sequence order, showing the GA front elevation with grids and levels: the assemblies of the phase drawn **extra wide** (0.7 mm), those erected in earlier phases narrow, later phases left out. Only the phase's assemblies are marked.
-- A sequence legend (all phases with assembly count, mass and status), a line key and the list of assemblies in the phase with their drawing numbers.
+- A sequence legend (all phases with assembly count, mass and status), a line key and the list of assemblies in the phase with their drawing numbers. A list that does not fit continues on sheet 2/N of the same drawing.
 - Assemblies take the phase of their main member; brackets that of the mullion they support. Assemblies in no phase go on a final sheet *Not assigned to a phase*.
 - Without phases, a **default sequence by floor, bottom-up** is used (each assembly goes to the floor its lowest point lies on), and the sheets say so.
+- When the front elevation is divided into zones, there is one sheet per **phase × zone** (`-ES-01-Z2`: phase 1, zone 2), only where the phase has assemblies in the zone. Each has the key plan, the legend, the line key and the phase's assemblies in that zone. Its match lines refer to the same phase's sheet of the adjacent zone, or to the GA zone sheet where the phase has nothing there.
+
+## Sheet layout
+
+There is no ISO standard for where blocks go on a sheet; FacadeSteel keeps to ISO 5457 (frame, title block position) and ISO 7200 (title block, revision table) and applies these rules to every sheet.
+
+- **One layout engine** places all blocks of a sheet — views, tables, legends, notes, key plans — in the free regions of the frame. Reserved regions are kept clear: the frame margins and centring marks, the title block and the revision table above it. Notes and legends go into the column above the revision table (title block width), tables into columns along the bottom; views get the free area that remains. Every placement is checked against the reserved regions and the blocks already placed.
+- **Nothing is drawn over anything else.** A block that does not fit is not squeezed in: tables and notes are split at a row or line (the rest titled *(cont.)*), and what is left **continues on the next sheet of the same drawing**, where it flows in columns from the top left, clear of the title block.
+- **Multi-sheet drawings (ISO 7200):** the sheets of one drawing share its identification number and are told apart by the sheet number in the title block (*Sheet 2/3*). The register lists every sheet, multi-sheet drawings as `FS-001-ES-01 (2/3)`; exported files are named `<number>_sh2_rev<rev>`. Each sheet has its own id (`seq-floor-1#2` for sheet 2; the first sheet keeps the drawing's id), so revisions, fingerprints and manual edits are kept per sheet. Single-sheet drawings keep their ids and numbers.
+- **Layout check** (`checkSheetLayout`): every sheet is checked for blocks that overlap each other, blocks outside the frame or over the title block / revision table, lettering below 1.8 mm (notes, tables, dimensions) or 2.5 mm (marks and item references, ISO 3098 guidance), and marks overlapping other text. Problems are shown above the sheet in the Drawings tab, and the list marks such sheets with ⚠ (filter *Layout*). Manual edits (moved blocks, notes) are checked too.
+
+### Mark placement
+
+Assembly marks on GA, zone and erection views are 2.5 mm high (ISO 3098) and placed one by one, avoiding every mark and text already placed (grid bubbles, level and dimension text, the view label): first beside the mark's point (up and to the right, as before, then the other sides), then further away with a narrow leader line ending in a dot (ISO 6433 style). A mark that finds no free position inside the view is left out; the view then says so under its label (*20 of 115 marks not shown — no legible position at 1:200; see the assembly table*) and the sheet's assembly table still lists the assembly. A larger sheet or a smaller zone scale avoids this.
+
+## Large facades: zones
+
+A GA elevation or plan, or an erection sequence, of a large facade is not legible on one sheet. It is divided into **zones**, one sheet per zone (*Drawing settings → Large facades — zones*).
+
+| Topic | Rule |
+|---|---|
+| When | The legible scale is the largest ISO 5455 scale at which the assembly marks find free positions (a placement test with 2.5 mm marks: at most 2 % left out in dense corners, at most a quarter on leaders). When the whole view on one sheet would be at a smaller scale than that, or the facade is drawn normal to an inclined facade, the view is divided. Small facades (the sample project) stay on one sheet exactly as before. |
+| Scale | *Auto* (the legible scale, or a larger one when every facade part fits one sheet at it) or a preferred ISO 5455 scale. When more zones than *Most zones per view* (default 12) would be needed, the next smaller ISO scale is used. |
+| Where | Zones are divided at **grid lines** (columns) and **levels** (rows) where possible, else at member lines (mullions for columns, transoms for rows), else in equal widths — as evenly as possible, each zone fitting the view area of the zone sheet. *Divide at: Equal widths* skips the grid and member lines. Zones without assemblies of their own (an empty corner of a sloped facade) are left out. |
+| Overlap | Beyond each match line the view shows the neighbouring zone for the overlap (default 1000 mm), drawn narrow. |
+| Assemblies | Every assembly belongs to exactly one zone — the one its mark lies in. Only those are marked and listed on the zone sheet; parts of other zones are drawn narrow. |
+| Numbers | Zone sheets take the drawing's number with `-Z<n>`: `…-GA-01-Z2`, `…-GA-02-Z1` (plan), `…-ES-01-Z3` (phase 1, zone 3). Ids: `ga-front-z2`, `seq-<phase>-z3`. The overall GA sheet keeps its number and id. |
+| Title | *General arrangement – Elevation – Zone 2 of 6*, with the zone name (*Zone 2 of 6 — grids 8–14, levels L02–L05*; without grids *facade A, strip 1/2, upper*) in the supplementary title, the view label and the notes. |
+| Sheet size | GA and erection sequence sheets use *GA & erection sequence sheets*. For big facades A1 is suggested (fewer, larger zones); the settings show how the current model is divided. |
+
+### Key plans and match lines
+
+- **Key plan** (top of the right-hand column of every zone sheet, not to scale): the whole facade as member centre lines in the front elevation (or the plan), every zone outlined and labelled Z1, Z2 …, the zone of the sheet hatched.
+- **Match lines** at the zone edges: long-dash dotted wide lines (0.7 mm) with *MATCH LINE — SEE DRAWING <number>* along them, naming the sheet of the adjacent zone. Where a facade folds (see below), the match line at the fold is marked *MATCH LINE (FOLD)* and refers to the zone across the fold.
+- The zone width between its match lines is dimensioned below the view (true length in the view plane), with the grid spacing where grids cross the zone.
+
+### Views normal to the facade
+
+Elevation views have a view direction (*Elevation view direction*):
+
+- **Front elevation (world)** — looking north, as before.
+- **Normal to the facade** — the view looks along the normal of the facade's best-fit plane, so the facade appears in true shape and dimensions are true lengths in the facade plane. Paper up is world up projected onto the plane.
+- **Auto** (default) — normal to the facade where its best-fit plane is inclined more than 10° from vertical or is not aligned with X; else the front elevation.
+
+A folded facade (V-shaped or polygonal in plan, or with parts at different inclinations) is first split where the best-fit planes of its parts differ by more than 10° (recursive two-plane fits along the facade); each part (*facade A, B* …) gets its own view and zones, and the zones meet at the fold with match lines. The view label states the direction (*VIEW NORMAL TO FACADE A — ZONE 2*) and a note gives the plane's inclination. Levels are drawn where they cut the plane (horizontal lines with their true heights); grid lines are projected onto the plane; both are omitted where they do not cross the zone. Section cuts and details are placed on world-projection GA views only.
 
 ## Editing drawings
 
@@ -157,6 +203,8 @@ The title block can follow a company template (*Drawing settings → Sheet templ
 
 ## Drawing numbers
 
-`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-SD-NN` section / detail sheets (in the order of the GA cuts), `<prefix>-E-NN` bracket setting-out plans, `<prefix>-AS-NN` anchor schedules, `<prefix>-ES-NN` erection sequences, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part.
+`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-SD-NN` section / detail sheets (in the order of the GA cuts), `<prefix>-E-NN` bracket setting-out plans, `<prefix>-AS-NN` anchor schedules, `<prefix>-ES-NN` erection sequences, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part. Zone sheets of a divided view add `-Z<n>` (`<prefix>-GA-01-Z2`, `<prefix>-ES-01-Z3`).
 
-The prefix defaults to the project number. Exported files are named `<drawing number>_rev<revision>`.
+The sheets of a multi-sheet drawing share its number (ISO 7200) and carry *Sheet n/N*; the register lists them as `<number> (n/N)`.
+
+The prefix defaults to the project number. Exported files are named `<drawing number>_rev<revision>`, sheets of multi-sheet drawings `<drawing number>_sh<n>_rev<revision>`.

@@ -34,6 +34,20 @@ export function drawingNumber(p: Project, id: string): string {
   return `${pre}-${id}`;
 }
 
+/**
+ * Identification number with the sheet of a multi-sheet drawing, as listed in the
+ * register: "FS-001-ES-01 (2/3)". Sheets of one drawing share the identification
+ * number (ISO 7200) and are told apart by the sheet number.
+ */
+export function sheetLabel(d: { number: string; sheetIndex?: number; sheetCount?: number }): string {
+  return d.sheetCount && d.sheetCount > 1 ? `${d.number} (${d.sheetIndex}/${d.sheetCount})` : d.number;
+}
+
+/** File name stem of a sheet: the identification number, plus "_sh2" for sheet 2 of a multi-sheet drawing. */
+export function sheetFileStem(d: { number: string; sheetIndex?: number; sheetCount?: number }): string {
+  return d.sheetCount && d.sheetCount > 1 ? `${d.number}_sh${d.sheetIndex}` : d.number;
+}
+
 /** Series numbers: "<prefix>-E-01", "<prefix>-ES-03" … */
 export function seriesNumber(p: Project, code: string, n: number): string {
   return `${numberPrefix(p)}-${code}-${pad2(n)}`;

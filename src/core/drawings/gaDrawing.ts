@@ -8,14 +8,18 @@
 import type { Project, Vec2, Vec3 } from '../model/types';
 import { toWorld } from '../model/geometry';
 import { uniqueAssemblies, type Assembly, type DerivedModel, type Part } from '../derive/model';
-import type { DLayer, Drawing, Viewport } from './types';
+import type { DLayer, Drawing, DrawingZone, Viewport } from './types';
 import { notesBlock, packBlocks, tableBlock, type Block, type PackResult, type Rect } from './layout';
-import { dimChain, dimLinear, type Sheet } from './dims';
+import { dimChain, dimLinear, type Sheet, type TableSpec } from './dims';
 import { TEXT, generalNotes, isoScale, scaleLabel } from './standards';
 import { bounds, centroid, convexHull, partCorners } from './project';
 import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
 import { drawGaCuts } from './cuts';
+import { labelBox, obstacleBoxes, placeMarks } from './labels';
+import { zoneNumber, zoneOutline, zonePlanFor, zoneSheetLayout, zoningSettings, type Zone, type ZonePlan } from './zoning';
+import { drawZoneView, keyPlanBlock, zoneNotes, zoneRows } from './zoneView';
+import { textExtent } from './viewLayout';
 
 export type GaView = 'front' | 'plan' | 'side';
 
@@ -36,9 +40,21 @@ export function projectPoint(view: GaView, p: Vec3): Vec2 {
   }
 }
 
+/**
+ * GA drawings of a view: one sheet, or — when the view is divided into zones
+ * (large or inclined facades, see zoning.ts) — an overall sheet with the zone
+ * outlines and the zone index, followed by one sheet per zone.
+ */
+export function gaDrawings(p: Project, dm: DerivedModel, view: 'front' | 'plan', ctx: DrawCtx = makeCtx(p, dm)): Drawing[] {
+  const plan = zonePlanFor(ctx, view);
+  if (!plan) return [gaDrawing(p, dm, view, ctx)];
+  return [gaDrawing(p, dm, view, ctx), ...plan.zones.map((z) => gaZoneDrawing(ctx, plan, z))];
+}
+
 export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
   const size = p.drawings.settings.gaSheet;
   const s = newSheet(size, ctx);
+  const plan = view === 'side' ? null : zonePlanFor(ctx, view);
 
   // Schedules.
   const asmRows = uniqueAssemblies(dm).map(({ assembly, qty }) => {
@@ -67,9 +83,32 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
       s.tb.w,
     ),
   ];
+  // Divided view: the zone index instead of the assembly schedule (each zone sheet lists its assemblies).
+  if (plan) {
+    const base = drawingNumber(p, `ga-${view}`);
+    blocks.push(
+      tableBlock({
+        title: `Zones – ${plan.zones.length} sheets at ${scaleLabel(plan.den)}`,
+        cols: [
+          { head: 'Zone', w: 11 },
+          { head: 'Drawing', w: 34 },
+          { head: 'View', w: 30 },
+          { head: 'Extent', w: 44 },
+          { head: 'Asm', w: 10, align: 'end' },
+        ],
+        rows: plan.zones.map((z) => [
+          `Z${z.index}`,
+          zoneNumber(base, z.index),
+          z.frame.kind === 'normal' ? `normal${plan.segments.length > 1 ? ` – facade ${z.segment.name}` : ''}` : view === 'plan' ? 'plan' : 'front',
+          z.name.replace(/^Zone \d+ of \d+( — )?/, '') || '—',
+          z.assemblies.length,
+        ]),
+      }),
+    );
+  }
   // Split long schedules into columns so they stay within the bottom band.
   const chunk = <T,>(arr: T[], n: number) => Array.from({ length: Math.ceil(arr.length / n) }, (_, i) => arr.slice(i * n, i * n + n));
-  chunk(asmRows, 14).forEach((rows, i) =>
+  if (!plan) chunk(asmRows, 14).forEach((rows, i) =>
     blocks.push(
       tableBlock({
         title: i === 0 ? 'Assembly schedule' : 'Assembly schedule (cont.)',
@@ -102,17 +141,103 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
     );
   }
   const areas = packBlocks(s, size, blocks);
-  const gv = drawGaView(p, dm, s, view, areas, { cuts: ctx });
+  const base = drawingNumber(p, `ga-${view}`);
+  const gv = drawGaView(
+    p,
+    dm,
+    s,
+    view,
+    areas,
+    plan
+      ? {
+          cuts: ctx,
+          mark: () => false,
+          label: (den) => `${VIEW_LABEL[view]} – overall, divided into ${plan.zones.length} zones   ${scaleLabel(den)}`,
+          overlay: (sh, P) => {
+            // Zone outlines with their labels and sheet numbers.
+            for (const z of plan.zones) {
+              const pts = zoneOutline(z, (q) => projectPoint(view, q)).map(P);
+              sh.withTag({ id: `zone:${z.index}` }, () => {
+                sh.poly(pts, true, 'match');
+                const c = centroid(pts);
+                sh.text({ x: c.x, y: c.y + 0.6 }, `Z${z.index}`, TEXT.normal, 'middle', 'text', 0, true);
+                sh.text({ x: c.x, y: c.y - 3.2 }, zoneNumber(base, z.index), TEXT.small, 'middle');
+              });
+            }
+          },
+        }
+      : { cuts: ctx },
+  );
 
   return finalize(ctx, s, size, {
     id: `ga-${view}`,
     kind: 'ga',
     mark: `GA-${view.toUpperCase()}`,
     title: `General arrangement – ${VIEW_LABEL[view]}`,
-    subtitle: `${dm.assemblies.length} assemblies · ${dm.parts.reduce((t, pt) => t + pt.mass, 0).toFixed(0)} kg steel`,
+    subtitle: `${dm.assemblies.length} assemblies · ${dm.parts.reduce((t, pt) => t + pt.mass, 0).toFixed(0)} kg steel${plan ? ` · ${plan.zones.length} zone sheets` : ''}`,
     scale: scaleLabel(gv.den),
     viewports: [gv.viewport],
   });
+}
+
+const ASM_COLS: TableSpec['cols'] = [
+  { head: 'Mark', w: 12 },
+  { head: 'Qty', w: 9, align: 'end' },
+  { head: 'Main part', w: 40 },
+  { head: 'kg', w: 12, align: 'end' },
+  { head: 'Assembly drawing', w: 32 },
+];
+
+/** One zone of a divided GA view: key plan, zone notes, the zone's assemblies, the view with match lines. */
+function gaZoneDrawing(ctx: DrawCtx, plan: ZonePlan, zone: Zone): Drawing {
+  const { p, dm } = ctx;
+  const view = plan.view;
+  const size = plan.size;
+  const s = newSheet(size, ctx);
+  const L = zoneSheetLayout(size, s.tb);
+  const base = drawingNumber(p, `ga-${view}`);
+  const z = zoningSettings(p);
+  const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
+  s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+  const rows = [...zoneRows(zone.assemblies).values()].map(({ a, qty }) => {
+    const main = dm.partByRef.get(a.main);
+    return [a.mark, qty, main ? designation(main) : '', a.mass.toFixed(1), drawingNumber(p, `asm-${a.mark}`)];
+  });
+  const blocks: Block[] = [
+    notesBlock('Zone notes', [...zoneNotes(plan, zone, z.overlap), `General notes and the zone index: see ${base}.`], s.tb.w),
+    tableBlock({ title: `Assemblies in zone ${zone.index}`, cols: ASM_COLS, rows }),
+  ];
+  packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
+  const gv = drawZoneView(ctx, s, plan, zone, L, {
+    group: `view:${view}`,
+    label: [`${zone.direction} — ZONE ${zone.index}`, zone.name],
+    ref: (i) => zoneNumber(base, i),
+    cuts: ctx,
+  });
+  const mass = zone.assemblies.reduce((t, a) => t + a.mass, 0);
+  return finalize(ctx, s, size, {
+    id: `ga-${view}-z${zone.index}`,
+    kind: 'ga',
+    mark: `GA-${view.toUpperCase()}-Z${zone.index}`,
+    title: `General arrangement – ${view === 'plan' ? 'Plan' : 'Elevation'} – Zone ${zone.index} of ${plan.zones.length}`,
+    subtitle: `${zone.name.replace(/^Zone \d+ of \d+( — )?/, '') || zone.direction.toLowerCase()} · ${zone.assemblies.length} assemblies · ${mass.toFixed(0)} kg`,
+    scale: scaleLabel(plan.den),
+    number: zoneNumber(base, zone.index),
+    viewports: [gv.viewport],
+    zone: zoneInfo(zone, plan, (i) => zoneNumber(base, i)),
+  });
+}
+
+/** The zone record of a zone sheet (Drawing.zone). */
+export function zoneInfo(zone: Zone, plan: ZonePlan, ref: (i: number) => string, assemblies: Assembly[] = zone.assemblies): DrawingZone {
+  return {
+    index: zone.index,
+    count: plan.zones.length,
+    name: zone.name,
+    direction: `${zone.direction} — ZONE ${zone.index}`,
+    refs: zone.match.map((m) => ref(m.zone)),
+    assemblies: assemblies.map((a) => a.id),
+  };
 }
 
 export interface GaViewOpts {
@@ -124,6 +249,8 @@ export interface GaViewOpts {
   label?: (den: number) => string;
   /** Draw the section cuts and detail callouts of this context on the view. */
   cuts?: DrawCtx;
+  /** Extra drawing on the view (in its group), before the marks: view coordinates → paper. */
+  overlay?: (s: Sheet, P: (v: Vec2) => Vec2, den: number) => void;
 }
 
 export interface GaViewResult {
@@ -227,20 +354,29 @@ export function drawGaView(p: Project, dm: DerivedModel, s: Sheet, view: GaView,
       if (layer) s.poly(hull.map(P), hull.length > 2, layer);
     }
 
+    o.overlay?.(s, P, den);
+    // Assembly marks (ISO 3098 2.5 mm), placed clear of each other and of the view's text.
+    const targets: { id: string; mark: string; at: Vec2 }[] = [];
     for (const a of dm.assemblies) {
       const main = dm.partByRef.get(a.main);
       if (!main || main.kind === 'profile') continue;
       if (o.mark && !o.mark(a)) continue;
       const at =
         main.kind === 'plate' ? centroid(hulls.find((x) => x.pt === main)?.hull ?? []) : projectPoint(view, toWorld(main.frame, main.length / 2, 0, 0));
-      const pp = P(at);
-      s.withTag({ id: `mark:${a.id}` }, () => s.text({ x: pp.x + 1.2, y: pp.y + 1.2 }, a.mark, main.kind === 'plate' ? TEXT.label : TEXT.small, 'start'));
+      targets.push({ id: a.id, mark: a.mark, at: P(at) });
     }
-    s.withTag({ id: `label:${view}` }, () =>
-      s.text({ x: area.x0 + 2, y: area.y1 - 4 }, o.label ? o.label(den) : `${VIEW_LABEL[view]}   ${scaleLabel(den)}`, TEXT.normal, 'start', 'text', 0, true),
-    );
+    const labelText = o.label ? o.label(den) : `${VIEW_LABEL[view]}   ${scaleLabel(den)}`;
+    const labelAt = { x: area.x0 + 2, y: area.y1 - 4 };
+    const lblBox = labelBox(labelAt, labelText, TEXT.normal, true);
+    const noticeAt = (t: string) => (lblBox.x1 + 6 + textExtent(t, TEXT.small) <= area.x1 ? { x: lblBox.x1 + 6, y: labelAt.y } : { x: labelAt.x, y: labelAt.y - 4.5 });
+    const notice = placeMarks(s, targets, area, [...obstacleBoxes(s.ents.filter((e) => e.group === group)), lblBox], noticeAt, scaleLabel(den));
+    s.withTag({ id: `label:${view}` }, () => {
+      s.text(labelAt, labelText, TEXT.normal, 'start', 'text', 0, true);
+      if (notice) s.text(noticeAt(notice), notice, TEXT.small, 'start');
+    });
     if (o.cuts) drawGaCuts(o.cuts, s, view, P, den);
     const origin = P({ x: 0, y: 0 });
     return { den, P, area, viewport: { group, view, den, origin } };
   });
 }
+

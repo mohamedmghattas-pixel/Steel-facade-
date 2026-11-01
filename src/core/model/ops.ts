@@ -21,6 +21,7 @@ import type {
   ProjectSettings,
   MovementSettings,
   DrawingSet,
+  DrawingZoning,
   WireframeCheckSettings,
   Vec3,
   WorkPlane,
@@ -118,6 +119,11 @@ export function defaultMovement(): MovementSettings {
   };
 }
 
+/** Zoning of large views: automatic scale, at most 12 zones per view, 1 m overlap, split at grid lines. */
+export function defaultZoning(): DrawingZoning {
+  return { enabled: true, scale: 0, maxZones: 12, overlap: 1000, splitBy: 'grids', viewDirection: 'auto' };
+}
+
 export function defaultDrawingSet(): DrawingSet {
   return {
     settings: {
@@ -133,6 +139,7 @@ export function defaultDrawingSet(): DrawingSet {
       approvedBy: '',
       revisionScheme: 'alpha',
       extraNotes: [],
+      zoning: defaultZoning(),
     },
     revisions: {},
     edits: {},

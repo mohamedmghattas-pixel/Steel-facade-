@@ -15,12 +15,35 @@ export const fmtLen = (v: number) => String(Math.round(v));
 const ARROW_L = 2.5;
 const ARROW_W = 0.45;
 
+/**
+ * A block of sheet content placed by the layout packer (table, notes, legend,
+ * key plan): its size on paper and how to draw it with its top-left corner at
+ * (x, yTop). Tables and notes can be split, so they flow over columns and sheets.
+ */
+export interface SheetBlock {
+  w: number;
+  h: number;
+  /** Prefer the column above the revision table (notes). */
+  right?: boolean;
+  /** Group of the block's entities (movable in the drawing editor), e.g. "table:parts-list". */
+  id?: string;
+  draw: (s: Sheet, x: number, yTop: number) => void;
+  /** Splits the block so that the first part is at most `maxH` high; null when it cannot be split there. */
+  split?: (maxH: number) => [SheetBlock, SheetBlock] | null;
+  /** Table blocks: the table and its title without "(cont.)", so continued pieces can be merged again. */
+  table?: { spec: TableSpec; base: string };
+}
+
 export class Sheet {
   ents: DEnt[] = [];
   /** Edit tags stamped on every entity added (see EntTag). */
   tag: EntTag = {};
   /** Title block size of the sheet template (layout keeps clear of it). */
   tb = { w: 180, h: 40 };
+  /** Blocks the layout packer could not place on this sheet; they continue on further sheets of the drawing. */
+  overflow: SheetBlock[] = [];
+  /** Layout notices of the generator (shown with the sheet, e.g. marks left out). */
+  notices: string[] = [];
   private seq = new Map<string, number>();
   constructor(
     public w: number,

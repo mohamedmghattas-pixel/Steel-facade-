@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
-import { useStore } from '../../state/store';
+import { derived, useStore } from '../../state/store';
 import { wireframeStatus } from '../../core/wireframe';
 import { openWireframeCheck } from '../wireframeActions';
 import { Field, Modal, NumberInput, Segmented, Select, TextInput } from '../widgets';
 import { drawingsFor } from '../actions';
-import { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, ISO_SCALES, drawTemplateTitleBlock, entitiesToSvg, issueDrawings, newTemplate, nextCutLetter, parseTemplates, sampleTitleData } from '../../core/drawings';
+import { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, ISO_SCALES, drawTemplateTitleBlock, entitiesToSvg, issueDrawings, makeCtx, newTemplate, nextCutLetter, parseTemplates, sampleTitleData, zonePlanFor, zoningSettings } from '../../core/drawings';
 import { Sheet } from '../../core/drawings/dims';
 import { frameRect } from '../../core/drawings/layout';
 import { SHEETS } from '../../core/drawings/standards';
 import { newId } from '../../core/model/ops';
-import type { DocStatus, DrawingSettings, GaCut, Project, SheetSize, SheetTemplate, Vec3 } from '../../core/model/types';
+import type { DocStatus, DrawingSettings, DrawingZoning, GaCut, Project, SheetSize, SheetTemplate, Vec3 } from '../../core/model/types';
 import { download, pickFile, safeName } from '../../state/storage';
 import { askConfirm } from '../askState';
 import { Icon } from '../icons';
@@ -126,6 +126,24 @@ export function DrawingSettingsDialog({ onClose }: { onClose: () => void }) {
   const [notes, setNotes] = useState(s.extraNotes.join('\n'));
   const [designer, setDesigner] = useState(false);
   const iso = s.standard === 'ISO';
+  const z = zoningSettings(project);
+  const patchZ = (label: string, v: Partial<DrawingZoning>) => apply(label, (p) => void (p.drawings.settings.zoning = { ...zoningSettings(p), ...v }));
+  // How the current model is divided (GA front elevation), and a sheet size suggestion for big facades.
+  const plan = useMemo(() => {
+    try {
+      const ctx = makeCtx(project, derived(project));
+      return { front: zonePlanFor(ctx, 'front'), plan: zonePlanFor(ctx, 'plan') };
+    } catch {
+      return null;
+    }
+  }, [project]);
+  const zinfo = plan?.front
+    ? `front elevation in ${plan.front.zones.length} zones at 1:${plan.front.den}${plan.front.segments.length > 1 ? ` (${plan.front.segments.length} facade planes)` : ''}${plan.plan ? `, plan in ${plan.plan.zones.length}` : ''}`
+    : plan?.plan
+      ? `plan in ${plan.plan.zones.length} zones at 1:${plan.plan.den}`
+      : '';
+  const bigHint =
+    (plan?.front || plan?.plan) && (s.gaSheet === 'A3' || s.gaSheet === 'A2') ? 'Large facade: A1 suggested — fewer, larger zones' : 'Also used for the erection sequences';
   if (designer) return <TemplateDesignerDialog onClose={() => setDesigner(false)} />;
   const templates = project.drawings.templates ?? [];
   return (
@@ -167,7 +185,7 @@ export function DrawingSettingsDialog({ onClose }: { onClose: () => void }) {
         <Field label="Part & assembly sheets">
           <Select<SheetSize> value={s.sheet} options={SHEET_OPTS} onChange={(v) => patch('Sheet size', { sheet: v })} />
         </Field>
-        <Field label="GA sheets">
+        <Field label="GA & erection sequence sheets" hint={bigHint}>
           <Select<SheetSize> value={s.gaSheet} options={[...SHEET_OPTS, 'A0']} onChange={(v) => patch('GA sheet size', { gaSheet: v })} />
         </Field>
         <Field label="Revision index">
@@ -231,6 +249,60 @@ export function DrawingSettingsDialog({ onClose }: { onClose: () => void }) {
         </Field>
         <Field label="Section cuts and details">
           <span className="muted">{(project.drawings.cuts ?? []).length} on the GA — add them on a GA sheet in the Drawings tab</span>
+        </Field>
+      </div>
+      <h4>Large facades — zones</h4>
+      <p className="muted">
+        When a GA elevation or plan, or an erection sequence, is not legible on one sheet, it is divided into zones: one sheet per zone with a key plan, match lines
+        referring to the adjacent zone sheets and the assemblies of the zone. Inclined or folded facades are drawn normal to the facade (true shape).
+        {zinfo ? ` Now: ${zinfo}.` : ''}
+      </p>
+      <div className="row3">
+        <Field label="Divide large views">
+          <Segmented
+            value={z.enabled ? 'on' : 'off'}
+            options={[
+              { value: 'on', label: 'Into zones' },
+              { value: 'off', label: 'One sheet' },
+            ]}
+            onChange={(v) => patchZ('Zoning', { enabled: v === 'on' })}
+          />
+        </Field>
+        <Field label="Zone scale (ISO 5455)" hint="Auto: the largest scale at which the marks are legible">
+          <Select
+            value={String(z.scale)}
+            options={[{ value: '0', label: 'Auto (legible)' }, ...[20, 50, 100, 200, 500].map((d) => ({ value: String(d), label: `1:${d}` }))]}
+            onChange={(v) => patchZ('Zone scale', { scale: Number(v) })}
+          />
+        </Field>
+        <Field label="Most zones per view" hint="More would be needed: the next smaller scale is used">
+          <NumberInput value={z.maxZones} min={1} onChange={(v) => patchZ('Most zones', { maxZones: Math.max(1, Math.round(v)) })} />
+        </Field>
+      </div>
+      <div className="row3">
+        <Field label="Divide at">
+          <Segmented
+            value={z.splitBy}
+            options={[
+              { value: 'grids', label: 'Grid lines', title: 'Grid lines and levels, else member lines, else equal widths' },
+              { value: 'equal', label: 'Equal widths' },
+            ]}
+            onChange={(v) => patchZ('Zone division', { splitBy: v })}
+          />
+        </Field>
+        <Field label="Overlap beyond match lines">
+          <NumberInput value={z.overlap} unit="mm" min={0} onChange={(v) => patchZ('Zone overlap', { overlap: Math.max(0, v) })} />
+        </Field>
+        <Field label="Elevation view direction" hint="Auto: normal to the facade where it is inclined > 10° or not along X">
+          <Select
+            value={z.viewDirection}
+            options={[
+              { value: 'auto', label: 'Auto' },
+              { value: 'world', label: 'Front elevation (looking north)' },
+              { value: 'normal', label: 'Normal to the facade (true shape)' },
+            ]}
+            onChange={(v) => patchZ('View direction', { viewDirection: v as DrawingZoning['viewDirection'] })}
+          />
         </Field>
       </div>
       <Field label="Additional general notes" hint="One note per line — printed after the standard notes on every sheet">

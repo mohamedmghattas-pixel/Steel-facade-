@@ -44,7 +44,7 @@ export function migrateProject(p: Project | null): Project | null {
   p.drawings = {
     ...dd,
     ...(p.drawings ?? {}),
-    settings: { ...dd.settings, ...(p.drawings?.settings ?? {}) },
+    settings: { ...dd.settings, ...(p.drawings?.settings ?? {}), zoning: { ...dd.settings.zoning!, ...(p.drawings?.settings?.zoning ?? {}) } },
     revisions: p.drawings?.revisions ?? {},
   };
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [] };

@@ -18,6 +18,8 @@ import {
 import { exportGalvanizing, exportLabels, exportMis, exportNestedDxf, exportPackingLists, exportPaint, exportPlateDxf, exportPlateNc } from './fabricationActions';
 import { exportBcfFile, lockMarksNow, openIfcSteelFile, runClashDetection, unlockMarksNow } from './managementActions';
 import { marksLocked } from '../core/management/marks';
+import { WireframeStatusChip } from './dialogs/WireframeDialog';
+import { openWireframeCheck } from './wireframeActions';
 
 interface Item {
   label: string;
@@ -144,6 +146,7 @@ export function TopBar() {
         onChange={(e) => apply('Rename', (p) => void (p.info.name = e.target.value))}
         onKeyDown={(e) => e.stopPropagation()}
       />
+      <WireframeStatusChip />
       <div className="grow" />
       <button className="secondary-btn ask-btn" title="Ask the assistant (/)" onClick={() => set({ sidePanel: 'assistant', assistantFocus: Date.now() })}>
         <Icon name="auto" size={16} /> Ask FacadeSteel
@@ -169,6 +172,8 @@ function ManageMenu() {
       label="Manage"
       icon="table"
       items={[
+        { label: 'Wireframe check…', hint: 'clean up, cut at junctions, client confirmation', run: () => openWireframeCheck('all') },
+        '-',
         { label: 'Phases, zones and batches…', hint: 'erection & delivery', run: () => set({ dialog: 'phases' }) },
         locked ? { label: 'Unlock marks', hint: 'automatic numbering', run: unlockMarksNow } : { label: 'Lock marks', hint: 'keep numbers stable', run: lockMarksNow },
         '-',

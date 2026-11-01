@@ -160,6 +160,7 @@ export class Viewer {
   private labelsBuilt = false;
   private dm: DerivedModel | null = null;
   private marker3d: THREE.Object3D | null = null;
+  private wireOverlay: THREE.Object3D | null = null;
   private solidMat = new THREE.MeshStandardMaterial({ color: 0xffffff, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   private solidVcMat = new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
   private instEdgeMat = instancedEdgeMaterial(0x1b2430, 0.55);
@@ -707,6 +708,56 @@ export class Viewer {
       this.controlsO.update();
     }
     this.requestRender();
+  }
+
+  /**
+   * Coloured overlay drawn on top of the model (the wireframe check preview):
+   * segments and marker points with one colour each; null removes it.
+   */
+  setWireOverlay(o: { segments: number[]; colors: number[]; points: number[]; pointColors: number[] } | null) {
+    if (this.wireOverlay) {
+      this.helperGroup.remove(this.wireOverlay);
+      disposeObject(this.wireOverlay);
+      this.wireOverlay = null;
+    }
+    if (o && (o.segments.length || o.points.length)) {
+      const g = new THREE.Group();
+      const rgb = (list: number[], per: number) => {
+        const out = new Float32Array(list.length * per * 3);
+        const c = new THREE.Color();
+        list.forEach((hex, i) => {
+          c.setHex(hex);
+          for (let k = 0; k < per; k++) out.set([c.r, c.g, c.b], (i * per + k) * 3);
+        });
+        return out;
+      };
+      if (o.segments.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(o.segments, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(rgb(o.colors, 2), 3));
+        const ls = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.95 }));
+        ls.renderOrder = 12;
+        g.add(ls);
+      }
+      if (o.points.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(o.points, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(rgb(o.pointColors, 1), 3));
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({ vertexColors: true, size: 7, sizeAttenuation: false, depthTest: false }));
+        pts.renderOrder = 13;
+        g.add(pts);
+      }
+      this.wireOverlay = g;
+      this.helperGroup.add(g);
+    }
+    this.requestRender();
+  }
+
+  /** Aim the camera at a box (e.g. the members of a check item) from the current viewing direction. */
+  focusBox(min: Vec3, max: Vec3) {
+    const c = { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
+    const size = Math.hypot(max.x - min.x, max.y - min.y, max.z - min.z);
+    this.focusPoint(c, Math.max(1500, size * 1.6));
   }
 
   /** Show (or hide with null) a marker at a point, e.g. the active clash. */

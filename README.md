@@ -43,6 +43,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - **Line** and **Polyline** tools with snapping to ends, midpoints, grid and reference geometry.
    - Typed coordinates: `x,y,z` for world, `u,v` for work-plane, `@dx,dy` for relative, or a single length.
    - **Facade grid** generates every mullion and transom from bay widths and row heights.
+   - **Wireframe check** (Manage menu, or the status chip next to the project name) cleans an imported or drawn wireframe: whole lines, cut only where mullions and transoms meet, roles set, issues listed, and the client's confirmation recorded. See *Wireframe check* below.
 3. **Members.** Assign profiles from the **EN** and **AISC** libraries by hand, or let **Auto-assign** pick by direction or by DXF layer. Then set rotation, face alignment, offsets and extensions.
 4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs.
    - **Steel to concrete:**
@@ -89,10 +90,24 @@ Import → **DXF / DWG → wireframe or reference…** reads ASCII DXF (R12 to 2
 - **Blocks:** INSERTs are expanded recursively, including nested blocks, base point, X/Y/Z scale (mirrored too), rotation, the insert's extrusion and MINSERT arrays. Entities on layer 0 inside a block take the insert's layer.
 - **OCS:** LWPOLYLINE, 2D POLYLINE, ARC, CIRCLE and INSERT coordinates are converted from their Object Coordinate System (DXF arbitrary-axis algorithm, elevation along the extrusion direction). An elevation drawn in a rotated UCS therefore lands in the right plane.
 - **Curves:** arcs become straight chords no more than the *arc chord deviation* (default 2 mm) from the curve. Splines follow the NURBS from their control points, or a cubic through the fit points.
-- **Join tolerance (default 2 mm):** endpoints closer than this become one node, including existing model nodes. Exact duplicates and overlapping collinear lines are merged. *Split* breaks lines where they really cross in 3D or where another line ends on them; skew lines that only cross in a projection stay whole.
+- **Join tolerance (default 2 mm):** endpoints closer than this become one node, including existing model nodes. Exact duplicates and overlapping collinear lines are merged.
+- **Whole lines (default on):** *Merge collinear polyline pieces* turns a polyline drawn as one straight line with extra vertices into one line.
+- **Split lines:** *Mullion–transom junctions only* (default, recommended) splits nothing on import; the Wireframe check opens next, scoped to the imported lines, and proposes cuts only where mullions and transoms meet, for review and confirmation. *Every crossing* breaks lines where they really cross in 3D or where another line ends on them (skew lines that only cross in a projection stay whole). *None* keeps the lines as drawn.
 - **Units:** taken from `$INSUNITS` (in, ft, yd, mm, cm, dm, m), else from `$MEASUREMENT`, and can be overridden. *Move drawing to origin* helps with drawings in site coordinates.
 
 Importing 20 000 segments, with joining and splitting, takes well under a second.
+
+## Wireframe check
+
+Manage → **Wireframe check…**, the status chip next to the project name, or the assistant (`wireframe_check`, `wireframe_apply`, `wireframe_status`). It opens on its own after a wireframe DXF import.
+
+- **Whole lines.** Pieces that continue straight through a node become one line. A split is kept only where a mullion and a transom meet, where a connection sits, or where the two pieces differ (profile, material, rotation …; listed for review).
+- **Junctions.** A line end whose own axis, extended or trimmed by up to 50 mm, meets another line within the junction tolerance (default 10 mm, the 3D gap between the axes) is snapped onto that axis. Ends that meet one line at one point become one node. Mullions are cut where transoms meet them (switch: *Keep mullions continuous*, then transom ends sit on the mullion as through-nodes); transoms are cut where a mullion crosses them or ends on them.
+- **Roles from topology.** The line that receives other lines' ends is the mullion, the lines that end on it are transoms; this works on sloped and V-shaped facades where nothing is vertical. Direction (45° from horizontal), roles already set and length break ties. Short lines with one end on a mullion and the other free are brackets. Each line gets a reason.
+- **Issues for review:** isolated lines (made construction lines or deleted, as chosen), near-misses (10–100 mm, never auto-joined), dangling transom ends, very short lines, duplicates and overlaps, crossings without a node, collinear gaps (stack joints, kept).
+- **Review and confirm.** The dialog shows counts before → after, every change grouped with checkboxes and zoom-to, and a coloured 3D preview (role colours, yellow cuts, red issues). *Apply and confirm* applies the ticked changes as one undo step and records who confirmed (with a note) against a fingerprint of the wireframe. The chip then reads *verified*, turns to *changed* after any edit to node positions, member ends, roles or profiles, and back to *verified* on undo. *Issue drawings* reminds you when the wireframe is not verified.
+
+Details, rules and limits: [docs/WIREFRAME_CHECK.md](docs/WIREFRAME_CHECK.md). A 21,600-member fragmented facade is checked in about 2 s and cleaned in under 1 s.
 
 ## Development
 
@@ -112,6 +127,7 @@ npm run build      # type-check + production build into dist/
 ```
 src/core/            pure TypeScript, no DOM, unit-tested
   model/             types, geometry, wireframe operations, facade grid generator
+  wireframe/         wireframe check: whole lines, junction cuts, roles, issues, confirmation fingerprint
   library/           EN + AISC profiles, section properties, materials, bolts
   connections/       parametric connection definitions + rule-based auto-connect
   derive/            wireframe + connections → parts, holes, assemblies, marks, weights
@@ -129,12 +145,13 @@ The project file is plain JSON:
 - **Nodes and members** make up the wireframe. A member with no profile is just a construction line.
 - **Connections** sit at nodes.
 - **Settings** cover stock lengths, kerf, prefixes and auto-assign rules.
+- **Wireframe** holds the check rules and the client confirmations (date, name, note, fingerprint, counts).
 
 Every output is computed from this model by `deriveModel()`, so the 3D view, IFC, drawings, lists and NC files always agree.
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useStore } from '../../state/store';
+import { wireframeStatus } from '../../core/wireframe';
+import { openWireframeCheck } from '../wireframeActions';
 import { Field, Modal, NumberInput, Segmented, Select, TextInput } from '../widgets';
 import { drawingsFor } from '../actions';
 import { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, ISO_SCALES, drawTemplateTitleBlock, entitiesToSvg, issueDrawings, newTemplate, nextCutLetter, parseTemplates, sampleTitleData } from '../../core/drawings';
@@ -66,6 +68,7 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
         </>
       }
     >
+      <WireframeReminder />
       <p className="muted">
         Each issued sheet gets the next revision index ({set.revisionScheme === 'alpha' ? 'A, B, C…' : '0, 1, 2…'}) with this description in its revision
         table, and the document status in its title block. Sheets whose content changes afterwards are flagged as changed until they are issued again.
@@ -591,5 +594,24 @@ function TemplateNotes({ value, onChange }: { value: string[]; onChange: (v: str
         if (list.join('\n') !== value.join('\n')) onChange(list);
       }}
     />
+  );
+}
+
+/** Drawings rest on the wireframe: remind when it is not confirmed (or changed since). */
+function WireframeReminder() {
+  const project = useStore((s) => s.project);
+  const info = useMemo(() => wireframeStatus(project), [project]);
+  if (!info.members || info.status === 'verified') return null;
+  return (
+    <p className="warning" data-testid="issue-wireframe-reminder">
+      <span>
+        {info.status === 'changed' && info.last
+          ? `The wireframe changed since ${info.last.by} confirmed it (${info.last.date.slice(0, 10)}).`
+          : 'The wireframe has not been confirmed by the client.'}{' '}
+        <button className="link-btn" onClick={() => openWireframeCheck('all')}>
+          Wireframe check…
+        </button>
+      </span>
+    </p>
   );
 }

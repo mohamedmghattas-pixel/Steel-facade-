@@ -12,6 +12,8 @@ import { ApplyConnectionDialog, CustomConnectionDialog } from './ConnectionDialo
 import { SurveyDialog } from './MovementDialogs';
 import { ModellingDialogs } from './ModellingDialogs';
 import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from './ManagementDialogs';
+import { WireframeCheckDialog } from './WireframeDialog';
+import { openWireframeCheck } from '../wireframeActions';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -45,6 +47,8 @@ export function Dialogs() {
       return <IfcSteelDialog onClose={close} />;
     case 'panelLayout':
       return <PanelLayoutDialog onClose={close} />;
+    case 'wireframeCheck':
+      return <WireframeCheckDialog onClose={close} />;
     default:
       return <ModellingDialogs dialog={dialog} onClose={close} />;
   }
@@ -342,7 +346,8 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
   const [ox, setOx] = useState(0);
   const [oy, setOy] = useState(0);
   const [oz, setOz] = useState(0);
-  const [split, setSplit] = useState(true);
+  const [split, setSplit] = useState<'junctions' | 'all' | 'none'>('junctions');
+  const [mergeCollinear, setMergeCollinear] = useState(true);
   const [joinTol, setJoinTol] = useState(DXF_JOIN_TOLERANCE);
   const [layers, setLayers] = useState<Record<string, { on: boolean; profile: string | null; role: MemberRole }>>({});
   const layerOf = (l: string) => layers[l] ?? { on: !(parsed?.layerStates[l]?.frozen || parsed?.layerStates[l]?.off), profile: null, role: guessRole(l) };
@@ -355,14 +360,16 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
     offset: use3d ? { x: ox, y: oy, z: oz } : { x: ox, y: oy },
     layers: on,
     layerRules: Object.fromEntries(on.filter((l) => layerOf(l).profile).map((l) => [l, { profile: layerOf(l).profile, role: layerOf(l).role }])),
-    splitIntersections: split,
+    splitIntersections: split === 'all',
+    split,
+    mergeCollinear,
     use3d,
     joinTolerance: joinTol,
   };
   // Live join / split preview; skipped for very large drawings to keep the dialog responsive.
   const preview = useMemo(
     () => (parsed && mode === 'wire' && parsed.segments.length <= DXF_PREVIEW_LIMIT ? previewDxfImport(parsed, importOpts) : null),
-    [parsed, mode, plane, offset, scale, ox, oy, oz, onKey, split, use3d, joinTol],
+    [parsed, mode, plane, offset, scale, ox, oy, oz, onKey, split, mergeCollinear, use3d, joinTol],
   );
 
   if (!pending) return null;
@@ -401,9 +408,18 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
         ids = importDxfWireframe(p, parsed, importOpts);
       });
       useStore.getState().select({ members: ids });
+      useStore.getState().set({ lastImport: ids });
       const st = preview?.stats;
-      const extra = st ? [st.duplicates + st.overlaps ? `${st.duplicates + st.overlaps} duplicate / overlapping merged` : '', st.splits ? `${st.splits} split points` : ''].filter(Boolean).join(', ') : '';
-      useStore.getState().notify(`Imported ${ids.length} lines from ${pending.name}${use3d ? ' (3D)' : ''}${extra ? ` — ${extra}` : ''}.`);
+      const extra = st
+        ? [
+            st.merged ? `${st.merged} polyline pass-through points merged` : '',
+            st.duplicates + st.overlaps ? `${st.duplicates + st.overlaps} duplicate / overlapping merged` : '',
+            st.splits ? `${st.splits} split points` : '',
+          ]
+            .filter(Boolean)
+            .join(', ')
+        : '';
+      useStore.getState().notify(`Imported ${ids.length} lines from ${pending.name}${use3d ? ' (3D)' : ''}${extra ? ` — ${extra}` : ''}. Review the wireframe check.`);
     } else {
       const id = newId('ref');
       // Bake units and shift into the stored linework: world X/Y/Z in 3D mode, plane u/v otherwise.
@@ -420,6 +436,8 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
     }
     useStore.getState().set({ pendingDxf: null, zoomRequest: Date.now() });
     onClose();
+    // Wireframe imports go straight to the check, scoped to the imported lines.
+    if (mode === 'wire') openWireframeCheck('import');
   };
 
   return (
@@ -523,9 +541,31 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
         </Field>
       </div>
       {mode === 'wire' && (
-        <label className="check">
-          <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} /> Split imported lines where they cross or meet (true 3D crossings only)
-        </label>
+        <>
+          <label className="check" title="A polyline drawn as one straight line with extra vertices becomes one line">
+            <input type="checkbox" checked={mergeCollinear} onChange={(e) => setMergeCollinear(e.target.checked)} /> Merge collinear polyline pieces into whole lines
+          </label>
+          <Field
+            label="Split lines"
+            hint={
+              split === 'junctions'
+                ? 'Nothing is split on import: the wireframe check opens next and proposes cuts only where mullions and transoms meet, for you to review and confirm.'
+                : split === 'all'
+                  ? 'Split wherever lines cross or meet within the join tolerance (true 3D crossings only).'
+                  : 'Keep the lines as drawn.'
+            }
+          >
+            <Segmented
+              value={split}
+              options={[
+                { value: 'junctions' as const, label: 'Mullion–transom junctions only (recommended)' },
+                { value: 'all' as const, label: 'Every crossing' },
+                { value: 'none' as const, label: 'None' },
+              ]}
+              onChange={setSplit}
+            />
+          </Field>
+        </>
       )}
       <div className="row-inline" style={{ flexWrap: 'wrap', gap: '0 16px' }}>
         <label className="check">

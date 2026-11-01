@@ -27,6 +27,7 @@ export function ViewportPanel() {
   const viewRequest = useStore((s) => s.viewRequest);
   const zoomRequest = useStore((s) => s.zoomRequest);
   const typedInput = useStore((s) => s.typedInput);
+  const wireOverlay = useStore((s) => s.wireOverlay);
   const set = useStore((s) => s.set);
 
   // Create the viewer once.
@@ -79,6 +80,7 @@ export function ViewportPanel() {
   }, [project]);
 
   useEffect(() => viewerRef.current?.setSelection(selection), [selection]);
+  useEffect(() => viewerRef.current?.setWireOverlay(wireOverlay), [wireOverlay]);
   useEffect(() => viewerRef.current?.setDisplay(display), [display]);
   useEffect(() => {
     viewerRef.current?.setWorkPlane(workPlane, project.settings.gridStep, project);

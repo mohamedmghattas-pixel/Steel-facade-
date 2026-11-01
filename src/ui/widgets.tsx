@@ -188,15 +188,16 @@ export function ProfilePicker({
   );
 }
 
-export function Modal({ title, onClose, children, footer, wide }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
+/** A dialog. `docked`: a side sheet over the right of the window that leaves the 3D view usable. */
+export function Modal({ title, onClose, children, footer, wide, docked }: { title: string; onClose: () => void; children: ReactNode; footer?: ReactNode; wide?: boolean; docked?: boolean }) {
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
   }, [onClose]);
   return (
-    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal ${wide ? 'wide' : ''}`} role="dialog" aria-label={title}>
+    <div className={`modal-backdrop ${docked ? 'docked' : ''}`} onMouseDown={(e) => !docked && e.target === e.currentTarget && onClose()}>
+      <div className={`modal ${wide ? 'wide' : ''} ${docked ? 'docked' : ''}`} role="dialog" aria-label={title}>
         <header>
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="Close">

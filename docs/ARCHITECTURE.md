@@ -202,6 +202,7 @@ lists and NC files cannot disagree.
   - `drawings` (settings, revisions, edits, cuts, templates)
   - `library` (presets, templates, custom profiles)
   - `workPlanes`, `plates`, `survey`, `phases`, `batches`, `markLocks`, `clashes`
+  - `wireframe` (check rules and client confirmations against a wireframe fingerprint, see [WIREFRAME_CHECK.md](WIREFRAME_CHECK.md))
 - **Units** are millimetres and degrees. World axes: X east, Y north, Z up.
 - **Migration:** `migrateProject` fills every new field. Older files load
   unchanged apart from documented default changes (auto slots).
@@ -366,6 +367,7 @@ lists and NC files cannot disagree.
 | D26 | CI pinned to `ubuntu-24.04` and Node 24 action majors | Remove deprecation warnings; avoid silent runner migration | `ubuntu-latest` | Runner upgrades are deliberate |
 | D27 | Parallel development: foundation contracts, worktrees with file ownership, lead merges | About 20 features in one milestone without trampling each other | Sequential implementation | Integration fixes are expected and done by the lead at merge (§2.3) |
 | D28 | Typical values labelled as such; limits documented per area | Trust: users must know what to verify | Silent defaults | Docs carry "typical practice" and caveat lists |
+| D29 | Wireframe check: roles from topology (T-junctions and crossings 2-coloured on a maximum spanning forest), direction only as a tie-break; cuts only at mullion–transom junctions; client confirmation stored against a content fingerprint | Imported 3D facades are fragmented and often sloped, so "vertical = mullion" fails; the client must confirm the line model before detailing | Direction rules; splitting at every crossing | One reviewable plan (merge, cut, roles, issues) applied as one undo step; any later edit of geometry, roles or profiles shows "changed since verification" |
 
 ## 5. Known limits and open items
 

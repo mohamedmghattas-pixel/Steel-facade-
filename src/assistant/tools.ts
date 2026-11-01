@@ -112,7 +112,8 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: 'set_member_properties',
-    description: 'Change properties of the members matching the filter: profile, role, material, finish, rotation (deg about the axis), alignment (-1/0/1), offsets and end extensions (mm).',
+    description:
+      'Change properties of the members matching the filter: profile, role, material, finish, rotation (deg about the axis), alignment (-1/0/1 on the 3×3 grid; alignMode insertion = through the profile insertion point), offsets and end extensions (mm).',
     input_schema: {
       type: 'object',
       properties: {
@@ -124,6 +125,7 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
         rotation: num,
         alignY: { type: 'integer', enum: [-1, 0, 1] },
         alignZ: { type: 'integer', enum: [-1, 0, 1] },
+        alignMode: { type: 'string', enum: ['grid', 'insertion'] },
         offsetY: num,
         offsetZ: num,
         startExt: num,
@@ -520,7 +522,7 @@ export async function runTool(name: string, input: Json): Promise<string> {
       if (!ids.length) throw new Error('No members match the filter.');
       if (input.profile && !getProfile(input.profile as string)) throw new Error(`Unknown profile "${input.profile}". Use search_profiles.`);
       const patch: Partial<Member> = {};
-      for (const k of ['profile', 'role', 'material', 'finish', 'rotation', 'alignY', 'alignZ', 'offsetY', 'offsetZ', 'startExt', 'endExt'] as const) {
+      for (const k of ['profile', 'role', 'material', 'finish', 'rotation', 'alignY', 'alignZ', 'alignMode', 'offsetY', 'offsetZ', 'startExt', 'endExt'] as const) {
         if (input[k] !== undefined) (patch as Json)[k] = input[k];
       }
       if (patch.finish) patch.finish = patch.finish as Finish;

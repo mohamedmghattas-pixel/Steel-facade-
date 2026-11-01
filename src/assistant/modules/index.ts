@@ -9,5 +9,6 @@ import { modellingModule } from './modelling';
 import { drawingsModule } from './drawings';
 import { managementModule } from './management';
 import { connectionsModule } from './connections';
+import { profilesModule } from './profiles';
 
-export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule];
+export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule, profilesModule];

@@ -357,7 +357,11 @@ export function parseProfileDxf(text: string, opts: DxfProfileOptions = {}): Dxf
     }
     loops[i].depth = loops[i].parent < 0 ? 0 : loops[loops[i].parent].depth + 1;
   }
-  const outers = loops.map((l, i) => ({ l, i })).filter(({ l }) => l.depth % 2 === 0);
+  // Profiles in reading order: left to right, then top to bottom.
+  const outers = loops
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => l.depth % 2 === 0)
+    .sort((a, b) => a.l.box.minX - b.l.box.minX || b.l.box.maxY - a.l.box.maxY);
   if (!outers.length) notes.push('No closed outline found: draw the profile as closed polylines, circles or joined lines and arcs.');
 
   const base = (opts.fileName ?? 'Profile').replace(/\.[^.]+$/, '').trim() || 'Profile';

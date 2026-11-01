@@ -7,7 +7,7 @@
  */
 import type { Project, Vec2, Vec3 } from '../model/types';
 import { toWorld } from '../model/geometry';
-import { uniqueAssemblies, type Assembly, type DerivedModel, type Part } from '../derive/model';
+import { assemblyByPart, uniqueAssemblies, type Assembly, type DerivedModel, type Part } from '../derive/model';
 import type { DLayer, Drawing, DrawingZone, Viewport } from './types';
 import { notesBlock, packBlocks, tableBlock, type Block, type PackResult, type Rect } from './layout';
 import { dimChain, dimLinear, type Sheet, type TableSpec } from './dims';
@@ -16,7 +16,7 @@ import { bounds, centroid, convexHull, partCorners } from './project';
 import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
 import { drawGaCuts } from './cuts';
-import { labelBox, obstacleBoxes, placeMarks } from './labels';
+import { labelBox, obstacleBoxes, partNav, placeMarks } from './labels';
 import { zoneNumber, zoneOutline, zonePlanFor, zoneSheetLayout, zoningSettings, type Zone, type ZonePlan } from './zoning';
 import { drawZoneView, keyPlanBlock, zoneNotes, zoneRows } from './zoneView';
 import { textExtent } from './viewLayout';
@@ -63,6 +63,7 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
   });
   const bolts = new Map<string, { size: string; grade: string; kind: string; length: number; qty: number }>();
   for (const b of dm.bolts) {
+    if (b.shop) continue; // bolts of joints inside manual assemblies are fitted in the shop
     const k = `${b.kind}|${b.size}|${b.grade}|${b.length}`;
     const e = bolts.get(k);
     if (e) e.qty += b.positions.length;
@@ -96,6 +97,7 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
           { head: 'Extent', w: 44 },
           { head: 'Asm', w: 10, align: 'end' },
         ],
+        nav: { col: 0, kind: 'sheet', sheets: Object.fromEntries(plan.zones.map((z) => [`Z${z.index}`, `ga-${view}-z${z.index}`])) },
         rows: plan.zones.map((z) => [
           `Z${z.index}`,
           zoneNumber(base, z.index),
@@ -120,6 +122,7 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
           { head: 'Assembly drawing', w: 32 },
         ],
         rows,
+        nav: { col: 0, kind: 'asm' },
       }),
     ),
   );
@@ -157,7 +160,7 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
             // Zone outlines with their labels and sheet numbers.
             for (const z of plan.zones) {
               const pts = zoneOutline(z, (q) => projectPoint(view, q)).map(P);
-              sh.withTag({ id: `zone:${z.index}` }, () => {
+              sh.withTag({ id: `zone:${z.index}`, nav: { sheet: `ga-${view}-z${z.index}` } }, () => {
                 sh.poly(pts, true, 'match');
                 const c = centroid(pts);
                 sh.text({ x: c.x, y: c.y + 0.6 }, `Z${z.index}`, TEXT.normal, 'middle', 'text', 0, true);
@@ -205,7 +208,7 @@ function gaZoneDrawing(ctx: DrawCtx, plan: ZonePlan, zone: Zone): Drawing {
   });
   const blocks: Block[] = [
     notesBlock('Zone notes', [...zoneNotes(plan, zone, z.overlap), `General notes and the zone index: see ${base}.`], s.tb.w),
-    tableBlock({ title: `Assemblies in zone ${zone.index}`, cols: ASM_COLS, rows }),
+    tableBlock({ title: `Assemblies in zone ${zone.index}`, cols: ASM_COLS, rows, nav: { col: 0, kind: 'asm' } }),
   ];
   packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
   const gv = drawZoneView(ctx, s, plan, zone, L, {
@@ -348,22 +351,23 @@ export function drawGaView(p: Project, dm: DerivedModel, s: Sheet, view: GaView,
         s.text({ x: left - 5, y: y + 0.8 }, `${l.name} ${l.z >= 0 ? '+' : ''}${(l.z / 1000).toFixed(3)}`, TEXT.small, 'end');
       });
     }
+    const asmOf = assemblyByPart(dm);
     for (const { pt, hull } of hulls) {
       if (hull.length < 2) continue;
       const layer = o.style ? o.style(pt) : 'visible';
-      if (layer) s.poly(hull.map(P), hull.length > 2, layer);
+      if (layer) s.withTag({ nav: partNav(pt, asmOf.get(pt.ref)) }, () => s.poly(hull.map(P), hull.length > 2, layer));
     }
 
     o.overlay?.(s, P, den);
     // Assembly marks (ISO 3098 2.5 mm), placed clear of each other and of the view's text.
-    const targets: { id: string; mark: string; at: Vec2 }[] = [];
+    const targets: { id: string; mark: string; at: Vec2; inst?: string }[] = [];
     for (const a of dm.assemblies) {
       const main = dm.partByRef.get(a.main);
       if (!main || main.kind === 'profile') continue;
       if (o.mark && !o.mark(a)) continue;
       const at =
         main.kind === 'plate' ? centroid(hulls.find((x) => x.pt === main)?.hull ?? []) : projectPoint(view, toWorld(main.frame, main.length / 2, 0, 0));
-      targets.push({ id: a.id, mark: a.mark, at: P(at) });
+      targets.push({ id: a.id, mark: a.mark, at: P(at), inst: a.main });
     }
     const labelText = o.label ? o.label(den) : `${VIEW_LABEL[view]}   ${scaleLabel(den)}`;
     const labelAt = { x: area.x0 + 2, y: area.y1 - 4 };

@@ -313,9 +313,21 @@ export function drawingFileName(d: Drawing): string {
   return safeName(`${sheetFileStem(d)}_rev${d.rev === '-' ? '0' : d.rev}`);
 }
 
+const drawingCache = new WeakMap<object, Drawing[]>();
+
+/**
+ * The drawing set of the current project, cached per derived model (one per
+ * project state), so the Drawings tab, exports and the 3D ↔ drawing navigation
+ * share one generation. Treat the result as read-only.
+ */
 export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
   const p = st().project;
-  const all = allDrawings(p, derived(p));
+  const dm = derived(p);
+  let all = drawingCache.get(dm);
+  if (!all) {
+    all = allDrawings(p, dm);
+    drawingCache.set(dm, all);
+  }
   return kind ? all.filter((d) => d.kind === kind) : all;
 }
 

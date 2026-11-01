@@ -294,6 +294,7 @@ function sectionDrawing(ctx: DrawCtx, c: GaCut): Drawing | null {
               { head: 'Assembly drawing', w: 34 },
             ],
             rows: [...asmMarks].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([m, main]) => [m, designation(main), drawingNumber(p, `asm-${m}`)]),
+            nav: { col: 0, kind: 'asm' },
           }),
         ]
       : []),
@@ -398,7 +399,7 @@ function sectionDrawing(ctx: DrawCtx, c: GaCut): Drawing | null {
   let lastX = -Infinity;
   for (const t of targets) {
     const x = Math.max(t.at.x, lastX + 12);
-    balloon(S, t.at, { x, y: rowY }, t.mark, TEXT.normal, `balloon:section:${t.mark}`);
+    S.withTag({ nav: { asm: t.mark } }, () => balloon(S, t.at, { x, y: rowY }, t.mark, TEXT.normal, `balloon:section:${t.mark}`));
     lastX = x;
   }
   const vb = entsBox(S.ents);
@@ -566,7 +567,7 @@ function detailDrawing(ctx: DrawCtx, c: GaCut): Drawing | null {
   const list = [...marks].sort((a, b) => b[1].y - a[1].y);
   list.forEach(([mark, at], i) => {
     const y = r - 6 - i * 10;
-    balloon(S, M(at), { x: r + 14, y: Math.max(-r + 4, y) }, mark, TEXT.normal, `balloon:detail:${mark}`);
+    S.withTag({ nav: { asm: mark } }, () => balloon(S, M(at), { x: r + 14, y: Math.max(-r + 4, y) }, mark, TEXT.normal, `balloon:detail:${mark}`));
   });
   viewLabel(S, 0, -r - 9, `DETAIL ${letter}`, scaleLabel(den));
   const box = entsBox(S.ents);

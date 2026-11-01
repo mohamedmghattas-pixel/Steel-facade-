@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type { Id, MemberRole, PlaneKind, Project, WorkPlane } from '../core/model/types';
-import { createProject } from '../core/model/ops';
+import { createProject, pruneAssemblyGroups } from '../core/model/ops';
 import { deriveModel, type DerivedModel } from '../core/derive/model';
 import { loadAutosave, migrateProject } from './storage';
 import { registerProfiles, unregisterProfiles, type ProfileDef } from '../core/library/profiles';
@@ -32,7 +32,7 @@ export const isModifyTool = (t: string): t is ModifyTool => (MODIFY_TOOLS as rea
 export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure' | 'plate' | 'arc' | 'plane3' | ModifyTool;
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
-export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'fabrication' | 'survey' | 'clashes';
+export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'fabrication' | 'survey' | 'clashes' | 'assemblies';
 /** Dialogs of the model-management area (ui/dialogs/ManagementDialogs.tsx). */
 export type ManagementDialogName = 'phases' | 'dwgInfo' | 'ifcSteel' | 'panelLayout';
 export type DialogName =
@@ -62,6 +62,22 @@ export interface Selection {
   connections: Id[];
   /** Free plates (Project.plates). */
   plates?: Id[];
+  /**
+   * Whole assemblies (their main part refs): set when assemblies are selected
+   * (Assembly mode, Alt+click, the Assemblies list); members / plates /
+   * connections then hold their parts. The viewer highlights them distinctly.
+   */
+  assemblies?: string[];
+}
+
+/** Part: a click selects the part. Assembly: a click selects its whole assembly (Alt+click in Part mode). */
+export type SelectionMode = 'part' | 'assembly';
+
+/** A drawing to open in Outputs → Drawings, with what to highlight on it (see core/drawings/navigation.ts). */
+export interface DrawingFocus {
+  id: string;
+  highlight?: { inst?: string; ref?: string; asm?: string; part?: string };
+  n: number;
 }
 
 export interface SnapSettings {
@@ -131,6 +147,14 @@ interface State {
   orientScope: 'all' | 'selection';
   /** Preview of the wireframe check in the 3D view (null = none). */
   wireOverlay: WireOverlay | null;
+  /** Part or Assembly selection mode (key A, viewport toolbar). */
+  selectionMode: SelectionMode;
+  /** Isolate: only the assemblies of these parts are shown (null = everything). */
+  isolate: string[] | null;
+  /** Bumped to aim the 3D view at some parts (part refs). */
+  focusRequest: { refs: string[]; n: number } | null;
+  /** Bumped to open a drawing in Outputs → Drawings and highlight a mark on it. */
+  drawingFocus: DrawingFocus | null;
 
   apply: (label: string, fn: (draft: Project) => void) => void;
   replaceProject: (p: Project) => void;
@@ -177,11 +201,17 @@ export const useStore = create<State>((set, get) => ({
   wireScope: 'all',
   orientScope: 'all',
   wireOverlay: null,
+  selectionMode: 'part',
+  isolate: null,
+  focusRequest: null,
+  drawingFocus: null,
 
   apply: (_label, fn) => {
     const { project, past, revision } = get();
     const draft = structuredClone(project);
     fn(draft);
+    // Members or plates deleted by any operation leave their manual assemblies.
+    pruneAssemblyGroups(draft);
     if (draft.library?.profiles !== project.library?.profiles || JSON.stringify(draft.library?.profiles) !== JSON.stringify(project.library?.profiles)) syncCustomProfiles(draft);
     const sel = get().selection;
     set({
@@ -244,6 +274,7 @@ export const useStore = create<State>((set, get) => ({
         nodes: toggle(cur.nodes, sel.nodes),
         connections: toggle(cur.connections, sel.connections),
         plates: toggle(cur.plates ?? [], sel.plates),
+        ...(cur.assemblies?.length || sel.assemblies?.length ? { assemblies: toggle(cur.assemblies ?? [], sel.assemblies) } : {}),
       },
       sidePanel: panel,
     });
@@ -256,12 +287,23 @@ export const useStore = create<State>((set, get) => ({
 }));
 
 function pruneSelection(sel: Selection, p: Project): Selection {
-  return {
+  const out: Selection = {
     members: sel.members.filter((id) => p.members[id]),
     nodes: sel.nodes.filter((id) => p.nodes[id]),
     connections: sel.connections.filter((id) => p.connections[id]),
     plates: (sel.plates ?? []).filter((id) => p.plates?.[id]),
   };
+  const asm = (sel.assemblies ?? []).filter((r) => refOwnerExists(p, r));
+  if (asm.length) out.assemblies = asm;
+  return out;
+}
+
+/** Does the member, plate or connection behind a part ref still exist? */
+export function refOwnerExists(p: Project, ref: string): boolean {
+  if (ref.startsWith('m:')) return !!p.members[ref.slice(2)];
+  if (ref.startsWith('p:')) return !!p.plates?.[ref.slice(2)];
+  if (ref.startsWith('c:')) return !!p.connections[ref.slice(2, ref.indexOf(':', 2) < 0 ? undefined : ref.indexOf(':', 2))];
+  return false;
 }
 
 // ---------------------------------------------------------------------------

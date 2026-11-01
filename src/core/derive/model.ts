@@ -3,8 +3,8 @@
  * marks. Every output (3D, IFC, drawings, reports, NC, nesting) reads from the
  * `DerivedModel` so they always agree with each other.
  */
-import type { Finish, Id, Member, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
-import { cross, dot, len, madd, normalize, scale, toLocal, type Frame } from '../model/geometry';
+import type { AssemblyGroup, Connection, Finish, Id, Member, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
+import { cross, dot, len, madd, normalize, pointSegment, scale, toLocal, type Frame } from '../model/geometry';
 import { anglesFromNormal, cutAngle, massLength, type EndCut } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
@@ -131,10 +131,25 @@ export interface Assembly {
   lock?: MarkLockState;
   /** For 'changed': the mark this assembly had when the marks were locked. */
   lockedMark?: string;
+  /** Manual assembly: the Project.assemblyGroups id it comes from (absent: automatic, from shop welds). */
+  group?: Id;
+  /** Name of the manual assembly. */
+  name?: string;
+  /**
+   * Joints between members of a manual assembly (main and every secondary member in
+   * the group): shop joints of the assembly. 'weld' joints have no bolts; 'bolt' joints
+   * stay bolted, are made in the shop (their bolts are shop bolts, BoltItem.shop) and
+   * their loose parts (cleats) belong to the assembly.
+   */
+  joints?: { connection: Id; kind: 'weld' | 'bolt' }[];
+  /** Manual assembly whose parts do not touch: the number of separate pieces (absent when connected). */
+  pieces?: number;
 }
 
 export interface BoltItem extends BoltOut {
   connectionId: Id;
+  /** Bolts of a joint inside a manual assembly: fitted in the shop, not on site. */
+  shop?: true;
 }
 
 export interface DerivedModel {
@@ -432,6 +447,17 @@ export function deriveModel(p: Project): DerivedModel {
   for (const pt of parts) parent.set(pt.ref, pt.ref);
   for (const pt of parts) if (pt.weldedTo) union(pt.ref, pt.weldedTo);
   for (const [a, b] of welds) union(a, b);
+  // Manual assemblies (Project.assemblyGroups): their parts join one assembly with everything welded to them.
+  const manual = manualGroups(p, parts, connectionOut);
+  for (const refs of manual.refs.values()) for (let i = 1; i < refs.length; i++) union(refs[0], refs[i]);
+  const rootGroup = new Map<PartRef, AssemblyGroup>();
+  for (const [g, refs] of manual.refs) {
+    if (!refs.length) continue;
+    const root = find(refs[0]);
+    const other = rootGroup.get(root);
+    if (other) warnings.push({ memberId: g.members[0], text: `Manual assemblies ${other.name || other.id} and ${g.name || g.id} are welded together or share parts — they form one assembly (${other.name || other.id}).` });
+    else rootGroup.set(root, g);
+  }
   const groups = new Map<PartRef, Part[]>();
   for (const pt of parts) {
     const r = find(pt.ref);
@@ -441,32 +467,183 @@ export function deriveModel(p: Project): DerivedModel {
   }
   const assemblies: Assembly[] = [];
   for (const [root, ps] of groups) {
-    const main =
-      ps.find((x) => x.assemblyMain) ??
-      [...ps].sort((a, b) => rank(a) - rank(b) || b.mass - a.mass)[0];
+    const g = rootGroup.get(root);
+    const gm = g?.main ? (partByRef.get(`m:${g.main}`) ?? partByRef.get(`p:${g.main}`)) : undefined;
+    const auto = () => [...ps].sort((a, b) => rank(a) - rank(b) || b.mass - a.mass)[0];
+    // A manual assembly takes its chosen main part, else a member before plates (a bracket's back plate is no main there).
+    const main = g ? (gm && ps.includes(gm) ? gm : auto()) : (ps.find((x) => x.assemblyMain) ?? auto());
     const prefix =
-      main.kind === 'member'
+      g?.prefix?.trim() ||
+      (main.kind === 'member'
         ? p.settings.assemblyPrefix[main.role as MemberRole] ?? 'A'
         : main.kind === 'profile'
           ? 'CL'
-          : p.settings.bracketPrefix;
-    assemblies.push({
+          : p.settings.bracketPrefix);
+    const a: Assembly = {
       id: root,
       mark: '',
       main: main.ref,
       parts: ps.map((x) => x.ref),
       mass: ps.reduce((s, x) => s + x.mass, 0),
       prefix,
-    });
+    };
+    if (g) {
+      a.group = g.id;
+      if (g.name) a.name = g.name;
+      const joints = manual.joints.get(g);
+      if (joints?.length) a.joints = joints;
+      const n = groupPieces(p, g.members, g.plates, g.connections ?? [], manual.connsOf);
+      if (n > 1) a.pieces = n;
+    }
+    assemblies.push(a);
   }
 
   const bolts: BoltItem[] = [];
-  for (const [cid, out] of connectionOut) for (const b of out.bolts) bolts.push({ ...b, connectionId: cid });
+  for (const [cid, out] of connectionOut) for (const b of out.bolts) bolts.push(manual.internal.has(cid) ? { ...b, connectionId: cid, shop: true } : { ...b, connectionId: cid });
 
   const dm: DerivedModel = { parts, partByRef, assemblies, bolts, geoms, connectionOut, warnings };
   number(dm, p);
+  for (const a of assemblies) {
+    if (!a.pieces) continue;
+    const main = partByRef.get(a.main)!;
+    warnings.push({ memberId: main.memberId, text: `Manual assembly ${a.mark}${a.name ? ` (${a.name})` : ''}: its parts do not touch — ${a.pieces} separate pieces. Check the grouping.` });
+  }
   return dm;
 }
+
+// ---------------------------------------------------------------------------
+// Manual assemblies
+
+interface ManualGroups {
+  /** Part refs of each group: its members, plates and connections, plus the parts of joints between its members. */
+  refs: Map<AssemblyGroup, PartRef[]>;
+  /** Joints between members of one group (main and every secondary in it). */
+  internal: Map<Id, AssemblyGroup>;
+  joints: Map<AssemblyGroup, { connection: Id; kind: 'weld' | 'bolt' }[]>;
+  /** Connections by member id (for the connectivity check). */
+  connsOf: Map<Id, Connection[]>;
+}
+
+/** Parts of the manual assemblies and the joints inside them (a member, plate or part counts for the first group listing it). */
+function manualGroups(p: Project, parts: Part[], out: Map<Id, ConnectionOut>): ManualGroups {
+  const res: ManualGroups = { refs: new Map(), internal: new Map(), joints: new Map(), connsOf: new Map() };
+  const list = p.assemblyGroups ?? [];
+  if (!list.length) return res;
+  const have = new Set(parts.map((pt) => pt.ref));
+  const byConn = new Map<Id, PartRef[]>();
+  for (const pt of parts) {
+    if (!pt.connectionId) continue;
+    const arr = byConn.get(pt.connectionId);
+    if (arr) arr.push(pt.ref);
+    else byConn.set(pt.connectionId, [pt.ref]);
+  }
+  const memberGroup = new Map<Id, AssemblyGroup>();
+  const taken = new Set<PartRef>();
+  const take = (refs: PartRef[], r: PartRef) => {
+    if (!have.has(r) || taken.has(r)) return;
+    taken.add(r);
+    refs.push(r);
+  };
+  for (const g of list) {
+    const refs: PartRef[] = [];
+    for (const id of g.members) {
+      if (!memberGroup.has(id)) memberGroup.set(id, g);
+      if (memberGroup.get(id) === g) take(refs, `m:${id}`);
+    }
+    for (const id of g.plates) take(refs, `p:${id}`);
+    for (const id of g.connections ?? []) for (const r of byConn.get(id) ?? []) take(refs, r);
+    res.refs.set(g, refs);
+  }
+  for (const c of Object.values(p.connections)) {
+    for (const m of [c.main, ...c.secondary]) {
+      if (!m) continue;
+      const arr = res.connsOf.get(m);
+      if (arr) arr.push(c);
+      else res.connsOf.set(m, [c]);
+    }
+    if (!c.main || !c.secondary.length) continue;
+    const g = memberGroup.get(c.main);
+    if (!g || !c.secondary.every((s) => memberGroup.get(s) === g)) continue;
+    res.internal.set(c.id, g);
+    const refs = res.refs.get(g)!;
+    for (const r of byConn.get(c.id) ?? []) take(refs, r);
+    const arr = res.joints.get(g) ?? [];
+    arr.push({ connection: c.id, kind: (out.get(c.id)?.bolts.length ?? 0) > 0 ? 'bolt' : 'weld' });
+    res.joints.set(g, arr);
+  }
+  return res;
+}
+
+/**
+ * Number of separate pieces a set of members, free plates and connections forms
+ * (0 or 1 = nothing to separate). Members touch when they share a node, a
+ * member end lies on the other's axis (within 1 mm) or a connection joins
+ * them; a free plate touches the member it is welded to, or a member whose
+ * axis is within its section depth; a connection touches its members.
+ */
+export function groupPieces(p: Project, memberIds: Id[], plateIds: Id[] = [], connIds: Id[] = [], connsOf?: Map<Id, Connection[]>): number {
+  const items = [
+    ...memberIds.filter((id) => p.members[id]).map((id) => `m:${id}`),
+    ...plateIds.filter((id) => p.plates?.[id]).map((id) => `p:${id}`),
+    ...connIds.filter((id) => p.connections[id]).map((id) => `c:${id}`),
+  ];
+  if (items.length <= 1) return items.length;
+  const up = new Map(items.map((k) => [k, k]));
+  const root = (k: string): string => {
+    let x = k;
+    while (up.get(x) !== x) x = up.get(x)!;
+    return x;
+  };
+  const join = (a: string, b: string) => {
+    if (!up.has(a) || !up.has(b)) return;
+    const ra = root(a);
+    const rb = root(b);
+    if (ra !== rb) up.set(ra, rb);
+  };
+  const ms = memberIds.map((id) => p.members[id]).filter(Boolean);
+  const at = (id: Id) => p.nodes[id]?.p;
+  const onAxis = (m: Member, q: Vec3 | undefined, tol: number) => {
+    const s0 = at(m.start);
+    const s1 = at(m.end);
+    return !!q && !!s0 && !!s1 && pointSegment(q, s0, s1).d <= tol;
+  };
+  for (let i = 0; i < ms.length; i++) {
+    for (let j = i + 1; j < ms.length; j++) {
+      const a = ms[i];
+      const b = ms[j];
+      const share = a.start === b.start || a.start === b.end || a.end === b.start || a.end === b.end;
+      if (share || onAxis(a, at(b.start), 1) || onAxis(a, at(b.end), 1) || onAxis(b, at(a.start), 1) || onAxis(b, at(a.end), 1)) join(`m:${a.id}`, `m:${b.id}`);
+    }
+  }
+  // Connections touching the members (from an index when given, so a derivation with many groups stays linear).
+  const conns = connsOf ? [...new Set(memberIds.flatMap((id) => connsOf.get(id) ?? []))] : Object.values(p.connections);
+  for (const c of conns) {
+    const ends = [c.main, ...c.secondary].filter((x): x is Id => !!x).map((x) => `m:${x}`);
+    for (let i = 1; i < ends.length; i++) join(ends[0], ends[i]);
+    for (const e of ends) join(`c:${c.id}`, e);
+  }
+  for (const id of plateIds) {
+    const pl = p.plates?.[id];
+    if (!pl) continue;
+    if (pl.weldedTo) join(`p:${id}`, `m:${pl.weldedTo}`);
+    else for (const m of ms) if (onAxis(m, pl.origin, 1 + Math.max(getProfile(m.profile ?? '')?.h ?? 0, getProfile(m.profile ?? '')?.b ?? 0))) join(`p:${id}`, `m:${m.id}`);
+  }
+  return new Set(items.map(root)).size;
+}
+
+const asmByPartCache = new WeakMap<DerivedModel, Map<PartRef, Assembly>>();
+
+/** The assembly of every part (cached per derived model). */
+export function assemblyByPart(dm: DerivedModel): Map<PartRef, Assembly> {
+  let m = asmByPartCache.get(dm);
+  if (!m) {
+    m = new Map();
+    for (const a of dm.assemblies) for (const r of a.parts) m.set(r, a);
+    asmByPartCache.set(dm, m);
+  }
+  return m;
+}
+
 
 // ---------------------------------------------------------------------------
 // Part building: end-prepared members and free plates
@@ -743,7 +920,8 @@ function number(dm: DerivedModel, p: Project) {
   const asmSig = new Map<string, string>();
   const asmCounter = new MarkCounter(asmReserved);
   const asmOrdered = dm.assemblies.map((a) => ({ a, mainMark: dm.partByRef.get(a.main)!.mark }));
-  asmOrdered.sort((x, y) => byText(x.a.prefix, y.a.prefix) || byNumber(x.mainMark, y.mainMark));
+  // Manual assemblies are numbered after the automatic ones of their prefix, so grouping parts does not renumber the rest.
+  asmOrdered.sort((x, y) => byText(x.a.prefix, y.a.prefix) || Number(!!x.a.group) - Number(!!y.a.group) || byNumber(x.mainMark, y.mainMark));
   const sigsByMark = new Map<string, Set<string>>();
   for (const { a } of asmOrdered) {
     const sig = a.signature!;

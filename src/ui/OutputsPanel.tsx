@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { derived, useStore, type OutputTab } from '../state/store';
 import { buildBom } from '../core/reports/bom';
 import { nestBars } from '../core/optimize/barNesting';
@@ -14,6 +14,9 @@ import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
 import { FabricationView, PaintSummary, PlateCncButtons, StockEditor } from './FabricationPanel';
 import { SurveyView } from './dialogs/MovementDialogs';
 import { ClashesView } from './dialogs/ManagementDialogs';
+import { AssembliesView, ShowIn3d } from './AssemblyPanels';
+import { openFromNav, selectFromNav } from './navigationActions';
+import type { NavHighlight } from '../core/drawings/navigation';
 
 export function OutputsPanel() {
   const outputs = useStore((s) => s.outputs);
@@ -22,6 +25,7 @@ export function OutputsPanel() {
     { value: 'bom', label: 'Material list' },
     { value: 'nesting', label: 'Cut optimisation' },
     { value: 'drawings', label: 'Drawings' },
+    { value: 'assemblies', label: 'Assemblies' },
     { value: 'checks', label: 'Checks' },
     { value: 'fabrication', label: 'Fabrication' },
     { value: 'survey', label: 'Survey' },
@@ -50,6 +54,7 @@ export function OutputsPanel() {
         {outputs.tab === 'fabrication' && <FabricationView />}
         {outputs.tab === 'survey' && <SurveyView />}
         {outputs.tab === 'clashes' && <ClashesView />}
+        {outputs.tab === 'assemblies' && <AssembliesView />}
       </div>
     </section>
   );
@@ -236,6 +241,9 @@ function NestingView() {
 
 const KIND_LABEL: Record<Drawing['kind'], string> = { register: 'REG', ga: 'GA', assembly: 'ASM', part: 'PART', section: 'SEC', setout: 'SET', anchors: 'ANC', sequence: 'SEQ' };
 
+/** The last drawing focus shown (so a remount of the tab does not jump back to it). */
+let appliedFocus = 0;
+
 function DrawingsView() {
   const project = useStore((s) => s.project);
   const set = useStore((s) => s.set);
@@ -251,6 +259,17 @@ function DrawingsView() {
   const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed' | 'erection' | 'layout'>('all');
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [cutsOpen, setCutsOpen] = useState(false);
+  // Navigation from the 3D view (navigationActions.openDrawing): show that sheet with its mark highlighted.
+  const focus = useStore((s) => s.drawingFocus);
+  const [hl, setHl] = useState<{ id: string; h: NavHighlight; n: number } | null>(null);
+  useEffect(() => {
+    if (!focus || focus.n === appliedFocus) return;
+    appliedFocus = focus.n;
+    setKind('all');
+    setCurrentId(focus.id);
+    setHl(focus.highlight ? { id: focus.id, h: focus.highlight, n: focus.n } : null);
+    requestAnimationFrame(() => document.querySelector('.drawing-list .list button.on')?.scrollIntoView({ block: 'nearest' }));
+  }, [focus]);
   // Layout check of every sheet (overlapping blocks, frame / title block, lettering heights, overlapping marks).
   const layoutIssues = useMemo(() => {
     const m = new Map<string, number>();
@@ -296,7 +315,7 @@ function DrawingsView() {
         />
         <div className="list">
           {list.map((x) => (
-            <button key={x.id} className={x === d ? 'on' : ''} onClick={() => setCurrentId(x.id)} title={x.title}>
+            <button key={x.id} className={x === d ? 'on' : ''} data-drawing={x.id} onClick={() => setCurrentId(x.id)} title={x.title}>
               <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
               <span className="dwg-no">
                 {x.number}
@@ -349,7 +368,23 @@ function DrawingsView() {
           )}
         </div>
       </div>
-      {d ? <DrawingEditor drawing={d} onCuts={() => setCutsOpen(true)} /> : <div className="drawing-preview" />}
+      {d ? (
+        <DrawingEditor
+          drawing={d}
+          onCuts={() => setCutsOpen(true)}
+          highlight={hl?.id === d.id ? hl.h : null}
+          focusN={hl?.id === d.id ? hl.n : 0}
+          onNav={(t, dbl) => {
+            if (dbl) return void openFromNav(t.nav, d);
+            // Select it in 3D; the drawing stays open, with what was clicked highlighted.
+            selectFromNav(t.nav, d);
+            setHl({ id: d.id, h: { inst: t.nav.inst, ref: t.nav.ref, asm: t.nav.asm, part: t.nav.part }, n: 0 });
+          }}
+          extraTools={<ShowIn3d drawing={d} />}
+        />
+      ) : (
+        <div className="drawing-preview" />
+      )}
       {cutsOpen && <GaCutsDialog onClose={() => setCutsOpen(false)} />}
     </div>
   );

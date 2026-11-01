@@ -31,6 +31,26 @@ export {
 export { cutDrawings, cutLetter, nextCutLetter, sectionFrame, GA_AXES } from './cuts';
 export * from './edits';
 export { checkSheetLayout, MIN_TEXT, type LayoutIssue, type LayoutIssueKind } from './layoutCheck';
+export {
+  buildDrawingIndex,
+  drawingIndexFor,
+  drawingsForPart,
+  bestSheet,
+  sheetTargets,
+  navTargets,
+  pickNav,
+  highlightTargets,
+  navSelection,
+  navKey,
+  VIEW_KINDS,
+  type DrawingIndex,
+  type NavSheet,
+  type PartDrawings,
+  type SheetTargets,
+  type NavTarget,
+  type NavHighlight,
+  type NavSelection,
+} from './navigation';
 export { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, activeTemplate, drawTemplateTitleBlock, newTemplate, parseTemplates, sampleTitleData, sanitizeTemplate } from './template';
 
 export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: number, ctx: DrawCtx = makeCtx(p, dm)): Drawing {

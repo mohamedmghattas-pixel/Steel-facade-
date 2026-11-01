@@ -73,7 +73,7 @@ export class Sheet {
   /** Adds an entity with the current tags. */
   push(e: DEnt) {
     const t = this.tag;
-    this.ents.push(t.id || t.group || t.shift || t.stretch ? { ...e, ...t } : e);
+    this.ents.push(t.id || t.group || t.shift || t.stretch || t.nav ? { ...e, ...t } : e);
   }
 
   line(a: Vec2, b: Vec2, layer: DLayer = 'visible') {
@@ -391,6 +391,12 @@ export interface TableSpec {
   rows: (string | number)[][];
   rowH?: number;
   textH?: number;
+  /**
+   * Rows that name an assembly or a part: column `col` holds the mark, and the
+   * row's entities get a navigation tag (EntTag.nav; `asm` is the assembly a
+   * part row belongs to). Data only — it does not change the drawing.
+   */
+  nav?: { col: number; kind: 'asm' | 'part' | 'sheet'; asm?: string; sheets?: Record<string, string> };
 }
 
 export function tableSize(t: TableSpec): { w: number; h: number } {
@@ -435,7 +441,25 @@ export function drawTable(s: Sheet, x: number, yTop: number, t: TableSpec) {
     0,
     true,
   );
-  t.rows.forEach((row, i) => cell(row, i + 1, false));
+  t.rows.forEach((row, i) => {
+    const nav = rowNav(t, row);
+    if (nav) s.withTag({ nav }, () => cell(row, i + 1, false));
+    else cell(row, i + 1, false);
+  });
+}
+
+/** Navigation tag of a table row (TableSpec.nav), if its mark cell is filled. */
+function rowNav(t: TableSpec, row: (string | number)[]): EntTag['nav'] {
+  const n = t.nav;
+  if (!n) return undefined;
+  const v = row[n.col];
+  const mark = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+  if (!mark) return undefined;
+  if (n.kind === 'sheet') {
+    const id = n.sheets?.[mark];
+    return id ? { sheet: id } : undefined;
+  }
+  return n.kind === 'asm' ? { asm: mark } : { part: mark, ...(n.asm ? { asm: n.asm } : {}) };
 }
 
 /** Wrap text to a width; returns lines. */

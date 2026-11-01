@@ -64,6 +64,7 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
         { head: 'Finish', w: 20 },
       ],
       rows: [[part.mark, qty, designation(part), part.material, part.mass.toFixed(2), (part.mass * qty).toFixed(1), FINISH_LABEL[part.finish] ?? part.finish]],
+      nav: { col: 0, kind: 'part' },
     }),
     tableBlock({
       title: 'Machining / fabrication',
@@ -124,6 +125,7 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
           { head: 'Drawing no.', w: 38 },
         ],
         rows: usage.map((u) => [u.assembly, u.perAssembly, u.assemblies, drawingNumber(p, `asm-${u.assembly}`)]),
+        nav: { col: 0, kind: 'asm' },
       }),
     );
   }

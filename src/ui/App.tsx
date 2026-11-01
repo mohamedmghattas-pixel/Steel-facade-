@@ -15,6 +15,8 @@ import { deleteSelection, setTool } from './actions';
 import { escapeTool, toolEnter } from './modifyTools';
 import { ModifyContextMenu, closeModifyMenu, useModifyMenu } from './ModifyPanels';
 import { mirrorSectionSelection, rotateSectionSelection, stepSizeSelection } from './modifyActions';
+import { PartContextMenu } from './AssemblyPanels';
+import { toggleIsolate, toggleSelectionMode } from './navigationActions';
 
 export function App() {
   const outputsOpen = useStore((s) => s.outputs.open);
@@ -43,6 +45,7 @@ export function App() {
       <ProfileImportHost />
       <ProfileSketcherHost />
       <ModifyContextMenu />
+      <PartContextMenu />
       <AskDialog />
       {toast && <Toast key={toast.n} text={toast.text} kind={toast.kind} />}
     </div>
@@ -214,6 +217,15 @@ function useKeyboard() {
         case 'o':
         case 'O':
           s.set({ snap: { ...s.snap, ortho: !s.snap.ortho } });
+          break;
+        case 'a':
+        case 'A':
+          // Part / Assembly selection mode.
+          toggleSelectionMode();
+          break;
+        case 'i':
+        case 'I':
+          toggleIsolate();
           break;
         case '1':
           s.set({ viewRequest: { name: '3d', n: Date.now() } });

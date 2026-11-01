@@ -24,6 +24,7 @@ import { EndPrepSection, PlateProps } from './dialogs/ModellingDialogs';
 import { GroupingProps } from './dialogs/ManagementDialogs';
 import { clearMemberNormals, openOrientDialog } from './surfaceActions';
 import { ModifyOpsSection } from './ModifyPanels';
+import { AssemblyProps } from './AssemblyPanels';
 import { changeProfile } from '../core/model/modify';
 
 export function SidePanel() {
@@ -68,7 +69,15 @@ function PropertiesPanel() {
   const project = useStore((s) => s.project);
   if (sel.members.length) return <MemberProps ids={sel.members} />;
   if (sel.connections.length) return <ConnectionProps id={sel.connections[0]} count={sel.connections.length} />;
-  if (sel.plates?.length) return <PlateProps ids={sel.plates} />;
+  if (sel.plates?.length)
+    return (
+      <>
+        <PlateProps ids={sel.plates} />
+        <section className="props">
+          <AssemblyProps />
+        </section>
+      </>
+    );
   if (sel.nodes.length) {
     const n = project.nodes[sel.nodes[0]];
     return (
@@ -217,6 +226,7 @@ function MemberProps({ ids }: { ids: string[] }) {
         <Icon name="bracket" size={15} /> Apply a connection to {ms.length === 1 ? 'this member' : `these ${ms.length} members`}…
       </button>
       <GroupingProps ids={ids} />
+      <AssemblyProps />
       {ms.length === 1 && (
         <Field label="Name / note">
           <TextInput value={ms[0].name ?? ''} onChange={(v) => patch('Name', { name: v || undefined })} placeholder={ms[0].layer ? `layer ${ms[0].layer}` : ''} />
@@ -386,6 +396,7 @@ function ConnectionProps({ id, count }: { id: string; count: number }) {
           Save current
         </button>
       </div>
+      <AssemblyProps />
     </section>
   );
 }

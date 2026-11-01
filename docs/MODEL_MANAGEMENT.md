@@ -43,6 +43,10 @@ numbering.
 `Assembly.lock` is one of `locked`, `changed`, `new` or `manual`. The Properties
 panel shows it next to the assembly mark.
 
+**Manual assemblies** (grouped by hand, see [ASSEMBLIES.md](ASSEMBLIES.md)) are
+numbered with the same signatures and locks, after the automatic assemblies of
+their prefix, so grouping parts does not renumber the others.
+
 Limit: when marks are locked, the part order of new parts follows the usual
 numbering order. That order only affects which free numbers new parts get.
 

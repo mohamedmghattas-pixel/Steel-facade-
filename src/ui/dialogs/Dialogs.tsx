@@ -61,8 +61,10 @@ function FacadeGridDialog({ onClose }: { onClose: () => void }) {
   const [bays, setBays] = useState('4x1500');
   const [rows, setRows] = useState('150, 950, 2400, 1100, 2250, 150');
   const [floors, setFloors] = useState('0, 3, 6');
-  const [mullion, setMullion] = useState<string | null>('SHS 100x100x5');
-  const [transom, setTransom] = useState<string | null>('RHS 100x50x4');
+  // Profiles by role (Library tab) are the defaults.
+  const byRole = useStore.getState().project.settings.roleProfiles ?? {};
+  const [mullion, setMullion] = useState<string | null>(byRole.mullion?.profile ?? 'SHS 100x100x5');
+  const [transom, setTransom] = useState<string | null>(byRole.transom?.profile ?? 'RHS 100x50x4');
   const [depthNormal, setDepthNormal] = useState(true);
   const [levels, setLevels] = useState(true);
   const [floorTransoms, setFloorTransoms] = useState(false);

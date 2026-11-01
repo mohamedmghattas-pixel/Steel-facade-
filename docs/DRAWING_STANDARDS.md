@@ -191,6 +191,8 @@ In the Drawings tab (select a sheet, then work on the preview):
 
 Edits count as content: an edited sheet gets a new fingerprint and is flagged as changed until it is issued again. Sheets without edits keep exactly their generated content.
 
+Marks, balloons, list rows and part outlines also carry navigation data (the assembly or part they name). In the Drawings tab a click on them selects the part or assembly in the 3D view, a double-click on a mark opens its assembly drawing, and *Show in 3D* selects what the sheet shows. This data is not drawn and does not change the fingerprint; see [ASSEMBLIES.md](ASSEMBLIES.md).
+
 ## Sheet templates
 
 The title block can follow a company template (*Drawing settings → Sheet template → Design…*). The built-in default is the ISO 7200 title block described above and reproduces it exactly.

@@ -827,6 +827,12 @@ across-axis slot (test "6. slot directions") now reaches every output.
   - A union-find over both builds the shop assemblies
     (`src/core/derive/model.ts:404-432`). Unknown refs are ignored without a
     warning (`:418`).
+- **Manual assemblies** (`Project.assemblyGroups`, [ASSEMBLIES.md](ASSEMBLIES.md)):
+  the parts of a group's members, plates and connections are unioned after
+  the welds. A connection whose main and secondary members are all in one
+  group is a shop joint of that assembly: its loose parts join it and its
+  bolts are flagged `shop` (a bolted joint stays bolted). The group's `main`
+  and `prefix` override the rules below.
 - **Assembly main** (`src/core/derive/model.ts:435-437`):
   - The first part with `assemblyMain` wins.
   - Otherwise: the lowest rank (member 0, profile 1, plate 2, `:569-571`),

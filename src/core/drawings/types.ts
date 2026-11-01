@@ -22,6 +22,28 @@ export interface EntTag {
   shift?: 'x' | 'y';
   /** Extension line of a dimension: only its end point `b` follows a dimension offset. */
   stretch?: boolean;
+  /**
+   * What the entity shows, for navigating between the drawing and the 3D model
+   * (see navigation.ts). Data only: not part of the fingerprint, not drawn.
+   */
+  nav?: DrawNav;
+}
+
+/**
+ * Navigation target of a drawing entity: a mark label or balloon, a list row,
+ * or a part outline. At least one of the marks is set.
+ */
+export interface DrawNav {
+  /** Assembly mark (GA / erection marks, assembly list rows, the assembly a part outline belongs to). */
+  asm?: string;
+  /** Part mark (balloons and parts list rows of assembly / part sheets, part outlines). */
+  part?: string;
+  /** One assembly instance: the main part ref of the assembly (GA / zone / erection marks, outlines). */
+  inst?: string;
+  /** One part instance: its part ref (part outlines on GA / erection views). */
+  ref?: string;
+  /** Another sheet (register rows, zone outlines): its drawing id. */
+  sheet?: string;
 }
 
 export type DEnt = EntTag &

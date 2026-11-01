@@ -66,7 +66,10 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
      - **Presets** save a parameter set.
      - Editing a parameter changes every selected connection of that type.
      - **Auto-connect** places connections by rule.
-5. **Outputs.** Parts and assemblies are numbered automatically, with identical items sharing a mark.
+5. **Assemblies.** Parts shop-welded together form an assembly automatically. You can also group members, plates and connections into a shipping assembly by hand (a mullion with its transoms, a pre-assembled bracket): *Create assembly / Add to / Remove from / Explode / Set main part* in the right-click menu, Properties and Outputs → *Assemblies*. Grouped members joined by a bolted joint stay bolted; the joint is made in the shop.
+   - **Part / Assembly selection** (toolbar or `A`; Alt+click in Part mode) selects whole assemblies, highlighted in pink; **Isolate** (`I`) shows only them.
+   - **3D ↔ drawings:** right-click a part → *Open part drawing*, *Open assembly drawing*, *Show on GA / erection sheet* (the zone sheet that shows it, mark highlighted). In the Drawings tab, *Show in 3D* selects and zooms to the sheet's parts (*1 of N* steps through instances); clicking a mark, balloon, list row or part outline selects it in 3D, double-clicking a mark opens its drawing. See [docs/ASSEMBLIES.md](docs/ASSEMBLIES.md).
+6. **Outputs.** Parts and assemblies are numbered automatically, with identical items sharing a mark.
    - IFC4 model export
    - Material lists (XLSX, or CSV in a zip)
    - Cut optimisation for bars (1D) and plates (2D nesting)
@@ -83,6 +86,7 @@ Keys:
 - `S` select, `L` line, `P` polyline
 - `M` move, `C` copy
 - `O` ortho, `F` fit
+- `A` Part / Assembly selection mode, `I` isolate the selected assemblies
 - `1`–`4` views
 - `Del` delete, `Esc` cancel
 - `Ctrl+Z` / `Ctrl+Y` undo / redo
@@ -161,7 +165,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [MODIFY](docs/MODIFY.md) (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [EXPORT_PACKAGE](docs/EXPORT_PACKAGE.md), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [MODIFY](docs/MODIFY.md) (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [ASSEMBLIES](docs/ASSEMBLIES.md) (automatic and manual assemblies, selection modes, 3D ↔ drawing navigation), [EXPORT_PACKAGE](docs/EXPORT_PACKAGE.md), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

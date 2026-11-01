@@ -42,7 +42,8 @@ export function registerDrawings(ctx: DrawCtx, set: Drawing[]): Drawing[] {
       const rev = d.revisions[d.revisions.length - 1] ?? null;
       return [sheetLabel(d), d.title, DOC_TYPE[d.kind], d.sheetSize, d.scale, d.rev, rev?.date ?? '', 'changed' in d && d.changed && rev ? `${d.status} *` : d.status];
     });
-    const spec: TableSpec = { title: `Drawing register – ${set.length + pages} sheets`, cols: COLS, rows, rowH };
+    const sheets = Object.fromEntries([...self.map((d, j) => [sheetLabel(d), `register-${j + 1}`] as const), ...set.map((d) => [sheetLabel(d), d.id] as const)]);
+    const spec: TableSpec = { title: `Drawing register – ${set.length + pages} sheets`, cols: COLS, rows, rowH, nav: { col: 0, kind: 'sheet', sheets } };
     const sz = tableSize(spec);
     const top = f.y1 - 4;
     s.withTag({ group: 'table:drawing-register' }, () => drawTable(s, f.x0 + 4, top, spec));

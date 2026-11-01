@@ -441,6 +441,27 @@ export interface DeliveryBatch {
   notes?: string;
 }
 
+/**
+ * A manual (user-grouped) shipping assembly, see docs/ASSEMBLIES.md. Members,
+ * free plates and connections listed here become one assembly in the derived
+ * model together with everything shop-welded to them; joints between members
+ * of the group come along (their loose parts join it, their bolts become shop
+ * bolts). A member or plate belongs to at most one group.
+ */
+export interface AssemblyGroup {
+  id: Id;
+  /** Optional name (assemblies list, assembly drawing subtitle). */
+  name?: string;
+  members: Id[];
+  plates: Id[];
+  /** Connections whose parts join the assembly as a whole (e.g. a bracket pre-assembled on its mullion). */
+  connections?: Id[];
+  /** Main part: a member or free-plate id of the group (absent: the automatic rule — member first, then the heaviest). */
+  main?: Id;
+  /** Mark prefix (absent: the main member's role prefix). */
+  prefix?: string;
+}
+
 export interface ClashIssue {
   id: Id;
   /** BCF topic GUID. */
@@ -832,6 +853,8 @@ export interface Project {
   batches: DeliveryBatch[];
   /** Locked marks: assembly/part signature → mark, kept stable through renumbering. */
   markLocks: Record<string, string>;
+  /** Manual assemblies (grouped in the viewer); everything else is grouped automatically by shop welds. */
+  assemblyGroups: AssemblyGroup[];
   clashes: ClashSettings;
   /** Wireframe check settings and client confirmations (approvals). */
   wireframe: WireframeRecord;

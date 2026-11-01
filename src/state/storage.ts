@@ -58,6 +58,11 @@ export function migrateProject(p: Project | null): Project | null {
   p.phases ??= [];
   p.batches ??= [];
   p.markLocks ??= {};
+  p.assemblyGroups = Array.isArray(p.assemblyGroups)
+    ? p.assemblyGroups
+        .filter((g) => g && typeof g === 'object' && typeof g.id === 'string')
+        .map((g) => ({ ...g, members: Array.isArray(g.members) ? g.members : [], plates: Array.isArray(g.plates) ? g.plates : [] }))
+    : [];
   p.clashes ??= { clearance: 10, issues: [] };
   p.clashes.issues ??= [];
   p.clashes.clearance ??= 10;

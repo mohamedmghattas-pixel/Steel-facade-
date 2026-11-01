@@ -1,0 +1,124 @@
+/* Assemblies: selection mode, context menu section, Properties, Outputs → Assemblies, Show in 3D (AssemblyPanels.tsx). */
+.sel-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.nav-menu-section + .ctx-group,
+.ctx-group + .nav-menu-section {
+  border-top: 1px solid var(--line);
+  margin-top: 3px;
+  padding-top: 3px;
+}
+.asm-props h4 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.asm-kind {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-radius: 3px;
+  padding: 1px 5px;
+  background: var(--bg-3);
+  color: var(--text-2);
+}
+.asm-kind.manual {
+  background: rgb(255 90 168 / 0.18);
+  color: #ff8cc4;
+}
+.asm-kind.mixed {
+  background: rgb(240 180 41 / 0.16);
+  color: var(--warn);
+}
+.asm-line {
+  margin: 2px 0 6px;
+  font-size: 11.5px;
+}
+.asm-line .warn-text {
+  color: var(--warn);
+}
+.asm-buttons {
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.asm-sheets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  margin-bottom: 6px;
+}
+.asm-fields input {
+  width: 100%;
+}
+.assemblies-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.asm-search {
+  width: 190px;
+  padding: 4px 8px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.asm-table tr.cur td {
+  background: rgb(242 165 65 / 0.1);
+}
+.asm-table tr.sel td:first-child {
+  box-shadow: inset 3px 0 0 #ff5aa8;
+}
+.show3d {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.show3d-count {
+  font: 11.5px var(--mono);
+  color: var(--text-2);
+  min-width: 64px;
+  text-align: center;
+}
+/* Drawing preview: navigation targets (marks, balloons, rows) and the highlight. */
+.dwg-nav rect {
+  fill: transparent;
+  stroke: none;
+  cursor: pointer;
+}
+.dwg-nav rect:hover {
+  fill: rgb(255 90 168 / 0.12);
+  stroke: #ff5aa8;
+  stroke-width: 0.25;
+}
+.dwg-overlay.tool-select .dwg-nav rect {
+  pointer-events: all;
+}
+.dwg-nav-hl {
+  fill: rgb(255 90 168 / 0.18);
+  stroke: #e01e7c;
+  stroke-width: 0.5;
+  pointer-events: none;
+  animation: dwg-hl-pulse 1.2s ease-in-out 3;
+}
+@keyframes dwg-hl-pulse {
+  50% {
+    stroke-width: 1.2;
+  }
+}
+/* Selection boxes are drawn over the targets: clicks go through them (a double-click needs its target to stay). */
+.dwg-overlay .dwg-sel,
+.dwg-overlay .dwg-group {
+  pointer-events: none;
+}
+.assemblies-view .bom-bar {
+  gap: 6px;
+}
+.assemblies-view .bom-bar .secondary-btn {
+  padding: 3px 8px;
+  font-size: 12px;
+}

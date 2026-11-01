@@ -67,12 +67,22 @@ interface BoltItem {
   dir: Vec3;
   length: number;
   d: number;
+  /** Instance matrices of the shank and head (for the isolated view). */
+  shank: THREE.Matrix4;
+  head: THREE.Matrix4;
+  anchor: boolean;
 }
 
 export interface PickHit {
   kind: 'member' | 'connection' | 'node' | 'plate';
   id: Id;
+  /** The part hit (solids): its part ref, e.g. one plate of a connection. */
+  ref?: string;
 }
+
+/** Parts of selected assemblies (Selection.assemblies), and their main parts. */
+export const ASSEMBLY_COLOR = 0xff5aa8;
+export const ASSEMBLY_MAIN_COLOR = 0xd61f7a;
 
 export interface Display {
   solids: boolean;
@@ -96,7 +106,8 @@ export interface ToolPointerInfo {
 
 export interface ViewerCallbacks {
   getState(): { tool: Tool; snap: SnapSettings; workPlane: WorkPlane; gridStep: number };
-  onPick(hit: PickHit | null, additive: boolean): void;
+  /** A click in the select tool; `alt` = Alt held (select the whole assembly). */
+  onPick(hit: PickHit | null, additive: boolean, alt?: boolean): void;
   onBoxSelect(sel: Selection, additive: boolean): void;
   onPoints(tool: Tool, pts: Vec3[]): void;
   onCursor(p: Vec3 | null, kind: string): void;
@@ -161,6 +172,16 @@ export class Viewer {
   private connItems = new Map<Id, SolidItem[]>();
   /** Free / bent plates and stiffeners (Project.plates): modelled objects drawn with the members. */
   private plateItems = new Map<Id, SolidItem[]>();
+  /** Every drawn part by part ref (assembly highlight, isolation, focus). */
+  private refItems = new Map<string, SolidItem[]>();
+  /** Parts of the selected assemblies and their main parts (painted in the assembly colours). */
+  private asmRefs = new Set<string>();
+  private asmMains = new Set<string>();
+  /** Isolated parts (only these are drawn and pickable), or null. */
+  private isoRefs: Set<string> | null = null;
+  private isoOwners: { members: Set<Id>; plates: Set<Id>; connections: Set<Id> } | null = null;
+  private isoGroup = new THREE.Group();
+  private isoMats: THREE.Material[] = [];
   private ownedGeoms: THREE.BufferGeometry[] = [];
   private dirtyBatches = new Set<RenderBatch>();
   private paintedSel = { members: new Set<Id>(), connections: new Set<Id>(), plates: new Set<Id>() };
@@ -252,7 +273,8 @@ export class Viewer {
     const fill = new THREE.DirectionalLight(0xffffff, 0.6);
     fill.position.set(-0.6, 0.5, -0.3);
     this.scene.add(fill);
-    this.scene.add(this.underlayGroup, this.planeGroup, this.refGroup, this.wireGroup, this.memberGroup, this.connGroup, this.helperGroup, this.labelGroup);
+    this.scene.add(this.underlayGroup, this.planeGroup, this.refGroup, this.wireGroup, this.memberGroup, this.connGroup, this.isoGroup, this.helperGroup, this.labelGroup);
+    this.isoGroup.visible = false;
 
     const rubberGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
     this.rubber = new THREE.Line(rubberGeo, new THREE.LineBasicMaterial({ color: 0xff7a1a, depthTest: false }));
@@ -349,6 +371,8 @@ export class Viewer {
     this.buildBolts(dm, dm.parts.length > COARSE_PART_LIMIT);
     this.buildIndexes(p);
     this.labelsBuilt = false;
+    this.asmRefs = this.assemblyRefs(this.selection);
+    this.buildIsolation();
     this.applyDisplay();
     this.applySelection(true);
     this.requestRender();
@@ -373,6 +397,7 @@ export class Viewer {
     this.memberItems.clear();
     this.connItems.clear();
     this.plateItems.clear();
+    this.refItems.clear();
     this.wireIds = [];
     this.wireSegs = [];
     this.wireSel = null;
@@ -483,6 +508,9 @@ export class Viewer {
     const arr = map.get(it.id);
     if (arr) arr.push(it);
     else map.set(it.id, [it]);
+    const byRef = this.refItems.get(part.ref);
+    if (byRef) byRef.push(it);
+    else this.refItems.set(part.ref, [it]);
     return it;
   }
 
@@ -549,11 +577,13 @@ export class Viewer {
     const color = new THREE.Color();
     bolts.forEach(({ b, pos }, i) => {
       const size = getBolt(b.size);
-      shanks.setMatrixAt(i, alongMatrix(pos, b.dir, size.d, b.length));
-      heads.setMatrixAt(i, alongMatrix(pos, b.dir, size.af, size.head));
+      const shank = alongMatrix(pos, b.dir, size.d, b.length);
+      const head = alongMatrix(pos, b.dir, size.af, size.head);
+      shanks.setMatrixAt(i, shank);
+      heads.setMatrixAt(i, head);
       shanks.setColorAt(i, color.setHex(b.kind === 'anchor' ? 0xb89a62 : 0xffffff));
       ids.push(b.connectionId);
-      this.bolts.push({ connectionId: b.connectionId, start: madd(pos, b.dir, -size.head), dir: normalize(b.dir), length: b.length + size.head, d: Math.max(size.af, size.d) });
+      this.bolts.push({ connectionId: b.connectionId, start: madd(pos, b.dir, -size.head), dir: normalize(b.dir), length: b.length + size.head, d: Math.max(size.af, size.d), shank, head, anchor: b.kind === 'anchor' });
     });
     shanks.computeBoundingSphere();
     heads.computeBoundingSphere();
@@ -610,10 +640,33 @@ export class Viewer {
 
   setSelection(sel: Selection) {
     this.selection = sel;
+    const prev = this.asmRefs;
+    this.asmRefs = this.assemblyRefs(sel);
+    // Parts that enter or leave a selected assembly are repainted too.
+    for (const r of new Set([...prev, ...this.asmRefs])) for (const it of this.refItems.get(r) ?? []) this.paint(it, this.colorOf(it));
     this.applySelection();
   }
 
+  /** Part refs of the selected assemblies (Selection.assemblies holds their main part refs). */
+  private assemblyRefs(sel: Selection): Set<string> {
+    this.asmMains = new Set(sel.assemblies ?? []);
+    const out = new Set<string>();
+    if (!this.asmMains.size || !this.dm) return out;
+    for (const a of this.dm.assemblies) if (this.asmMains.has(a.main)) for (const r of a.parts) out.add(r);
+    return out;
+  }
+
+  private selSets: { sel: Selection | null; members: Set<Id>; plates: Set<Id>; connections: Set<Id> } = { sel: null, members: new Set(), plates: new Set(), connections: new Set() };
+
+  private colorOf(it: SolidItem): number {
+    const s = this.selection;
+    if (this.selSets.sel !== s) this.selSets = { sel: s, members: new Set(s.members), plates: new Set(s.plates ?? []), connections: new Set(s.connections) };
+    const set = it.kind === 'member' ? this.selSets.members : it.kind === 'plate' ? this.selSets.plates : this.selSets.connections;
+    return this.itemColor(it, set.has(it.id));
+  }
+
   private itemColor(it: SolidItem, selected: boolean): number {
+    if (this.asmRefs.has(it.part.ref)) return this.asmMains.has(it.part.ref) ? ASSEMBLY_MAIN_COLOR : ASSEMBLY_COLOR;
     if (selected) return SELECT_COLOR;
     if (this.groupColor) {
       const mode = this.display.colorBy;
@@ -687,7 +740,58 @@ export class Viewer {
     }
     if (this.display.labels && this.dm && this.dm.parts.length > LABEL_LIMIT) this.labelsBuilt = false;
     if (this.display.labels && !this.labelsBuilt) this.buildLabels();
+    if (this.isoRefs) this.buildIsolation();
     this.requestRender();
+  }
+
+  // -------------------------------------------------------------------------
+  // Isolation: only some parts (e.g. the selected assemblies) are drawn
+
+  /** Show only these parts (part refs) with the bolts of their connections; null shows everything again. */
+  setIsolation(refs: string[] | null) {
+    this.isoRefs = refs && refs.length ? new Set(refs) : null;
+    this.buildIsolation();
+    this.applyDisplay();
+  }
+
+  private buildIsolation() {
+    for (const c of [...this.isoGroup.children]) this.isoGroup.remove(c);
+    for (const m of this.isoMats) m.dispose();
+    this.isoMats = [];
+    this.isoOwners = null;
+    const iso = this.isoRefs;
+    if (!iso) return;
+    const owners = { members: new Set<Id>(), plates: new Set<Id>(), connections: new Set<Id>() };
+    const mats = new Map<number, THREE.MeshStandardMaterial>();
+    const matFor = (hex: number) => {
+      let m = mats.get(hex);
+      if (!m) {
+        m = new THREE.MeshStandardMaterial({ color: hex, metalness: 0.25, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+        mats.set(hex, m);
+        this.isoMats.push(m);
+      }
+      return m;
+    };
+    const place = (o: THREE.Object3D, m: THREE.Matrix4) => {
+      o.matrixAutoUpdate = false;
+      o.matrix.copy(m);
+      o.matrixWorldNeedsUpdate = true;
+      this.isoGroup.add(o);
+    };
+    for (const r of iso) {
+      for (const it of this.refItems.get(r) ?? []) {
+        (it.kind === 'member' ? owners.members : it.kind === 'plate' ? owners.plates : owners.connections).add(it.id);
+        place(new THREE.Mesh(it.geometry, matFor(this.colorOf(it))), it.matrix);
+        place(new THREE.LineSegments(it.edges, this.edgeMat), it.matrix);
+      }
+    }
+    for (const b of this.bolts) {
+      if (!owners.connections.has(b.connectionId)) continue;
+      const mat = b.anchor ? matFor(0xb89a62) : this.boltMat;
+      place(new THREE.Mesh(shankGeo, mat), b.shank);
+      place(new THREE.Mesh(headGeo, this.boltMat), b.head);
+    }
+    this.isoOwners = owners;
   }
 
   setDisplay(d: Display) {
@@ -702,12 +806,14 @@ export class Viewer {
 
   private applyDisplay() {
     const d = this.display;
-    this.memberGroup.visible = d.solids;
-    this.connGroup.visible = d.solids && d.connections;
-    this.wireGroup.visible = d.wire || !d.solids;
+    const iso = !!this.isoRefs;
+    this.memberGroup.visible = d.solids && !iso;
+    this.connGroup.visible = d.solids && d.connections && !iso;
+    this.wireGroup.visible = (d.wire || !d.solids) && !iso;
+    this.isoGroup.visible = iso;
     this.refGroup.visible = d.references;
     this.underlayGroup.visible = d.underlays;
-    this.labelGroup.visible = d.labels;
+    this.labelGroup.visible = d.labels && !iso;
     this.groupColor = this.project && d.colorBy && d.colorBy !== 'role' ? groupColors(this.project, d.colorBy) : null;
     if (d.labels && !this.labelsBuilt) this.buildLabels();
     for (const c of this.labelGroup.children) if (c instanceof CSS2DObject) c.element.style.display = d.labels ? '' : 'none';
@@ -858,6 +964,20 @@ export class Viewer {
       ray: { origin: { x: rc.ray.origin.x, y: rc.ray.origin.y, z: rc.ray.origin.z }, dir: { x: rc.ray.direction.x, y: rc.ray.direction.y, z: rc.ray.direction.z } },
       shift: e.shiftKey,
     };
+  }
+
+  /** World box of some parts (part refs), or null when none is drawn. */
+  boxOfRefs(refs: Iterable<string>): { min: Vec3; max: Vec3 } | null {
+    const box = new THREE.Box3();
+    const b = new THREE.Box3();
+    for (const r of refs) {
+      for (const it of this.refItems.get(r) ?? []) {
+        if (!it.geometry.boundingBox) it.geometry.computeBoundingBox();
+        box.union(b.copy(it.geometry.boundingBox!).applyMatrix4(it.matrix));
+      }
+    }
+    if (box.isEmpty()) return null;
+    return { min: { x: box.min.x, y: box.min.y, z: box.min.z }, max: { x: box.max.x, y: box.max.y, z: box.max.z } };
   }
 
   /** Aim the camera at a box (e.g. the members of a check item) from the current viewing direction. */
@@ -1249,7 +1369,7 @@ export class Viewer {
     if (tool === 'select') {
       this.boxDiv.style.display = 'none';
       if (dragged) this.boxSelect(d.x, d.y, e.clientX, e.clientY, e.shiftKey);
-      else this.cb.onPick(this.pick(e), e.shiftKey || e.ctrlKey || e.metaKey);
+      else this.cb.onPick(this.pick(e), e.shiftKey || e.ctrlKey || e.metaKey, e.altKey);
       return;
     }
     if (this.cb.isModifyTool?.(tool)) {
@@ -1371,8 +1491,9 @@ export class Viewer {
 
   private pick(e: PointerEvent): PickHit | null {
     const rc = this.rayAt(e);
-    const wantMembers = this.memberGroup.visible;
-    const wantConns = this.connGroup.visible;
+    const iso = this.isoRefs;
+    const wantMembers = iso ? true : this.memberGroup.visible;
+    const wantConns = iso ? true : this.connGroup.visible;
     let best: { t: number; hit: PickHit } | null = null;
     const S = this.solids.length;
     // Solids: BVH candidates along the ray, exact test on each, nearest wins.
@@ -1383,11 +1504,13 @@ export class Viewer {
       if (i < S) {
         const it = this.solids[i];
         if (it.kind === 'connection' ? !wantConns : !wantMembers) return;
+        if (iso && !iso.has(it.part.ref)) return;
         t = this.raycastItem(rc, it);
-        hit = { kind: it.kind, id: it.id };
+        hit = { kind: it.kind, id: it.id, ref: it.part.ref };
       } else {
         const b = this.bolts[i - S];
         if (!wantConns) return;
+        if (iso && !this.isoOwners?.connections.has(b.connectionId)) return;
         t = rayCylinderBox(rc.ray, b);
         hit = { kind: 'connection', id: b.connectionId };
       }
@@ -1396,6 +1519,7 @@ export class Viewer {
     });
     const solidHit = best as { t: number; hit: PickHit } | null;
     if (solidHit) return solidHit.hit;
+    if (iso) return null;
     // Screen-space test for wire lines and nodes (candidates from the indexes).
     const mouse = this.localXY(e);
     let near: PickHit | null = null;
@@ -1455,6 +1579,12 @@ export class Viewer {
         const n = this.nodeList[i];
         if (inside(n.p)) for (const c of this.nodeConns.get(n.id) ?? []) sel.connections.push(c);
       });
+    }
+    const own = this.isoOwners;
+    if (own) {
+      sel.members = sel.members.filter((id) => own.members.has(id));
+      sel.plates = (sel.plates ?? []).filter((id) => own.plates.has(id));
+      sel.connections = sel.connections.filter((id) => own.connections.has(id));
     }
     this.cb.onBoxSelect(sel, additive);
   }

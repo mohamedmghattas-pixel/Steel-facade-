@@ -4,7 +4,7 @@
  * adding notes, leader notes and revision clouds, and placing section cuts and
  * detail callouts on GA sheets. Every change is one undoable `apply`.
  */
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type ReactNode } from 'react';
 import { useStore } from '../state/store';
 import type { Drawing, Viewport } from '../core/drawings/types';
 import type { GaCut, Vec2, Vec3 } from '../core/model/types';
@@ -29,6 +29,7 @@ import { checkSheetLayout } from '../core/drawings/layoutCheck';
 import { nextRev } from '../core/drawings/register';
 import { newId } from '../core/model/ops';
 import { askConfirm, askText } from './askState';
+import { highlightTargets, navTargets, pickNav, type NavHighlight, type NavTarget } from '../core/drawings/navigation';
 import { Icon } from './icons';
 
 type Tool = 'select' | 'note' | 'leader' | 'cloud' | 'section' | 'detail';
@@ -46,7 +47,25 @@ const KIND_TEXT: Record<PickHit['kind'], string> = { dim: 'Dimension', note: 'No
 
 const snap = (v: number) => Math.round(v);
 
-export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts?: () => void }) {
+export function DrawingEditor({
+  drawing: d,
+  onCuts,
+  highlight,
+  focusN = 0,
+  onNav,
+  extraTools,
+}: {
+  drawing: Drawing;
+  onCuts?: () => void;
+  /** Marks / balloons / rows / outlines to highlight (navigation from the 3D view). */
+  highlight?: NavHighlight | null;
+  /** Changes when the view should zoom and scroll to the highlight. */
+  focusN?: number;
+  /** A click (or double-click) on a mark, balloon, list row or part outline. */
+  onNav?: (t: NavTarget, dbl: boolean) => void;
+  /** Extra toolbar content (e.g. Show in 3D). */
+  extraTools?: ReactNode;
+}) {
   const apply = useStore((s) => s.apply);
   const notify = useStore((s) => s.notify);
   const project = useStore((s) => s.project);
@@ -58,6 +77,13 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
   const [zoom, setZoom] = useState(1);
   const overlay = useRef<SVGSVGElement>(null);
   const host = useRef<HTMLDivElement>(null);
+  const canvas = useRef<HTMLDivElement>(null);
+  /** Navigation target under the last press (a click on it selects in 3D). */
+  const navDown = useRef<{ t: NavTarget; at: Vec2 } | null>(null);
+  /** Zoom / scroll to the highlight after the next render. */
+  const pendingScroll = useRef<{ x: number; y: number } | null>(null);
+  const navTs = useMemo(() => (onNav ? navTargets(d).filter((t) => t.kind !== 'outline') : []), [d, onNav]);
+  const hlTs = useMemo(() => (highlight ? highlightTargets(d, highlight) : []), [d, highlight]);
   const svg = useMemo(() => drawingToSvg(d), [d]);
   const H = d.sheet.h;
   const vp: Viewport | undefined = d.viewports?.[0];
@@ -73,6 +99,30 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
     setPending([]);
     if (!isGa && (tool === 'section' || tool === 'detail')) setTool('select');
   }, [d.id, isGa, tool]);
+
+  // Navigation from the 3D view: zoom in on the highlighted mark and scroll it to the middle.
+  useEffect(() => {
+    if (!focusN || !hlTs.length) return;
+    // Zoom to the mark or balloon (else the first row or outline); every match stays highlighted.
+    const b = (hlTs.find((t) => t.kind === 'mark') ?? hlTs[0]).box;
+    const z = Math.min(3, Math.max(1.6, d.sheet.w / Math.max(30, (b.x1 - b.x0) * 6)));
+    pendingScroll.current = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2 };
+    setZoom(z);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusN, d.id]);
+  useLayoutEffect(() => {
+    const q = pendingScroll.current;
+    const svgEl = overlay.current;
+    const c = canvas.current;
+    if (!q || !svgEl || !c) return;
+    pendingScroll.current = null;
+    const r = svgEl.getBoundingClientRect();
+    const cr = c.getBoundingClientRect();
+    const px = r.left + (q.x / d.sheet.w) * r.width;
+    const py = r.top + ((d.sheet.h - q.y) / d.sheet.h) * r.height;
+    c.scrollLeft += px - (cr.left + cr.width / 2);
+    c.scrollTop += py - (cr.top + cr.height / 2);
+  });
 
   const toPaper = (e: { clientX: number; clientY: number }): Vec2 | null => {
     const svgEl = overlay.current;
@@ -133,6 +183,8 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
     const q = toPaper(e);
     if (!q) return;
     if (tool === 'select') {
+      const nt = onNav ? pickNav(d, q, tol() * 0.6) : null;
+      navDown.current = nt ? { t: nt, at: q } : null;
       const hit = pickEntity(d, q, tol());
       setSel(hit);
       if (!hit) return;
@@ -179,6 +231,13 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
   };
 
   const onUp = async (e: RPointerEvent<SVGSVGElement>) => {
+    // A click (no drag) on a mark, balloon, row or outline: select it in the 3D view.
+    const nd = navDown.current;
+    navDown.current = null;
+    if (nd && tool === 'select') {
+      const q = toPaper(e);
+      if (q && Math.hypot(q.x - nd.at.x, q.y - nd.at.y) < 1) onNav?.(nd.t, false);
+    }
     if (tool === 'cloud' && pending.length) {
       const q = toPaper(e) ?? pending[0];
       const a = pending[0];
@@ -288,6 +347,7 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
           Reset edits
         </button>
         <div className="grow" />
+        {extraTools}
         <div className="segmented" role="group" aria-label="Zoom">
           <button type="button" onClick={() => setZoom((z) => Math.max(0.5, z / 1.25))} aria-label="Zoom out">
             −
@@ -324,7 +384,7 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
           ))}
         </div>
       )}
-      <div className="drawing-preview dwg-canvas">
+      <div className="drawing-preview dwg-canvas" ref={canvas}>
         <div className="dwg-sheet" style={{ width: `${zoom * 100}%`, maxWidth: zoom === 1 ? 1100 : undefined }}>
           <div className="dwg-base" dangerouslySetInnerHTML={{ __html: svg }} />
           <svg
@@ -335,8 +395,37 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
             onPointerMove={onMove}
             onPointerUp={(e) => void onUp(e)}
             onPointerLeave={() => !drag && setHover(null)}
+            onDoubleClick={(e) => {
+              if (tool !== 'select' || !onNav) return;
+              const q = toPaper(e);
+              const t = q ? pickNav(d, q, tol() * 0.6) : null;
+              if (t) onNav(t, true);
+            }}
             aria-label="Drawing editor"
           >
+            {tool === 'select' && navTs.length > 0 && (
+              <g className="dwg-nav">
+                {navTs.map((t) => (
+                  <rect
+                    key={t.key}
+                    x={t.box.x0}
+                    y={Y(t.box.y1)}
+                    width={t.box.x1 - t.box.x0}
+                    height={t.box.y1 - t.box.y0}
+                    data-nav-kind={t.kind}
+                    data-nav-asm={t.nav.asm}
+                    data-nav-part={t.nav.part}
+                    data-nav-inst={t.nav.inst}
+                    data-nav-sheet={t.nav.sheet}
+                  >
+                    <title>{navTitle(t, d)}</title>
+                  </rect>
+                ))}
+              </g>
+            )}
+            {hlTs.map((t) => (
+              <rect key={`hl-${t.key}`} className="dwg-nav-hl" x={t.box.x0 - 0.8} y={Y(t.box.y1 + 0.8)} width={t.box.x1 - t.box.x0 + 1.6} height={t.box.y1 - t.box.y0 + 1.6} rx={0.8} />
+            ))}
             {groupBox && !drag && boxRect(groupBox, 'dwg-group', 2)}
             {selBox && !drag && boxRect(selBox, 'dwg-sel')}
             {drag && (drag.delta.x || drag.delta.y) ? <g transform={`translate(${drag.delta.x} ${-drag.delta.y})`} dangerouslySetInnerHTML={{ __html: dragSvg }} /> : null}
@@ -352,3 +441,12 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
 }
 
 const round3 = (v: Vec3): Vec3 => ({ x: Math.round(v.x), y: Math.round(v.y), z: Math.round(v.z) });
+
+/** Tooltip of a navigation target in the preview. */
+function navTitle(t: NavTarget, d: Drawing): string {
+  const n = t.nav;
+  if (n.sheet) return 'Double-click: open this sheet';
+  const what = n.part ? `part ${n.part}${n.asm ? ` (in ${n.asm})` : ''}` : n.inst ? `assembly ${n.asm}` : `all assemblies ${n.asm}`;
+  const dbl = n.part && d.kind === 'assembly' ? 'open the part drawing' : n.asm ? 'open the assembly drawing' : '';
+  return `Click: select ${what} in 3D${dbl ? ` · double-click: ${dbl}` : ''}`;
+}

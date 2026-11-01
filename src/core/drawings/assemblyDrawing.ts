@@ -84,6 +84,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
         ...ordered.map(({ part, n }) => [part.mark, n, designation(part), part.material, part.mass.toFixed(2), drawingNumber(p, `part-${part.mark}`)]),
         ['', '', `Assembly mass (each)`, '', asm.mass.toFixed(1), ''],
       ],
+      nav: { col: 0, kind: 'part', asm: asm.mark },
     }),
     tableBlock({
       title: 'Assembly',
@@ -95,7 +96,9 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
         { head: 'Shown on GA', w: 33 },
       ],
       rows: [[asm.mark, qty, asm.mass.toFixed(1), (asm.mass * qty).toFixed(1), ctx.gaNumbers.join(', ')]],
+      nav: { col: 0, kind: 'asm' },
     }),
+    ...shopBoltsBlock(dm, asm),
   ];
   const areas = packBlocks(s, size, blocks);
   // A heading line at the top of the free area, the views below it.
@@ -104,6 +107,8 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
 
   const scale =
     main.kind === 'plate' || !main.shape ? drawPlateAssembly(ctx, s, main, parts, welded, free, first) : drawLinearAssembly(ctx, s, main, parts, welded, free, first);
+  // Balloons name parts of this assembly.
+  for (const e of s.ents) if (e.nav?.part && !e.nav.asm) e.nav = { ...e.nav, asm: asm.mark };
 
   const desc = main.name === main.profile ? main.profile : `${main.name} ${main.profile}`;
   return finalize(ctx, s, size, {
@@ -111,9 +116,39 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
     kind: 'assembly',
     mark: asm.mark,
     title: `Assembly ${asm.mark} – ${desc}`,
-    subtitle: `${qty} off · ${asm.mass.toFixed(1)} kg each · ${set.standard === 'ISO' ? `EN 1090-2 ${set.executionClass}` : 'AISC 303'}`,
+    subtitle: `${asm.name ? `${asm.name} · ` : ''}${qty} off · ${asm.mass.toFixed(1)} kg each · ${set.standard === 'ISO' ? `EN 1090-2 ${set.executionClass}` : 'AISC 303'}`,
     scale,
   });
+}
+
+/**
+ * Shop bolts of a manual assembly: the bolts of joints between its members
+ * (BoltItem.shop), fitted in the shop before delivery. Empty for automatic assemblies.
+ */
+function shopBoltsBlock(dm: DerivedModel, asm: Assembly) {
+  const inside = new Set((asm.joints ?? []).filter((j) => j.kind === 'bolt').map((j) => j.connection));
+  if (!inside.size) return [];
+  const rows = new Map<string, { size: string; grade: string; length: number; qty: number }>();
+  for (const b of dm.bolts) {
+    if (!b.shop || !inside.has(b.connectionId)) continue;
+    const k = `${b.size}|${b.grade}|${b.length}`;
+    const e = rows.get(k);
+    if (e) e.qty += b.positions.length;
+    else rows.set(k, { size: b.size, grade: b.grade, length: b.length, qty: b.positions.length });
+  }
+  if (!rows.size) return [];
+  return [
+    tableBlock({
+      title: 'Shop bolts (joints inside the assembly)',
+      cols: [
+        { head: 'Size', w: 12 },
+        { head: 'Length', w: 14, align: 'end' },
+        { head: 'Grade', w: 16 },
+        { head: 'Qty', w: 10, align: 'end' },
+      ],
+      rows: [...rows.values()].sort((a, b) => a.size.localeCompare(b.size) || a.length - b.length).map((r) => [r.size, r.length, r.grade, r.qty]),
+    }),
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +166,8 @@ function itemLabels(s: Sheet, items: { mark: string; at: Vec2 }[], yRow: number,
     xs[xs.length - 1] = xMax;
     for (let i = xs.length - 2; i >= 0; i--) xs[i] = Math.min(xs[i], xs[i + 1] - gap);
   }
-  uniq.forEach((u, i) => balloon(s, u.at, { x: xs[i], y: yRow }, u.mark));
+  // Navigation tag: the balloon names a part of this assembly (data only).
+  uniq.forEach((u, i) => s.withTag({ nav: { part: u.mark } }, () => balloon(s, u.at, { x: xs[i], y: yRow }, u.mark)));
 }
 
 /** Point on the polygon boundary nearest to `q`, and its distance. */

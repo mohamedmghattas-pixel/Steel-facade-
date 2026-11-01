@@ -16,6 +16,8 @@ import { ColorByControl, SelectFilterChip } from './dialogs/ManagementDialogs';
 import { beginTool, pointOnMember, toolClick, toolHover, toolPress, toolTyped, viewerHooks } from './modifyTools';
 import { ModifyToolBar, openModifyMenu } from './ModifyPanels';
 import { measureText } from './modifyActions';
+import { SelectionModeBar, openPartMenu, setMenuTarget } from './AssemblyPanels';
+import { boxToAssemblies, hitRef, isolatedRefs, pickAssembly } from './navigationActions';
 
 let viewerInstance: Viewer | null = null;
 export const getViewer = () => viewerInstance;
@@ -32,6 +34,8 @@ export function ViewportPanel() {
   const zoomRequest = useStore((s) => s.zoomRequest);
   const typedInput = useStore((s) => s.typedInput);
   const wireOverlay = useStore((s) => s.wireOverlay);
+  const isolate = useStore((s) => s.isolate);
+  const focusRequest = useStore((s) => s.focusRequest);
   const set = useStore((s) => s.set);
 
   // Create the viewer once.
@@ -41,7 +45,7 @@ export function ViewportPanel() {
         const s = useStore.getState();
         return { tool: s.tool, snap: s.snap, workPlane: s.workPlane, gridStep: s.project.settings.gridStep };
       },
-      onPick: (hit, additive) => {
+      onPick: (hit, additive, alt) => {
         const s = useStore.getState();
         if (!hit) {
           if (!additive) s.clearSelection();
@@ -50,11 +54,14 @@ export function ViewportPanel() {
         const key = hit.kind === 'member' ? 'members' : hit.kind === 'connection' ? 'connections' : hit.kind === 'plate' ? 'plates' : 'nodes';
         const picked = filterSelection(s.project, { members: [], nodes: [], connections: [], [key]: [hit.id] }, s.selectFilter);
         if (!picked.members.length && !picked.connections.length && !picked.nodes.length && !picked.plates?.length) return;
+        // Assembly mode, or Alt+click: the whole assembly of the part hit.
+        if (hit.kind !== 'node' && (s.selectionMode === 'assembly' || alt) && pickAssembly(hit, additive)) return;
         s.select(picked, additive);
       },
       onBoxSelect: (sel, additive) => {
         const s = useStore.getState();
-        s.select(filterSelection(s.project, sel, s.selectFilter), additive);
+        const picked = filterSelection(s.project, sel, s.selectFilter);
+        s.select(s.selectionMode === 'assembly' ? boxToAssemblies(picked) : picked, additive);
       },
       onPoints: (t, pts) => handleToolPoints(t, pts),
       onCursor: (p) => useStore.setState({ cursor: p }),
@@ -69,10 +76,18 @@ export function ViewportPanel() {
       onToolClick: (t, info) => isModifyTool(t) && toolClick(t, info),
       onContextMenu: (hit, x, y, info) => {
         const s = useStore.getState();
+        // Navigation / assembly items for the part clicked (AssemblyPanels): in the member / connection menu, or a menu of their own.
+        const ref = hit ? (hitRef(derived(s.project), hit) ?? null) : null;
+        setMenuTarget(ref);
         if (hit?.kind === 'connection') {
           // Right-click on a connection outside the selection selects it; the menu has the connection commands.
           if (!s.selection.connections.includes(hit.id)) s.select({ members: [], nodes: [], connections: [hit.id] });
           return openModifyMenu({ x, y, member: null, point: null, connection: hit.id });
+        }
+        if (hit && ref && hit.kind === 'plate') {
+          if (!(s.selection.plates ?? []).includes(hit.id)) s.select({ plates: [hit.id] });
+          openPartMenu({ x, y, ref });
+          return;
         }
         if (hit?.kind !== 'member') return;
         // Right-click on a member outside the selection selects it.
@@ -104,6 +119,14 @@ export function ViewportPanel() {
   }, [project]);
 
   useEffect(() => viewerRef.current?.setSelection(selection), [selection]);
+  // Isolation: the assemblies of the isolated parts, in the current model.
+  useEffect(() => viewerRef.current?.setIsolation(isolatedRefs(derived(project), isolate)), [isolate, project]);
+  useEffect(() => {
+    const v = viewerRef.current;
+    if (!v || !focusRequest) return;
+    const box = v.boxOfRefs(focusRequest.refs);
+    if (box) v.focusBox(box.min, box.max);
+  }, [focusRequest]);
   useEffect(() => viewerRef.current?.setWireOverlay(wireOverlay), [wireOverlay]);
   useEffect(() => viewerRef.current?.setDisplay(display), [display]);
   useEffect(() => {
@@ -146,6 +169,7 @@ export function ViewportPanel() {
         <button className="chip" title="Zoom to fit (F)" onClick={() => set({ zoomRequest: Date.now() })}>
           <Icon name="zoom" size={15} /> Fit
         </button>
+        <SelectionModeBar />
       </div>
       <div className="viewport-overlay bottom-center">
         <ModifyToolBar />

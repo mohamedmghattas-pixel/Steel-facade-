@@ -44,6 +44,7 @@ import {
 } from './modifyActions';
 import { setTool } from './actions';
 import './modify.css';
+import { NavMenuSection } from './AssemblyPanels';
 
 // ---------------------------------------------------------------------------
 // Options bar of the active modify tool
@@ -433,6 +434,7 @@ export function ModifyContextMenu() {
   return (
     <div ref={ref} className="ctx-menu" role="menu" style={{ left: pos?.x ?? menu.x, top: pos?.y ?? menu.y, visibility: pos ? 'visible' : 'hidden' }} onContextMenu={(e) => e.preventDefault()}>
       <div className="ctx-title">{title}</div>
+      <NavMenuSection onDone={closeModifyMenu} />
       {groups.map((g, i) => (
         <div key={i} className="ctx-group">
           {g.map((it) => (

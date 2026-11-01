@@ -8,7 +8,8 @@
  * lists the assembly.
  */
 import type { Vec2 } from '../model/types';
-import type { DEnt } from './types';
+import type { Assembly, Part } from '../derive/model';
+import type { DEnt, DrawNav } from './types';
 import type { Sheet } from './dims';
 import { entsBox, textExtent, type BBox } from './viewLayout';
 import { TEXT } from './standards';
@@ -173,13 +174,21 @@ export function drawMark(s: Sheet, anchor: Vec2, pl: Placement, text: string, h:
  * sheet), or '' when every mark is shown. `noticeAt` is where the notice will
  * be written; when marks are left out, they are placed again keeping clear of it.
  */
-export function placeMarks(s: Sheet, targets: { id: string; mark: string; at: Vec2 }[], area: BBox, obstacles: BBox[], noticeAt: (text: string) => Vec2, scale: string): string {
+export function placeMarks(
+  s: Sheet,
+  targets: { id: string; mark: string; at: Vec2; inst?: string }[],
+  area: BBox,
+  obstacles: BBox[],
+  noticeAt: (text: string) => Vec2,
+  scale: string,
+): string {
   const start = s.ents.length;
   const run = (extra: BBox[]) => {
     const placer = new LabelPlacer(area, [...obstacles, ...extra]);
     for (const t of targets) {
       const pl = placer.place(t.at, t.mark, TEXT.small);
-      if (pl) s.withTag({ id: `mark:${t.id}` }, () => drawMark(s, t.at, pl, t.mark, TEXT.small));
+      // The navigation tag names the assembly instance (main part ref) the mark stands for.
+      if (pl) s.withTag({ id: `mark:${t.id}`, nav: { asm: t.mark, ...(t.inst ? { inst: t.inst } : {}) } }, () => drawMark(s, t.at, pl, t.mark, TEXT.small));
     }
     return placer;
   };
@@ -192,4 +201,9 @@ export function placeMarks(s: Sheet, targets: { id: string; mark: string; at: Ve
   const notice = text(placer.omitted);
   s.notices.push(notice);
   return notice;
+}
+
+/** Navigation tag of a part outline on a GA / erection view: the part and the assembly instance it belongs to. */
+export function partNav(pt: Part, a: Assembly | undefined): DrawNav {
+  return { part: pt.mark, ref: pt.ref, ...(a ? { asm: a.mark, inst: a.main } : {}) };
 }

@@ -202,6 +202,7 @@ lists and NC files cannot disagree.
   - `drawings` (settings, revisions, edits, cuts, templates)
   - `library` (presets, templates, custom profiles)
   - `workPlanes`, `plates`, `survey`, `phases`, `batches`, `markLocks`, `clashes`
+  - `assemblyGroups` (manual shipping assemblies, see [ASSEMBLIES.md](ASSEMBLIES.md))
   - `wireframe` (check rules and client confirmations against a wireframe fingerprint, see [WIREFRAME_CHECK.md](WIREFRAME_CHECK.md))
 - **Units** are millimetres and degrees. World axes: X east, Y north, Z up.
 - **Migration:** `migrateProject` fills every new field. Older files load
@@ -228,7 +229,10 @@ lists and NC files cannot disagree.
    - holes converted to part-local coordinates (face selection by direction)
    - mass and surface area
 4. **Assemblies:** union-find over shop welds. The main part is a member, or the
-   plate flagged `assemblyMain`.
+   plate flagged `assemblyMain`. Manual groups (`Project.assemblyGroups`) are
+   unioned on top, with the joints between their members as shop joints
+   (bolts flagged `shop`); their main part and prefix come from the group
+   ([ASSEMBLIES.md](ASSEMBLIES.md)).
 5. **Numbering:**
    - Marks come from geometric signatures, so identical parts and assemblies share marks.
    - Manual overrides and locked marks are honoured, and locked numbers are never reused.
@@ -273,7 +277,10 @@ lists and NC files cannot disagree.
   - erection setting-out plans, anchor schedules and sequence sheets
   - section and detail sheets
 - **Entities** carry stable ids (`view:front`, `dim:front:3` …). User edits
-  are stored per drawing and applied after generation.
+  are stored per drawing and applied after generation. Navigation tags
+  (`nav`: assembly / part mark, instance, part ref, sheet) link marks, balloons,
+  rows and outlines to the model; `navigation.ts` indexes them for 3D ↔ drawing
+  navigation. They are data only and not part of the fingerprint.
 - **Fingerprint:** a content hash (with edits, without title block and revision
   table) drives "changed since issue" and the revision workflow.
 - **Sheet layout engine** (`layout.ts`): one packer places the blocks of a sheet
@@ -393,6 +400,8 @@ lists and NC files cannot disagree.
 | D31 | Profiles by role as project settings plus a pure `assignProfilesByRole` in core | One place to say "mullions are X, transoms are Y"; other features (wireframe classification, assistant) reuse it | Per-member edits only | New members of a role get its profile; changing it asks whether to update existing members |
 | D32 | Profiles perpendicular to the facade surface: an optional `Member.normal` (local z = the normal projected perpendicular to the member, rotation on top), set from surfaces detected in the wireframe topology (junction normals → patches by connectivity and a 10° similarity → consistent sign through folds → exterior side by rule, user flips); all member axes go through one function (`memberAxes`) | A "world Z is up" rule twists sections on sloped, V-shaped and curved facades; the junctions already describe the surface, and the user wants "always perpendicular to the surface" | Per-member rotations computed once (lost on any edit, no notion of a surface); a user-picked plane per region (fails on curved and folded facades) | Models without normals derive bit for bit as before; copy / split / merge carry the normal, mirror reflects it; the fingerprint includes normals of oriented members only, so earlier confirmations stay valid; the exterior side is a heuristic the user can flip ([WIREFRAME_CHECK.md §5a](WIREFRAME_CHECK.md)) |
 | D33 | A mirrored section (`Member.mirrorSection`) is derived as the plain profile in a reversed, right-handed part frame (−x, −y, z from the far end); geometry operations re-pose the section (`poseMember`) instead of copying rotation values | A real part is never mirrored: a mirrored channel is the same stock seen from the other end. Every output already reads part frames | A mirrored copy of each profile; a left-handed frame | Meshes, IFC, DSTV, drawings, clash and numbering needed no change; mirror / reverse / join keep the physical section ([MODIFY.md](MODIFY.md)) |
+| D34 | Manual assemblies as `Project.assemblyGroups` (lists of member / plate / connection ids) unioned on top of the shop-weld assemblies; joints between grouped members become shop joints (bolted ones stay bolted, their bolts flagged `shop`); manual assemblies numbered after the automatic ones of their prefix | Users group shipping units in the viewer while welds keep grouping automatically; explicit lists fail safe on copies (a partly copied group is not carried over) where a per-member group field would merge copies into the original | `Member.assemblyGroup` field; Tekla-style sub-assemblies | Delete / split / copy keep groups consistent (prune after every edit); grouping renumbers no other assembly; sub-assemblies are not modelled ([ASSEMBLIES.md](ASSEMBLIES.md)) |
+| D35 | 3D ↔ drawing navigation through data-only tags on drawing entities and a pure index (part mark → part drawing, assembly mark → assembly drawing, instance → GA / zone / erection sheets, best first) | Zoned sets need the actual sheet that shows a part; tags follow the generators, so the index never guesses from geometry | Recomputing sheet membership from view geometry; SVG `data-` attributes in the exported files | Fingerprints and exported files unchanged; the drawing set is cached per derived model and shared with the Drawings tab |
 
 ## 5. Known limits and open items
 

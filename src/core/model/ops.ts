@@ -188,6 +188,7 @@ export function createProject(name = 'New facade project'): Project {
     phases: [],
     batches: [],
     markLocks: {},
+    assemblyGroups: [],
     clashes: { clearance: 10, issues: [] },
     wireframe: { approvals: [], settings: defaultWireframeSettings() },
     exportTemplates: [],
@@ -269,6 +270,40 @@ export function removeOrphanNodes(p: Project) {
   for (const id of Object.keys(p.nodes)) if (!used.has(id)) delete p.nodes[id];
 }
 
+/**
+ * Manual assemblies (Project.assemblyGroups) keep only members, plates and
+ * connections that still exist; groups left empty are removed. Cheap when
+ * there are no groups, so the store runs it after every edit (operations that
+ * delete members directly, e.g. join, need no hook of their own).
+ */
+export function pruneAssemblyGroups(p: Project): boolean {
+  const groups = p.assemblyGroups;
+  if (!groups?.length) return false;
+  let changed = false;
+  const plates = p.plates ?? {};
+  for (const g of groups) {
+    const m = g.members.filter((id) => p.members[id]);
+    const pl = g.plates.filter((id) => plates[id]);
+    const c = g.connections?.filter((id) => p.connections[id]);
+    if (m.length !== g.members.length || pl.length !== g.plates.length || (c && c.length !== g.connections!.length)) {
+      g.members = m;
+      g.plates = pl;
+      if (c) g.connections = c;
+      changed = true;
+    }
+    if (g.main && !p.members[g.main] && !plates[g.main]) {
+      delete g.main;
+      changed = true;
+    }
+  }
+  const kept = groups.filter((g) => g.members.length + g.plates.length + (g.connections?.length ?? 0) > 0);
+  if (kept.length !== groups.length) {
+    p.assemblyGroups = kept;
+    changed = true;
+  }
+  return changed;
+}
+
 export function deleteMembers(p: Project, ids: Iterable<Id>) {
   const del = new Set(ids);
   for (const id of del) delete p.members[id];
@@ -282,11 +317,13 @@ export function deleteMembers(p: Project, ids: Iterable<Id>) {
     if (m.endPrep?.to && del.has(m.endPrep.to)) delete m.endPrep;
   }
   removeOrphanNodes(p);
+  pruneAssemblyGroups(p);
 }
 
 export function deleteConnections(p: Project, ids: Iterable<Id>) {
   for (const id of ids) delete p.connections[id];
   removeOrphanNodes(p);
+  pruneAssemblyGroups(p);
 }
 
 /** Merge nodes closer than tol and drop degenerate / duplicate members. */
@@ -361,6 +398,7 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1,
     const d = { x: delta.x * i, y: delta.y * i, z: delta.z * i };
     const copied = new Map<Id, Id>();
     const nodeMap = new Map<Id, Id>();
+    const copiedPlates = new Map<Id, Id>();
     for (const m of src) {
       const a = add(p.nodes[m.start].p, d);
       const b = add(p.nodes[m.end].p, d);
@@ -375,8 +413,10 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1,
         if (pl.weldedTo !== m.id) continue;
         const id = newId('pl');
         p.plates[id] = { ...structuredClone(pl), id, origin: add(pl.origin, d), weldedTo: nid };
+        copiedPlates.set(pl.id, id);
       }
     }
+    copyAssemblyGroups(p, copied, copiedPlates);
     // Mitres pair up with the copied partner (or are dropped); fits keep their target unless it was copied too.
     for (const nid of copied.values()) {
       const m = p.members[nid];
@@ -394,6 +434,27 @@ export function copyMembers(p: Project, memberIds: Id[], delta: Vec3, count = 1,
   sum.warnings.push(...warnings);
   summary?.(sum);
   return out;
+}
+
+/**
+ * Copies of manual assemblies: a group whose members and plates were all copied
+ * becomes a new group of the copies (same name, prefix and main part). Groups
+ * copied only in part are not carried over; the copies are then loose.
+ */
+export function copyAssemblyGroups(p: Project, members: Map<Id, Id>, plates: Map<Id, Id> = new Map()) {
+  for (const g of [...(p.assemblyGroups ?? [])]) {
+    if (!g.members.length && !g.plates.length) continue;
+    if (!g.members.every((id) => members.has(id)) || !g.plates.every((id) => plates.has(id))) continue;
+    const main = g.main ? (members.get(g.main) ?? plates.get(g.main)) : undefined;
+    p.assemblyGroups.push({
+      id: newId('ag'),
+      ...(g.name ? { name: g.name } : {}),
+      members: g.members.map((id) => members.get(id)!),
+      plates: g.plates.map((id) => plates.get(id)!),
+      ...(main ? { main } : {}),
+      ...(g.prefix ? { prefix: g.prefix } : {}),
+    });
+  }
 }
 
 /** Mirror image of a point in the plane through `o` with normal `k` (unit). */
@@ -457,6 +518,8 @@ export function splitMember(p: Project, memberId: Id, t: number): { node: Id; me
   const nid = addNode(p, pos);
   const id2 = newId('m');
   p.members[id2] = { ...m, id: id2, start: nid, startExt: 0 };
+  // Both pieces stay in the member's manual assembly.
+  for (const g of p.assemblyGroups ?? []) if (g.members.includes(m.id)) g.members.push(id2);
   if (m.normal) p.members[id2].normal = { ...m.normal };
   delete p.members[id2].startPrep;
   m.end = nid;
@@ -876,6 +939,7 @@ export function addFreePlate(p: Project, pl: Omit<FreePlate, 'id'> & { id?: Id }
 
 export function deletePlates(p: Project, ids: Iterable<Id>) {
   for (const id of ids) delete p.plates?.[id];
+  pruneAssemblyGroups(p);
 }
 
 export function updatePlates(p: Project, ids: Iterable<Id>, patch: Partial<FreePlate>) {

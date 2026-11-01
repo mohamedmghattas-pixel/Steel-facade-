@@ -21,7 +21,7 @@ import type { Level, Phase, Project, Vec2, Vec3 } from '../model/types';
 import { dot, normalize, sub, type Frame } from '../model/geometry';
 import { resolveParams } from '../connections/registry';
 import { getBolt } from '../library/bolts';
-import type { Assembly, BoltItem, DerivedModel, Part } from '../derive/model';
+import { assemblyByPart, type Assembly, type BoltItem, type DerivedModel, type Part } from '../derive/model';
 import { toCsv } from '../reports/bom';
 import type { DLayer, Drawing } from './types';
 import { Sheet, balloon, dimChain, dimLinear, dimRunning, drawTable, tableSize, type TableSpec } from './dims';
@@ -73,6 +73,8 @@ export interface BracketInfo {
   members: Part[];
   /** Mid-height of the bracket, for the plan cut. */
   zc: number;
+  /** Main part ref of the bracket's assembly (navigation). */
+  inst?: string;
 }
 
 const anchorType = (b: BoltItem) => {
@@ -138,6 +140,7 @@ export function slabBrackets(p: Project, dm: DerivedModel): BracketInfo[] {
       parts,
       members,
       zc,
+      inst: parts.length ? assemblyByPart(dm).get(parts[0].ref)?.main : undefined,
     });
   }
   return out;
@@ -409,6 +412,7 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
         { head: 'Anchors', w: 17 },
       ],
       rows,
+      nav: { col: 0, kind: 'asm' },
     }),
   ];
   if (matches.size) {
@@ -645,7 +649,7 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
     const at = P(ac);
     // Beside the grid bubble above the bracket.
     const x = Math.max(at.x + 9, lastX + 12);
-    balloon(S, { x: at.x, y: at.y + 1 }, { x, y: rowY }, b.mark || '?', TEXT.normal, `balloon:plan:${b.cid}`);
+    S.withTag({ nav: { ...(b.mark ? { asm: b.mark } : {}), ...(b.inst ? { inst: b.inst } : {}) } }, () => balloon(S, { x: at.x, y: at.y + 1 }, { x, y: rowY }, b.mark || '?', TEXT.normal, `balloon:plan:${b.cid}`));
     lastX = x;
   }
   // Match lines to the sheets before and after along the same slab edge.
@@ -909,6 +913,7 @@ export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
             { head: 'Assembly drawing', w: 32 },
           ],
           rows: rows.slice(i, i + 14),
+          nav: { col: 0, kind: 'asm' },
         }),
       );
     const areas = packBlocks(s, size, blocks);
@@ -1001,7 +1006,7 @@ function zonedSequenceDrawings(
       notesBlock('Erection notes', notes, s.tb.w),
       tableBlock(legend, true),
       { ...lineKey(k, ph), right: true },
-      tableBlock({ title: `Assemblies in phase ${k + 1}, zone ${zone.index}`, cols: SEQ_COLS, rows }),
+      tableBlock({ title: `Assemblies in phase ${k + 1}, zone ${zone.index}`, cols: SEQ_COLS, rows, nav: { col: 0, kind: 'asm' } }),
     ];
     packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
     const gv = drawZoneView(ctx, s, plan, zone, L, {

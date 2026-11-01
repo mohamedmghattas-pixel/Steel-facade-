@@ -9,7 +9,7 @@
  */
 import type { Vec2, Vec3 } from '../model/types';
 import { toWorld } from '../model/geometry';
-import type { Assembly, Part } from '../derive/model';
+import { assemblyByPart, type Assembly, type Part } from '../derive/model';
 import type { DLayer, Viewport } from './types';
 import type { Sheet } from './dims';
 import { dimChain, dimLinear } from './dims';
@@ -18,7 +18,7 @@ import { TEXT, scaleLabel } from './standards';
 import { convexHull, partCorners, bounds, centroid } from './project';
 import { hatch } from './section';
 import { drawGaCuts } from './cuts';
-import { labelBox, obstacleBoxes, placeMarks } from './labels';
+import { labelBox, obstacleBoxes, partNav, placeMarks } from './labels';
 import { textExtent, type BBox } from './viewLayout';
 import type { DrawCtx } from './compose';
 import { ZONE_MARGIN, fromView, gridPositions, levelPositions, markAnchor, toView, zoneOutline, type Zone, type ZonePlan, type ZoneSheetLayout } from './zoning';
@@ -165,19 +165,22 @@ export function drawZoneView(ctx: DrawCtx, s: Sheet, plan: ZonePlan, zone: Zone,
     dimLinear(s, { x: ra, y: bottom }, { x: rb, y: bottom }, 'h', bottom - 14, zone.rect.x1 - zone.rect.x0, { id: 'dim:zone:width' });
 
     // Parts, clipped to the zone with its overlap; parts of other zones narrow.
+    const asmOf = assemblyByPart(dm);
     for (const pt of zone.parts) {
       const base = o.style ? o.style(pt) : 'visible';
       if (!base) continue;
       const layer: DLayer = own.has(pt.ref) ? base : 'thin';
       const hull = convexHull(partCorners(pt).map((q) => toView(f, q)));
       if (hull.length < 2) continue;
-      if (hull.length === 2) {
-        const seg = clipSeg(hull[0], hull[1], vr);
-        if (seg) s.poly(seg.map(P), false, layer);
-        continue;
-      }
-      const clipped = clipPolyRect(hull, vr);
-      if (clipped.length >= 3) s.poly(clipped.map(P), true, layer);
+      s.withTag({ nav: partNav(pt, asmOf.get(pt.ref)) }, () => {
+        if (hull.length === 2) {
+          const seg = clipSeg(hull[0], hull[1], vr);
+          if (seg) s.poly(seg.map(P), false, layer);
+          return;
+        }
+        const clipped = clipPolyRect(hull, vr);
+        if (clipped.length >= 3) s.poly(clipped.map(P), true, layer);
+      });
     }
 
     // Match lines with the references to the adjacent zone sheets.
@@ -217,7 +220,7 @@ export function drawZoneView(ctx: DrawCtx, s: Sheet, plan: ZonePlan, zone: Zone,
     }
 
     // Marks of the zone's own assemblies, clear of each other and of the text drawn so far.
-    const targets: { id: string; mark: string; at: Vec2 }[] = [];
+    const targets: { id: string; mark: string; at: Vec2; inst?: string }[] = [];
     for (const a of zone.assemblies) {
       if (o.mark && !o.mark(a)) continue;
       const main = dm.partByRef.get(a.main);
@@ -226,7 +229,7 @@ export function drawZoneView(ctx: DrawCtx, s: Sheet, plan: ZonePlan, zone: Zone,
       const q = markAnchor(dm, a);
       if (!q) continue;
       const v = toView(f, q);
-      targets.push({ id: a.id, mark: a.mark, at: P(v) });
+      targets.push({ id: a.id, mark: a.mark, at: P(v), inst: a.main });
     }
     const label = [...o.label];
     label[0] = `${label[0]}   ${scaleLabel(den)}`;

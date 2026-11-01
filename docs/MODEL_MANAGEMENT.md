@@ -85,7 +85,9 @@ in its own frame:
 element of each *visible* IFC reference model becomes a triangle soup in world
 millimetres, with the reference's offset applied. The triangles come from
 web-ifc (Y-up metres → Z-up mm). Spaces, openings, grids, annotations and
-spatial structure are skipped.
+spatial structure are skipped. Visible Rhino (.3dm) references add one element
+per object (`3dm:<referenceId>:<object id>`, from their stored meshes,
+[RHINO.md](RHINO.md)); BCF lists only the steel for those.
 
 **Algorithm** (`src/core/clash/detect.ts`):
 
@@ -235,6 +237,9 @@ Use *Import → Panel layout → sub-frame…*. The logic is in
 
 **Sources:**
 
+- **Rhino .3dm:** planar surfaces / faces and closed planar curves (layers set
+  to *Panels* in the Rhino import, or every visible layer when a `.3dm` is
+  chosen here), see [RHINO.md](RHINO.md) §4.4.
 - **DXF:** closed LWPOLYLINE / POLYLINE entities are panels (their bounding
   rectangle). LINEs and open polylines on joint layers are joint lines. By
   default, joint layers are those whose name contains *joint*, *fuge* or

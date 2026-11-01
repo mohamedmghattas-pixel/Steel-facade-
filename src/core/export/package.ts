@@ -18,6 +18,7 @@ import * as extra from './extras';
 import { partMeshes, type PartMesh } from './meshes';
 import { meshesToObj } from './obj';
 import { meshesToStep } from './step';
+import { loadRhino } from '../io/rhinoLoader';
 import { APP_NAME, APP_VERSION, defaultQafMapping, defaultVcfMapping, evaluateQaf, issueSummary, qafCells, qafWorkbook, submittalType, vcfCells, vcfRows, vcfWorkbook, type QafDecision } from './forms';
 import type { SvgPage } from '../reports/tablePages';
 import { textBytes, zipChunks } from '../io/zip';
@@ -323,6 +324,22 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       };
       return { sources: [obj, mtl] };
     }
+    case 'rhino-3dm':
+      if (!parts) return { skip: NO_PARTS };
+      return {
+        sources: [
+          {
+            base: out.fileBase(p),
+            ext: '3dm',
+            tokens: {},
+            size: 20000 + dm.parts.length * 6000,
+            data: async () => {
+              const [rhino, { exportRhino3dm }] = await Promise.all([loadRhino(), import('../io/rhinoExport')]);
+              return exportRhino3dm(rhino, p, dm, { title: `${ctx.tokens.code}-${ctx.tokens.seq} Model`, time: ctx.date.toISOString() }).bytes;
+            },
+          },
+        ],
+      };
     case 'qaf-xlsx':
       return { sources: [{ base: 'QAF', ext: 'xlsx', tokens: {}, size: 9000, data: (b) => qafFile(ctx, b) }] };
     case 'vcf-xlsx':

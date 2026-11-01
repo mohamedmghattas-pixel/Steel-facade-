@@ -15,7 +15,9 @@ import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from '
 import { WireframeCheckDialog } from './WireframeDialog';
 import { OrientSurfaceDialog } from './OrientDialog';
 import { ExportPackageDialog } from './ExportPackageDialog';
+import { RhinoExportDialog, RhinoImportDialog } from './RhinoDialogs';
 import { openWireframeCheck } from '../wireframeActions';
+import { roleFromLayerName as guessRole } from '../../core/io/wireImport';
 
 export function Dialogs() {
   const dialog = useStore((s) => s.dialog);
@@ -55,6 +57,10 @@ export function Dialogs() {
       return <OrientSurfaceDialog onClose={close} />;
     case 'exportPackage':
       return <ExportPackageDialog onClose={close} />;
+    case 'rhinoImport':
+      return <RhinoImportDialog onClose={close} />;
+    case 'rhinoExport':
+      return <RhinoExportDialog onClose={close} />;
     default:
       return <ModellingDialogs dialog={dialog} onClose={close} />;
   }
@@ -627,17 +633,6 @@ function DxfImportDialog({ onClose }: { onClose: () => void }) {
       </div>
     </Modal>
   );
-}
-
-function guessRole(layer: string): MemberRole {
-  const l = layer.toLowerCase();
-  if (l.includes('mull')) return 'mullion';
-  if (l.includes('trans')) return 'transom';
-  if (l.includes('post') || l.includes('col')) return 'post';
-  if (l.includes('rail')) return 'rail';
-  if (l.includes('brace')) return 'brace';
-  if (l.includes('brack')) return 'bracket';
-  return 'other';
 }
 
 function AboutDialog({ onClose }: { onClose: () => void }) {

@@ -7,6 +7,7 @@ import { useMemo, useState } from 'react';
 import { derived, useStore } from '../../state/store';
 import { pickFile } from '../../state/storage';
 import { exportSettingOut } from '../movementActions';
+import { readRhinoSurvey } from '../rhinoActions';
 import { askConfirm } from '../askState';
 import { Icon } from '../icons';
 import { Field, Modal, NumberInput, Segmented, Select, TextInput } from '../widgets';
@@ -290,16 +291,21 @@ export function SurveyDialog({ onClose }: { onClose: () => void }) {
   const [scale, setScale] = useState('1');
   const [offset, setOffset] = useState<Vec3>({ x: 0, y: 0, z: 0 });
   const [replace, setReplace] = useState<'replace' | 'append'>('replace');
-  const [pending, setPending] = useState<{ kind: 'text' | 'dxf' | 'ifc'; data: string | ArrayBuffer } | null>(null);
+  const [pending, setPending] = useState<{ kind: 'text' | 'dxf' | 'ifc' | '3dm'; data: string | ArrayBuffer } | null>(null);
+  const [rhino, setRhino] = useState<{ layers: string[]; layer: string }>({ layers: [], layer: '' });
   const survey = project.survey;
   const rows = useMemo(() => (survey.points.length ? surveyBrackets(project, derived(project)) : []), [project, survey.points.length]);
 
-  const reparse = async (src = pending, k = scale, off = offset) => {
+  const reparse = async (src = pending, k = scale, off = offset, rhinoLayer = rhino.layer) => {
     setError('');
     if (!src) return setParsed(null);
     try {
       const o = { scale: Number(k), offset: off };
-      if (src.kind === 'ifc') setParsed(await parseIfcBytes(src.data as ArrayBuffer, off));
+      if (src.kind === '3dm') {
+        const res = await readRhinoSurvey(src.data as ArrayBuffer, { layer: rhinoLayer || undefined, offset: off });
+        setRhino({ layers: res.layers, layer: rhinoLayer });
+        setParsed(res);
+      } else if (src.kind === 'ifc') setParsed(await parseIfcBytes(src.data as ArrayBuffer, off));
       else if (src.kind === 'dxf') setParsed(parseSurveyDxf(src.data as string, o));
       else setParsed(parseSurveyCsv(src.data as string, o));
     } catch (e) {
@@ -308,14 +314,15 @@ export function SurveyDialog({ onClose }: { onClose: () => void }) {
     }
   };
   const chooseFile = async () => {
-    const f = await pickFile('.csv,.txt,.xyz,.dxf,.ifc');
+    const f = await pickFile('.csv,.txt,.xyz,.dxf,.ifc,.3dm');
     if (!f) return;
     setFileName(f.name);
-    const fmt = surveyFormat(f.name);
-    const src = fmt === 'ifc' ? { kind: 'ifc' as const, data: await f.arrayBuffer() } : { kind: fmt === 'dxf' ? ('dxf' as const) : ('text' as const), data: await f.text() };
+    const fmt: 'csv' | 'dxf' | 'ifc' | '3dm' = /\.3dm$/i.test(f.name) ? '3dm' : surveyFormat(f.name);
+    const src: { kind: 'text' | 'dxf' | 'ifc' | '3dm'; data: string | ArrayBuffer } =
+      fmt === 'ifc' || fmt === '3dm' ? { kind: fmt, data: await f.arrayBuffer() } : { kind: fmt === 'dxf' ? 'dxf' : 'text', data: await f.text() };
     if (src.kind === 'text') setText(src.data as string);
     setPending(src);
-    void reparse(src);
+    void reparse(src, scale, offset, '');
   };
   const onText = (t: string) => {
     setText(t);
@@ -367,14 +374,21 @@ export function SurveyDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <p className="muted">
-        Import surveyed slab-edge points: CSV / text (<code>name, x, y, z</code> with optional design <code>x, y, z</code>; comma, semicolon or tab), DXF (POINT entities, else block insertions or texts) or IFC
-        (IfcAnnotation, IfcBuildingElementProxy, IfcVirtualElement placements). Each slab bracket is matched to the nearest point; its deviation is split into out of plane (towards the slab), vertical and along the facade.
+        Import surveyed slab-edge points: CSV / text (<code>name, x, y, z</code> with optional design <code>x, y, z</code>; comma, semicolon or tab), DXF (POINT entities, else block insertions or texts), IFC
+        (IfcAnnotation, IfcBuildingElementProxy, IfcVirtualElement placements) or Rhino .3dm (points and point clouds of a layer, named by object name). Each slab bracket is matched to the nearest point; its deviation is split into out of plane (towards the slab), vertical and along the facade.
       </p>
       <div className="btn-row">
         <button className="secondary-btn" onClick={() => void chooseFile()}>
           <Icon name="import" size={15} /> Choose file…
         </button>
         {fileName && <span className="muted">{fileName}</span>}
+        {pending?.kind === '3dm' && rhino.layers.length > 0 && (
+          <Select
+            value={rhino.layer}
+            options={[{ value: '', label: 'Points on every visible layer' }, ...rhino.layers.map((l) => ({ value: l, label: `Layer ${l}` }))]}
+            onChange={(v) => void reparse(pending, scale, offset, v)}
+          />
+        )}
       </div>
       <Field label="…or paste points">
         <textarea rows={4} value={text} placeholder={'S1, 1000, 150, 3500\nS2; 2500,0; 152; 3498'} onChange={(e) => onText(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />

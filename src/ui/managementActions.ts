@@ -8,6 +8,7 @@ import { derived, useStore } from '../state/store';
 import { download, getBlob, pickFile, safeName } from '../state/storage';
 import { clashSummary, detectClashes, mergeClashIssues, type ClashOptions, type RefElement } from '../core/clash/detect';
 import { ifcElementsFromBytes } from '../core/clash/ifcElements';
+import { decodeRefMeshes, refMeshBlobId, refMeshElements } from '../core/io/refMesh';
 import { exportBcf } from '../core/io/bcf';
 import { convertDwg, detectDwg, dwgConverterFor, isBinaryDxf } from '../core/io/dwg';
 import { applyIfcSteel, readIfcSteelFromBytes, type IfcSteelImportOptions, type IfcSteelRead } from '../core/io/ifcImport';
@@ -24,23 +25,23 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 
 const refCache = new Map<string, RefElement[]>();
 
-/** Triangles of the visible IFC reference models, in world mm. */
+/** Triangles of the visible IFC and Rhino (.3dm) reference models, in world mm. */
 export async function referenceElements(): Promise<{ elements: RefElement[]; missing: string[] }> {
-  const refs = st().project.references.filter((r) => r.kind === 'ifc' && r.visible);
+  const refs = st().project.references.filter((r) => (r.kind === 'ifc' || r.kind === '3dm') && r.visible);
   const elements: RefElement[] = [];
   const missing: string[] = [];
   if (!refs.length) return { elements, missing };
-  const api = await ifcApi();
+  const api = refs.some((r) => r.kind === 'ifc') ? await ifcApi() : null;
   for (const r of refs) {
     const key = `${r.id}|${r.offset.x},${r.offset.y},${r.offset.z}`;
     let els = refCache.get(key);
     if (!els) {
-      const bytes = await getBlob(r.id);
+      const bytes = await getBlob(r.kind === '3dm' ? refMeshBlobId(r.id) : r.id);
       if (!bytes) {
         missing.push(r.name);
         continue;
       }
-      els = ifcElementsFromBytes(api, new Uint8Array(bytes), { refId: r.id, offset: r.offset });
+      els = r.kind === '3dm' ? refMeshElements(decodeRefMeshes(bytes), { refId: r.id, offset: r.offset }) : ifcElementsFromBytes(api!, new Uint8Array(bytes), { refId: r.id, offset: r.offset });
       refCache.set(key, els);
     }
     elements.push(...els);

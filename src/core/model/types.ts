@@ -544,11 +544,14 @@ export interface WireframeRecord {
   settings: WireframeCheckSettings;
 }
 
-/** An imported reference model (concrete, primary steel). Bytes live in IndexedDB. */
+/**
+ * An imported reference model (concrete, primary steel). Bytes live in IndexedDB.
+ * '3dm' (Rhino): the original file under the id, its meshes under `<id>.mesh` (core/io/refMesh.ts).
+ */
 export interface ReferenceModel {
   id: Id;
   name: string;
-  kind: 'ifc' | 'dxf';
+  kind: 'ifc' | 'dxf' | '3dm';
   visible: boolean;
   opacity: number;
   /** Translation applied to the reference geometry, mm. */

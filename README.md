@@ -11,7 +11,7 @@ Everything runs in the browser. There is no server: projects autosave to the bro
 
 ## Run it
 
-**One file, no installation.** `npm run build:offline` produces `dist-offline/FacadeSteel.html` (about 10 MB). Everything is embedded in it: the code, the IFC engine (WebAssembly) and the PDF reader. Copy the file anywhere and double-click it to open it in Chrome or Edge.
+**One file, no installation.** `npm run build:offline` produces `dist-offline/FacadeSteel.html` (about 14 MB). Everything is embedded in it: the code, the IFC and Rhino engines (WebAssembly) and the PDF reader. Copy the file anywhere and double-click it to open it in Chrome or Edge.
 - It works offline.
 - Projects autosave in that browser; use File → Save project to keep a `.json` copy.
 - The chat assistant needs an internet connection and an Anthropic API key.
@@ -38,6 +38,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
 1. **Reference.** Bring in what you design against:
    - **IFC** concrete or main-steel models from Revit or Tekla, shown translucent and snappable.
    - **DXF** architect or shop drawings, imported either as wireframe lines or as reference linework.
+   - **Rhino .3dm** architect models (Import → Import Rhino (.3dm)…): per layer, curves become wireframe lines (then the Wireframe check), surfaces and meshes a translucent, snappable reference model used by clash detection, planar surfaces panels for *Panel layout → sub-frame*, points survey points; units, layers and blocks are read. Export → *Rhino model (.3dm)* writes the steel back (meshes named by mark with user strings, wire lines, bolts). See [docs/RHINO.md](docs/RHINO.md).
    - **PDF or image** shop drawings as an underlay you can calibrate and trace over.
 2. **Wireframe.** Draw centre lines on a work plane: XZ or YZ elevations, or the XY plan.
    - **Line** and **Polyline** tools with snapping to ends, midpoints, grid and reference geometry.
@@ -161,7 +162,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [MODIFY](docs/MODIFY.md) (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [EXPORT_PACKAGE](docs/EXPORT_PACKAGE.md), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [RHINO](docs/RHINO.md) (.3dm import and export), [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [MODIFY](docs/MODIFY.md) (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [EXPORT_PACKAGE](docs/EXPORT_PACKAGE.md), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

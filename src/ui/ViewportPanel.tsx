@@ -5,6 +5,8 @@ import { provideReferenceCentre } from '../state/runtime';
 import { Viewer } from '../viewer/Viewer';
 import { getBlob } from '../state/storage';
 import { dxfReferenceObject, loadIfcReference, loadUnderlayImage, placeUnderlay, setGroupOpacity, underlayMesh, type UnderlayImage } from '../viewer/references';
+import { rhinoReferenceObject } from '../viewer/rhinoReference';
+import { decodeRefMeshes, refMeshBlobId } from '../core/io/refMesh';
 import { handleToolPoints } from './actions';
 import { Icon } from './icons';
 import { Segmented } from './widgets';
@@ -227,6 +229,22 @@ function useReferenceRuntime(viewerRef: React.RefObject<Viewer | null>) {
       setStatus(r.id, 'Loading…');
       void (async () => {
         try {
+          if (r.kind === '3dm') {
+            const blob = await getBlob(refMeshBlobId(r.id));
+            if (!blob) throw new Error('File not found in browser storage — import it again.');
+            const set = decodeRefMeshes(blob);
+            const { group, points, triangles } = rhinoReferenceObject(set, r.opacity);
+            group.userData = { reference: r.id, snapPoints: points };
+            group.position.set(r.offset.x, r.offset.y, r.offset.z);
+            group.visible = r.visible;
+            v.refGroup.add(group);
+            loaded.current.set(r.id, group);
+            refreshSnapPoints();
+            setStatus(r.id, set.objects.length ? `Rhino · ${set.objects.length} object${set.objects.length === 1 ? '' : 's'} · ${triangles.toLocaleString()} triangles` : 'Rhino · original file only');
+            v.requestRender();
+            if (set.objects.length) useStore.setState({ zoomRequest: Date.now() });
+            return;
+          }
           const bytes = await getBlob(r.id);
           if (!bytes) throw new Error('File not found in browser storage — import it again.');
           if (r.kind === 'dxf') {

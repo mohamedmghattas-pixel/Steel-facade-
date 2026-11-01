@@ -37,7 +37,8 @@ export function issueComponents(p: Project, issue: ClashIssue): BcfComponent[] {
     if (ref.startsWith('ifc:')) {
       const guid = ref.split(':').slice(2).join(':');
       if (guid && !guid.startsWith('#')) out.push({ ifcGuid: guid, toolId: ref, steel: false });
-    } else out.push({ ifcGuid: partGuid(p.id, ref), toolId: ref, steel: true });
+    } else if (ref.startsWith('3dm:')) continue; // Rhino reference objects have no IFC GlobalId
+    else out.push({ ifcGuid: partGuid(p.id, ref), toolId: ref, steel: true });
   }
   return out;
 }

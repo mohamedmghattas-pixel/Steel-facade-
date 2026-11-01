@@ -119,7 +119,11 @@ function MemberProps({ ids }: { ids: string[] }) {
             value={c((m) => m.role).value as MemberRole}
             mixed={c((m) => m.role).mixed}
             options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
-            onChange={(v) => apply('Role', (d) => void setMemberRole(d, ids, v))}
+            onChange={(v) => {
+              apply('Role', (d) => void setMemberRole(d, ids, v));
+              const rp = project.settings.roleProfiles?.[v];
+              if (rp) useStore.getState().notify(`${ROLE_LABEL[v]} profile ${rp.profile} applied (Library → Profiles by role).`);
+            }}
           />
         </Field>
         <Field label="Material">

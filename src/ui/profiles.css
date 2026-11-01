@@ -504,3 +504,13 @@
   color: var(--text-3);
   pointer-events: none;
 }
+
+.rp-pick {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.rp-pick .profile-picker {
+  flex: 1;
+  min-width: 0;
+}

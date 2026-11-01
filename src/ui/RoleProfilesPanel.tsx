@@ -51,7 +51,14 @@ export function RoleProfilesPanel() {
                   {rp && off ? ` · ${off} differ` : ''}
                 </span>
               </div>
-              <ProfilePicker value={rp?.profile ?? null} allowNone onChange={(v) => void setRoleProfileUi(role, v ? { ...(rp ?? {}), profile: v } : null)} />
+              <div className="rp-pick">
+                <ProfilePicker value={rp?.profile ?? null} onChange={(v) => v && void setRoleProfileUi(role, { ...(rp ?? {}), profile: v })} />
+                {rp && (
+                  <button className="icon-btn" title={`No ${label} profile (members keep theirs)`} onClick={() => void setRoleProfileUi(role, null)}>
+                    ×
+                  </button>
+                )}
+              </div>
               {rp && (
                 <div className="rp-opts">
                   <label title="Section rotation about the member axis (empty: members keep theirs)">

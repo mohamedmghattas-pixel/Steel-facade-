@@ -37,7 +37,7 @@ import { STEEL_DENSITY, type ProfileDef } from '../core/library/profiles';
 import { parseProfileDxf } from '../core/library/profileDxf';
 import { useStore } from '../state/store';
 import { pickFile } from '../state/storage';
-import { askConfirm } from './askState';
+import { askConfirm, useAsk } from './askState';
 import { Field, NumberInput, Segmented, Select } from './widgets';
 import { closeSketcher, exportProfileDxf, exportProfileJsonOne, openSketcher, saveCustomProfile } from './profileActions';
 import { useProfileUi, type SketcherOpen } from './profileUiState';
@@ -316,6 +316,11 @@ function ProfileSketcher({ open }: { open: SketcherOpen }) {
   keyRef.current = (e: KeyboardEvent) => {
     const t = e.target as HTMLElement;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+    // An in-app question (askConfirm) on top handles Escape / Enter itself; nothing else reaches the model.
+    if (useAsk.getState().ask) {
+      if (e.key !== 'Escape' && e.key !== 'Enter' && e.key !== 'Tab') e.stopPropagation();
+      return;
+    }
     e.stopPropagation();
     const mod = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();

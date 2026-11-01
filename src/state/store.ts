@@ -6,15 +6,20 @@ import { loadAutosave, migrateProject } from './storage';
 import { registerProfiles, unregisterProfiles, type ProfileDef } from '../core/library/profiles';
 import type { ColorBy, GroupFilter } from '../core/management/grouping';
 
-/** Keep the global profile catalogue in step with the project's custom profiles. */
-let registered = new Set<string>();
+/**
+ * Keep the global profile catalogue in step with the project's custom profiles.
+ * Only added, changed and removed definitions are (re)built: an outline profile
+ * takes a few milliseconds (validation, section properties).
+ */
+let registered = new Map<string, string>();
 export function syncCustomProfiles(p: Project) {
   const defs = (p.library?.profiles ?? []) as unknown as ProfileDef[];
-  const names = new Set(defs.map((d) => d.name));
-  const stale = [...registered].filter((n) => !names.has(n));
+  const next = new Map(defs.map((d) => [d.name, JSON.stringify(d)]));
+  const changed = defs.filter((d) => registered.get(d.name) !== next.get(d.name));
+  const stale = [...registered.keys()].filter((n) => !next.has(n) || changed.some((d) => d.name === n));
   if (stale.length) unregisterProfiles(stale);
-  if (defs.length) registerProfiles(defs);
-  registered = names;
+  if (changed.length) registerProfiles(changed);
+  registered = next;
 }
 
 const initialProject = migrateProject(loadAutosave()) ?? createProject();

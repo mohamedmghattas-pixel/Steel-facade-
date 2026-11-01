@@ -366,6 +366,8 @@ lists and NC files cannot disagree.
 | D26 | CI pinned to `ubuntu-24.04` and Node 24 action majors | Remove deprecation warnings; avoid silent runner migration | `ubuntu-latest` | Runner upgrades are deliberate |
 | D27 | Parallel development: foundation contracts, worktrees with file ownership, lead merges | About 20 features in one milestone without trampling each other | Sequential implementation | Integration fixes are expected and done by the lead at merge (§2.3) |
 | D28 | Typical values labelled as such; limits documented per area | Trust: users must know what to verify | Silent defaults | Docs carry "typical practice" and caveat lists |
+| D29 | Arbitrary outline profiles (`POLY`, bulge arcs) are centred on their bounding box like every other shape; the insertion point is a shift of the section (`sectionShift`), not a new frame origin | Every consumer (meshes, IFC, DSTV, drawings, clash, connections) keeps working on box-centred outlines and the section centre line | Frame origin at the insertion point | Old models derive unchanged; connections use the box faces of outline profiles ([PROFILES.md](PROFILES.md)) |
+| D30 | Profiles by role as project settings plus a pure `assignProfilesByRole` in core | One place to say "mullions are X, transoms are Y"; other features (wireframe classification, assistant) reuse it | Per-member edits only | New members of a role get its profile; changing it asks whether to update existing members |
 
 ## 5. Known limits and open items
 

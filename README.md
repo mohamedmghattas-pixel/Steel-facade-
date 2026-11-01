@@ -43,7 +43,9 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - **Line** and **Polyline** tools with snapping to ends, midpoints, grid and reference geometry.
    - Typed coordinates: `x,y,z` for world, `u,v` for work-plane, `@dx,dy` for relative, or a single length.
    - **Facade grid** generates every mullion and transom from bay widths and row heights.
-3. **Members.** Assign profiles from the **EN** and **AISC** libraries by hand, or let **Auto-assign** pick by direction or by DXF layer. Then set rotation, face alignment, offsets and extensions.
+3. **Members.** Assign profiles from the **EN** and **AISC** libraries by hand, or let **Auto-assign** pick by direction, DXF layer or role. Then set rotation, face alignment, offsets and extensions.
+   - **Custom profiles:** draw your own section in the **profile sketcher** (outlines, holes, thin walls with bend radii, fillets, mirror, typed coordinates), or upload them from **DXF** (closed polylines with holes), JSON or CSV. Each can carry an **insertion point**, the point the wire line runs through.
+   - **Profiles by role:** give mullions, transoms and the other roles their own profile in Library → *Profiles by role*, and apply it to all members of a role at once. See [docs/PROFILES.md](docs/PROFILES.md).
 4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs.
    - **Steel to concrete:**
      - Slab bracket (edge or top mount, with slotted fin and anchors)
@@ -134,7 +136,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

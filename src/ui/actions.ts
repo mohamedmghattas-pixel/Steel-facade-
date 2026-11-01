@@ -29,7 +29,7 @@ import { exportIfc } from '../core/io/ifcExport';
 import { exportDstvAll } from '../core/fabrication/dstv';
 import { buildBom, bomToXlsx, toCsv } from '../core/reports/bom';
 import { zip } from '../core/io/zip';
-import { allDrawings, anchorScheduleCsv, drawingToDxf } from '../core/drawings';
+import { allDrawings, anchorScheduleCsv, drawingToDxf, sheetFileStem } from '../core/drawings';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
@@ -314,9 +314,9 @@ export function exportNc() {
   notify(`Exported ${files.length} DSTV NC1 file${files.length === 1 ? '' : 's'}.`);
 }
 
-/** "FS-001-A-M1_revA" — identification number plus revision index. */
+/** "FS-001-A-M1_revA" — identification number (with "_sh2" for sheet 2 of a multi-sheet drawing) plus revision index. */
 export function drawingFileName(d: Drawing): string {
-  return safeName(`${d.number}_rev${d.rev === '-' ? '0' : d.rev}`);
+  return safeName(`${sheetFileStem(d)}_rev${d.rev === '-' ? '0' : d.rev}`);
 }
 
 export function drawingsFor(kind?: Drawing['kind']): Drawing[] {

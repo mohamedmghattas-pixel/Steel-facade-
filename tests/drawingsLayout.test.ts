@@ -371,3 +371,24 @@ describe('zones', () => {
     expect(issues(setout)).toEqual([]);
   });
 });
+
+describe('assistant: drawing layout', () => {
+  it('checks the layout, reports zones and changes the zoning settings (undoable)', async () => {
+    const { runTool } = await import('../src/assistant/tools');
+    const { useStore } = await import('../src/state/store');
+    const run = async (input: Record<string, unknown>) => JSON.parse(await runTool('drawing_layout', input));
+    useStore.getState().replaceProject(largeFacade({ floors: 3, bays: 40 }));
+    const check = await run({ action: 'check' });
+    expect(check.withProblems).toBe(0);
+    expect(check.checked).toBeGreaterThan(5);
+    const zones = await run({ action: 'zones' });
+    expect(zones.front.divided).toBe(true);
+    expect(zones.front.zones.every((z: { sheets: string[] }) => z.sheets.length >= 1)).toBe(true);
+    await run({ action: 'set_zoning', enabled: false, gaSheet: 'A1' });
+    expect(useStore.getState().project.drawings.settings.zoning!.enabled).toBe(false);
+    expect(useStore.getState().project.drawings.settings.gaSheet).toBe('A1');
+    expect((await run({ action: 'zones' })).front.divided).toBe(false);
+    useStore.getState().undo();
+    expect(useStore.getState().project.drawings.settings.zoning!.enabled).toBe(true);
+  });
+});

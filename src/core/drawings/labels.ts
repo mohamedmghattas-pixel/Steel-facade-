@@ -132,8 +132,8 @@ export class LabelPlacer {
       }
     }
     if (leaders) {
-      for (const r of [5, 8, 12, 17]) {
-        for (const deg of [45, 135, -45, -135, 90, -90, 0, 180, 22.5, 157.5, -22.5, -157.5]) {
+      for (const r of [5, 8, 12, 17, 23]) {
+        for (const deg of [45, 135, -45, -135, 90, -90, 0, 180, 22.5, 157.5, -22.5, -157.5, 67.5, 112.5, -67.5, -112.5]) {
           const a = (deg * Math.PI) / 180;
           const e = { x: ax + Math.cos(a) * r, y: ay + Math.sin(a) * r };
           const right = Math.cos(a) >= -1e-9;

@@ -25,6 +25,7 @@ import {
   type PickHit,
 } from '../core/drawings/edits';
 import { GA_AXES, nextCutLetter } from '../core/drawings/cuts';
+import { checkSheetLayout } from '../core/drawings/layoutCheck';
 import { nextRev } from '../core/drawings/register';
 import { newId } from '../core/model/ops';
 import { askConfirm, askText } from './askState';
@@ -59,8 +60,10 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
   const host = useRef<HTMLDivElement>(null);
   const svg = useMemo(() => drawingToSvg(d), [d]);
   const H = d.sheet.h;
-  const isGa = d.kind === 'ga';
   const vp: Viewport | undefined = d.viewports?.[0];
+  // Section cuts and details are placed on GA views in the world projection (not on views normal to an inclined facade).
+  const isGa = d.kind === 'ga' && !vp?.axes;
+  const layout = useMemo(() => checkSheetLayout(d), [d]);
   const hidden = project.drawings.edits?.[d.id]?.hidden ?? [];
 
   // A different sheet: drop the selection and any half-done input.
@@ -91,8 +94,8 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
   const toModel = (q: Vec2): Vec3 | null => {
     if (!vp) return null;
     const m = { x: (q.x - vp.origin.x) * vp.den, y: (q.y - vp.origin.y) * vp.den };
-    const ax = GA_AXES[vp.view];
-    return { x: ax.R.x * m.x + ax.U.x * m.y, y: ax.R.y * m.x + ax.U.y * m.y, z: ax.R.z * m.x + ax.U.z * m.y };
+    const ax = vp.axes ?? { o: { x: 0, y: 0, z: 0 }, ...GA_AXES[vp.view] };
+    return { x: ax.o.x + ax.R.x * m.x + ax.U.x * m.y, y: ax.o.y + ax.R.y * m.x + ax.U.y * m.y, z: ax.o.z + ax.R.z * m.x + ax.U.z * m.y };
   };
 
   const finishTwoPoint = async (a: Vec2, b: Vec2) => {
@@ -308,6 +311,19 @@ export function DrawingEditor({ drawing: d, onCuts }: { drawing: Drawing; onCuts
           HINT[tool]
         )}
       </div>
+      {(layout.length > 0 || (d.notices?.length ?? 0) > 0) && (
+        <div className={`dwg-layout ${layout.length ? 'warn' : 'info'}`} role="status">
+          {layout.length > 0 && (
+            <span title={layout.map((i) => i.message).join('\n')}>
+              <Icon name="warn" size={14} /> Layout check: {layout.length} problem{layout.length === 1 ? '' : 's'} — {layout[0].message}
+              {layout.length > 1 ? ` (+${layout.length - 1} more)` : ''}
+            </span>
+          )}
+          {d.notices?.map((n) => (
+            <span key={n}>{n}</span>
+          ))}
+        </div>
+      )}
       <div className="drawing-preview dwg-canvas">
         <div className="dwg-sheet" style={{ width: `${zoom * 100}%`, maxWidth: zoom === 1 ? 1100 : undefined }}>
           <div className="dwg-base" dangerouslySetInnerHTML={{ __html: svg }} />

@@ -4,7 +4,7 @@
  * detail callouts on the GA, erection drawings (setting-out plans, anchor
  * schedules, erection sequences) and company sheet templates.
  */
-import type { GaCut, SheetTemplate, Vec3 } from '../../core/model/types';
+import type { DrawingZoning, GaCut, SheetSize, SheetTemplate, Vec3 } from '../../core/model/types';
 import { newId } from '../../core/model/ops';
 import {
   DEFAULT_TEMPLATE,
@@ -13,8 +13,10 @@ import {
   addCloud,
   addNote,
   anchorRows,
+  checkSheetLayout,
   editableItems,
   hideItem,
+  makeCtx,
   moveGroup,
   newTemplate,
   nextCutLetter,
@@ -22,7 +24,10 @@ import {
   rectPts,
   resetEdits,
   sanitizeTemplate,
+  sheetLabel,
   unhideItem,
+  zonePlanFor,
+  zoningSettings,
   type Drawing,
 } from '../../core/drawings';
 import { derived, useStore } from '../../state/store';
@@ -38,7 +43,7 @@ const st = () => useStore.getState();
 function findDrawing(key: unknown): Drawing {
   const k = String(key ?? '').trim().toLowerCase();
   const ds = drawingsFor();
-  const d = ds.find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k);
+  const d = ds.find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k || sheetLabel(x).toLowerCase() === k);
   if (!d) throw new Error(`No drawing "${key}". Drawings: ${ds.slice(0, 40).map((x) => x.number).join(', ')}${ds.length > 40 ? ' …' : ''}`);
   return d;
 }
@@ -52,7 +57,18 @@ const v3 = (v: unknown, name: string): Vec3 => {
   if (!Array.isArray(v) || v.length !== 3) throw new Error(`${name} must be [x, y, z].`);
   return { x: n(v[0], name), y: n(v[1], name), z: n(v[2], name) };
 };
-const summary = (d: Drawing) => ({ id: d.id, number: d.number, title: d.title, kind: d.kind, scale: d.scale, rev: d.rev, changed: d.changed, edited: !!d.edited });
+const summary = (d: Drawing) => ({
+  id: d.id,
+  number: d.number,
+  ...(d.sheetCount ? { sheet: `${d.sheetIndex}/${d.sheetCount}` } : {}),
+  title: d.title,
+  kind: d.kind,
+  scale: d.scale,
+  rev: d.rev,
+  changed: d.changed,
+  edited: !!d.edited,
+  ...(d.zone ? { zone: d.zone.name } : {}),
+});
 
 const ERECTION = new Set(['setout', 'anchors', 'sequence']);
 
@@ -112,6 +128,26 @@ export const drawingsModule: ToolModule = {
       input_schema: {
         type: 'object',
         properties: { action: { type: 'string', enum: ['list', 'anchor_schedule', 'export_csv', 'enable', 'disable'] }, limit: num },
+        required: ['action'],
+      },
+    },
+    {
+      name: 'drawing_layout',
+      description:
+        'Sheet layout of the drawing set. Actions: check (layout check of one drawing, or of every sheet when drawing is omitted: overlapping blocks, blocks outside the frame or over the title block / revision table, lettering below 1.8 mm (2.5 mm for marks), overlapping marks), zones (how large GA elevations / plans and erection sequences are divided: scale, facade planes, zones with their sheets, match-line references), set_zoning (enabled, scale = ISO 5455 denominator or 0 for auto, maxZones, overlap mm, splitBy grids|equal, viewDirection auto|world|normal, gaSheet A3|A2|A1|A0 for GA and erection sequences). Tables that do not fit continue on further sheets of the same drawing (same number, sheet n/N).',
+      input_schema: {
+        type: 'object',
+        properties: {
+          action: { type: 'string', enum: ['check', 'zones', 'set_zoning'] },
+          drawing: { type: 'string', description: 'Drawing id or number (check); omit for all sheets' },
+          enabled: { type: 'boolean' },
+          scale: num,
+          maxZones: num,
+          overlap: num,
+          splitBy: { type: 'string', enum: ['grids', 'equal'] },
+          viewDirection: { type: 'string', enum: ['auto', 'world', 'normal'] },
+          gaSheet: { type: 'string', enum: ['A3', 'A2', 'A1', 'A0'] },
+        },
         required: ['action'],
       },
     },
@@ -263,6 +299,62 @@ export const drawingsModule: ToolModule = {
       if (action === 'export_csv') {
         exportAnchorScheduleCsv();
         return { exported: anchorRows(p, dm).length };
+      }
+      throw new Error(`Unknown action ${action}.`);
+    },
+
+    drawing_layout(input: Json) {
+      const action = String(input.action);
+      if (action === 'check') {
+        const list = input.drawing ? [findDrawing(input.drawing)] : drawingsFor();
+        const sheets = list
+          .map((d) => ({ ...summary(d), issues: checkSheetLayout(d).map((i) => i.message), notices: d.notices ?? [] }))
+          .filter((x) => input.drawing || x.issues.length || x.notices.length);
+        return { checked: list.length, withProblems: sheets.filter((x) => x.issues.length).length, sheets: sheets.slice(0, 60) };
+      }
+      if (action === 'zones') {
+        const p = st().project;
+        const ctx = makeCtx(p, derived(p));
+        const ds = drawingsFor();
+        const view = (v: 'front' | 'plan') => {
+          const plan = zonePlanFor(ctx, v);
+          if (!plan) return { divided: false };
+          return {
+            divided: true,
+            scale: `1:${plan.den}`,
+            legibleScale: plan.legible ? `1:${plan.legible}` : null,
+            reason: plan.reason,
+            facadePlanes: plan.segments.map((sg) => ({ name: sg.name, view: sg.frame.kind, tiltFromVertical: Math.round(sg.tilt), assemblies: sg.assemblies.length })),
+            zones: plan.zones.map((z) => ({
+              zone: z.index,
+              name: z.name,
+              assemblies: z.assemblies.length,
+              sheets: ds.filter((d) => d.zone?.index === z.index && d.id.startsWith(v === 'front' ? 'ga-front-z' : 'ga-plan-z')).map((d) => sheetLabel(d)),
+              matchLines: z.match.map((m) => ({ side: m.side, zone: m.zone, fold: !!m.fold })),
+            })),
+          };
+        };
+        return { settings: zoningSettings(p), gaSheet: p.drawings.settings.gaSheet, front: view('front'), plan: view('plan'), erectionSheets: ds.filter((d) => d.kind === 'sequence' && d.zone).length };
+      }
+      if (action === 'set_zoning') {
+        const patch: Partial<DrawingZoning> = {};
+        if (input.enabled !== undefined) patch.enabled = !!input.enabled;
+        if (input.scale !== undefined) patch.scale = Math.max(0, n(input.scale, 'scale'));
+        if (input.maxZones !== undefined) patch.maxZones = Math.max(1, Math.round(n(input.maxZones, 'maxZones')));
+        if (input.overlap !== undefined) patch.overlap = Math.max(0, n(input.overlap, 'overlap'));
+        if (input.splitBy !== undefined) patch.splitBy = input.splitBy === 'equal' ? 'equal' : 'grids';
+        if (input.viewDirection !== undefined) {
+          if (!['auto', 'world', 'normal'].includes(String(input.viewDirection))) throw new Error('viewDirection must be auto, world or normal.');
+          patch.viewDirection = input.viewDirection as DrawingZoning['viewDirection'];
+        }
+        const sheet = input.gaSheet !== undefined ? String(input.gaSheet) : undefined;
+        if (sheet && !['A3', 'A2', 'A1', 'A0'].includes(sheet)) throw new Error('gaSheet must be A3, A2, A1 or A0.');
+        st().apply('Assistant: drawing zones', (q) => {
+          q.drawings.settings.zoning = { ...zoningSettings(q), ...patch };
+          if (sheet) q.drawings.settings.gaSheet = sheet as SheetSize;
+        });
+        const p = st().project;
+        return { settings: zoningSettings(p), gaSheet: p.drawings.settings.gaSheet };
       }
       throw new Error(`Unknown action ${action}.`);
     },

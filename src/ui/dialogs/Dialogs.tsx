@@ -15,6 +15,7 @@ import { ModellingDialogs } from './ModellingDialogs';
 import { DwgInfoDialog, IfcSteelDialog, PanelLayoutDialog, PhasesDialog } from './ManagementDialogs';
 import { WireframeCheckDialog } from './WireframeDialog';
 import { OrientSurfaceDialog } from './OrientDialog';
+import { ExportPackageDialog } from './ExportPackageDialog';
 import { openWireframeCheck } from '../wireframeActions';
 
 export function Dialogs() {
@@ -53,6 +54,8 @@ export function Dialogs() {
       return <WireframeCheckDialog onClose={close} />;
     case 'orientSurface':
       return <OrientSurfaceDialog onClose={close} />;
+    case 'exportPackage':
+      return <ExportPackageDialog onClose={close} />;
     default:
       return <ModellingDialogs dialog={dialog} onClose={close} />;
   }

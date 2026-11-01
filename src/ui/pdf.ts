@@ -1,25 +1,37 @@
 import type { Drawing } from '../core/drawings/types';
 import { drawingToSvg } from '../core/drawings/render';
+import { sheetsToPdf, type PdfBookOptions, type PdfSheet, type SvgPainter } from '../core/export/pdfBook';
+import type { SvgPage } from '../core/reports/tablePages';
 
-/** Render drawings to a multi-page PDF (one sheet per drawing, vector output). */
-export async function drawingsToPdf(drawings: Drawing[]): Promise<Blob> {
-  const [{ jsPDF }, { svg2pdf }] = await Promise.all([import('jspdf'), import('svg2pdf.js')]);
-  const first = drawings[0]?.sheet ?? { w: 420, h: 297 };
-  const orient = (s: { w: number; h: number }) => (s.w >= s.h ? 'landscape' : 'portrait');
-  const doc = new jsPDF({ orientation: orient(first), unit: 'mm', format: [first.w, first.h] });
-  const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:0;height:0;overflow:hidden';
-  document.body.appendChild(host);
-  try {
-    for (const [i, d] of drawings.entries()) {
-      if (i > 0) doc.addPage([d.sheet.w, d.sheet.h], orient(d.sheet));
-      host.innerHTML = drawingToSvg(d);
-      const el = host.querySelector('svg');
-      if (!el) continue;
-      await svg2pdf(el, doc, { x: 0, y: 0, width: d.sheet.w, height: d.sheet.h });
-    }
-  } finally {
-    host.remove();
+let host: HTMLDivElement | null = null;
+
+/** Puts an SVG on a jsPDF page with svg2pdf.js (vector output); needs the DOM. */
+export const svgPainter: SvgPainter = async (doc, svg, w, h) => {
+  const { svg2pdf } = await import('svg2pdf.js');
+  if (!host || !host.isConnected) {
+    host = document.createElement('div');
+    host.style.cssText = 'position:fixed;left:-10000px;top:0;width:0;height:0;overflow:hidden';
+    document.body.appendChild(host);
   }
-  return doc.output('blob');
+  host.innerHTML = svg;
+  const el = host.querySelector('svg');
+  try {
+    if (el) await svg2pdf(el, doc, { x: 0, y: 0, width: w, height: h });
+  } finally {
+    host.innerHTML = '';
+  }
+};
+
+const toBlob = (bytes: Uint8Array) => new Blob([bytes as BlobPart], { type: 'application/pdf' });
+
+/** Render drawings to a multi-page PDF (one sheet per drawing, vector output), with a bookmark per drawing when there are several. */
+export async function drawingsToPdf(drawings: Drawing[], opts: PdfBookOptions = {}): Promise<Blob> {
+  const marks = drawings.length > 1;
+  const sheets: PdfSheet[] = drawings.map((d) => ({ svg: () => drawingToSvg(d), w: d.sheet.w, h: d.sheet.h, ...(marks ? { bookmark: { title: `${d.number}  ${d.title}` } } : {}) }));
+  return toBlob(await sheetsToPdf(sheets, svgPainter, opts));
+}
+
+/** Vector PDF from SVG pages (mm), one PDF page per SVG page. */
+export async function svgPagesToPdf(pages: SvgPage[], opts: PdfBookOptions = {}): Promise<Blob> {
+  return toBlob(await sheetsToPdf(pages.map((pg) => ({ svg: () => pg.svg, w: pg.w, h: pg.h })), svgPainter, opts));
 }

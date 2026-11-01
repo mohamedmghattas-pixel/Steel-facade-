@@ -35,6 +35,21 @@ function dosDateTime(d = new Date()): { time: number; date: number } {
 }
 
 export function zip(files: { name: string; data: Uint8Array | string }[]): Uint8Array {
+  const chunks = zipChunks(files);
+  const out = new Uint8Array(chunks.reduce((s, c) => s + c.length, 0));
+  let pos = 0;
+  for (const c of chunks) {
+    out.set(c, pos);
+    pos += c.length;
+  }
+  return out;
+}
+
+/**
+ * The ZIP as a list of chunks (headers and the file data itself, not copied), for
+ * large archives: `new Blob(zipChunks(files))` avoids one more copy of everything.
+ */
+export function zipChunks(files: { name: string; data: Uint8Array | string }[]): Uint8Array[] {
   const { time, date } = dosDateTime();
   const chunks: Uint8Array[] = [];
   const central: Uint8Array[] = [];
@@ -77,7 +92,7 @@ export function zip(files: { name: string; data: Uint8Array | string }[]): Uint8
     cv.setUint16(32, 0, true); // comment
     cv.setUint16(34, 0, true); // disk
     cv.setUint16(36, 0, true); // internal attrs
-    cv.setUint32(38, 0, true); // external attrs
+    cv.setUint32(38, f.name.endsWith('/') ? 0x10 : 0, true); // external attrs (MS-DOS directory flag for folder entries)
     cv.setUint32(42, offset, true);
     cen.set(name, 46);
 
@@ -95,12 +110,5 @@ export function zip(files: { name: string; data: Uint8Array | string }[]): Uint8
   ev.setUint32(12, cdSize, true);
   ev.setUint32(16, offset, true);
 
-  const total = offset + cdSize + end.length;
-  const out = new Uint8Array(total);
-  let pos = 0;
-  for (const c of [...chunks, ...central, end]) {
-    out.set(c, pos);
-    pos += c.length;
-  }
-  return out;
+  return [...chunks, ...central, end];
 }

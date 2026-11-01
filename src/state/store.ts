@@ -53,6 +53,7 @@ export type DialogName =
   | 'curvedFacade'
   | 'wireframeCheck'
   | 'orientSurface'
+  | 'exportPackage'
   | ManagementDialogName;
 
 export interface Selection {

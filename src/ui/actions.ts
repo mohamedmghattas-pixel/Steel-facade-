@@ -27,11 +27,9 @@ import type { ConnectionType } from '../core/model/types';
 import { derived, useStore, type Tool } from '../state/store';
 import { askConfirm, askText } from './askState';
 import { download, migrateProject, pickFile, putBlob, deleteBlob, safeName } from '../state/storage';
-import { exportIfc } from '../core/io/ifcExport';
-import { exportDstvAll } from '../core/fabrication/dstv';
-import { buildBom, bomToXlsx, toCsv } from '../core/reports/bom';
 import { zip } from '../core/io/zip';
-import { allDrawings, anchorScheduleCsv, drawingToDxf, sheetFileStem } from '../core/drawings';
+import { allDrawings, sheetFileStem } from '../core/drawings';
+import { anchorCsv, bomCsvFiles, bomXlsx, drawingDxf, dstvFiles, hasAnchors, ifcText, projectJson, XLSX_MIME } from '../core/export/outputs';
 import type { Drawing } from '../core/drawings/types';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
@@ -52,8 +50,7 @@ export async function newProject() {
 }
 
 export function saveProjectFile() {
-  const p = st().project;
-  download(`${fileBase()}.facadesteel.json`, JSON.stringify(p, null, 1), 'application/json');
+  download(`${fileBase()}.facadesteel.json`, projectJson(st().project), 'application/json');
 }
 
 export async function openProjectFile() {
@@ -298,30 +295,20 @@ function guardModel(): boolean {
 export function exportIfcFile() {
   if (!guardModel()) return;
   const p = st().project;
-  download(`${fileBase()}.ifc`, exportIfc(p, derived(p)), 'application/x-step');
+  download(`${fileBase()}.ifc`, ifcText(p, derived(p)), 'application/x-step');
 }
 
 export function exportBom(kind: 'csv' | 'xlsx') {
   if (!guardModel()) return;
   const p = st().project;
-  const bom = buildBom(p, derived(p));
-  if (kind === 'xlsx') {
-    download(`${fileBase()}-material-list.xlsx`, bomToXlsx(bom, p), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    return;
-  }
-  const files = [
-    { name: 'parts.csv', data: toCsv(bom.parts) },
-    { name: 'assemblies.csv', data: toCsv(bom.assemblies) },
-    { name: 'profiles.csv', data: toCsv(bom.profiles) },
-    { name: 'bolts.csv', data: toCsv(bom.bolts) },
-  ];
-  download(`${fileBase()}-material-list-csv.zip`, zip(files), 'application/zip');
+  if (kind === 'xlsx') return download(`${fileBase()}-material-list.xlsx`, bomXlsx(p, derived(p)), XLSX_MIME);
+  download(`${fileBase()}-material-list-csv.zip`, zip(bomCsvFiles(p, derived(p))), 'application/zip');
 }
 
 export function exportNc() {
   if (!guardModel()) return;
   const p = st().project;
-  const files = exportDstvAll(p, derived(p)).map((f) => ({ name: f.name, data: f.content }));
+  const files = dstvFiles(p, derived(p));
   download(`${fileBase()}-nc-dstv.zip`, zip(files), 'application/zip');
   notify(`Exported ${files.length} DSTV NC1 file${files.length === 1 ? '' : 's'}.`);
 }
@@ -340,7 +327,7 @@ export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
 export function exportDrawingsDxf(list?: Drawing[]) {
   if (!guardModel()) return;
   const ds = list ?? drawingsFor();
-  const files = ds.map((d) => ({ name: `${drawingFileName(d)}.dxf`, data: drawingToDxf(d) }));
+  const files = ds.map((d) => ({ name: `${drawingFileName(d)}.dxf`, data: drawingDxf(d) }));
   download(`${fileBase()}-drawings-dxf.zip`, zip(files), 'application/zip');
 }
 
@@ -349,8 +336,8 @@ export function exportAnchorScheduleCsv() {
   if (!guardModel()) return;
   const p = st().project;
   const dm = derived(p);
-  if (!dm.bolts.some((b) => b.kind === 'anchor')) return notify('There are no anchors in the model.', 'error');
-  download(`${fileBase()}-anchor-schedule.csv`, anchorScheduleCsv(p, dm), 'text/csv');
+  if (!hasAnchors(dm)) return notify('There are no anchors in the model.', 'error');
+  download(`${fileBase()}-anchor-schedule.csv`, anchorCsv(p, dm), 'text/csv');
 }
 
 export async function exportDrawingsPdf(list?: Drawing[]) {

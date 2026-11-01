@@ -1,0 +1,610 @@
+{
+ "sampleProject": {
+  "FS-001-A-BK1": {
+   "fp": "b05a6e8d",
+   "noMarks": "acfd7066",
+   "title": "Assembly BK1 – Base plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-BK2": {
+   "fp": "25e258ca",
+   "noMarks": "3644c135",
+   "title": "Assembly BK2 – Back plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-CL1": {
+   "fp": "30d81ed5",
+   "noMarks": "f0145474",
+   "title": "Assembly CL1 – Cleat L 60x60x6",
+   "scale": "1:1",
+   "size": "A3"
+  },
+  "FS-001-A-CL2": {
+   "fp": "695b1a5a",
+   "noMarks": "cc813f19",
+   "title": "Assembly CL2 – Cleat L 60x60x6",
+   "scale": "1:1",
+   "size": "A3"
+  },
+  "FS-001-A-M1": {
+   "fp": "167b8694",
+   "noMarks": "5e4a7888",
+   "title": "Assembly M1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M2": {
+   "fp": "e9aac97a",
+   "noMarks": "93fdf76d",
+   "title": "Assembly M2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M3": {
+   "fp": "8327e4d0",
+   "noMarks": "87c72fa0",
+   "title": "Assembly M3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M4": {
+   "fp": "1a551fcc",
+   "noMarks": "f160bc0f",
+   "title": "Assembly M4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-T1": {
+   "fp": "18003f4d",
+   "noMarks": "a9ca393e",
+   "title": "Assembly T1 – RHS 100x50x4",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-AS-01": {
+   "fp": "a37672e1",
+   "noMarks": "51627483",
+   "title": "Anchor schedule",
+   "scale": "—",
+   "size": "A3"
+  },
+  "FS-001-DR-01": {
+   "fp": "e21b1885",
+   "noMarks": "adfbe0f9",
+   "title": "Drawing register",
+   "scale": "—",
+   "size": "A3"
+  },
+  "FS-001-E-01": {
+   "fp": "901c2afb",
+   "noMarks": "90298653",
+   "title": "Bracket setting-out – L00 (+0.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-E-02": {
+   "fp": "105dc3b6",
+   "noMarks": "bd6c5791",
+   "title": "Bracket setting-out – L01 (+3.500)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-E-03": {
+   "fp": "9a1e1c7b",
+   "noMarks": "b6d8f5f9",
+   "title": "Bracket setting-out – L02 (+7.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-ES-01": {
+   "fp": "46ce3137",
+   "noMarks": "4ea9b7c6",
+   "title": "Erection sequence 1/2 – Floor L00 – L01",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "FS-001-ES-02": {
+   "fp": "768f0a62",
+   "noMarks": "1855466d",
+   "title": "Erection sequence 2/2 – Floor L01 – L02",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "FS-001-GA-01": {
+   "fp": "b5b5c0d1",
+   "noMarks": "d3beb0fc",
+   "title": "General arrangement – Front elevation (looking north)",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "FS-001-GA-02": {
+   "fp": "3f6565c3",
+   "noMarks": "3e898c1a",
+   "title": "General arrangement – Plan",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-P-cl1": {
+   "fp": "034c94e9",
+   "noMarks": "cf64c80a",
+   "title": "Part cl1 – Cleat",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-cl2": {
+   "fp": "a0ec025e",
+   "noMarks": "505d01e9",
+   "title": "Part cl2 – Cleat",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-m1": {
+   "fp": "0d7dd142",
+   "noMarks": "a0279e0f",
+   "title": "Part m1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m2": {
+   "fp": "ef9f111d",
+   "noMarks": "585cd99b",
+   "title": "Part m2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m3": {
+   "fp": "74c7fb82",
+   "noMarks": "b2369a4e",
+   "title": "Part m3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m4": {
+   "fp": "3bf16402",
+   "noMarks": "7adf3249",
+   "title": "Part m4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-pl1": {
+   "fp": "5b2eabaa",
+   "noMarks": "67f43cd5",
+   "title": "Part pl1 – Base plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-pl2": {
+   "fp": "722c8eee",
+   "noMarks": "e8e02abd",
+   "title": "Part pl2 – Back plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-pl3": {
+   "fp": "e29b2aa9",
+   "noMarks": "afc928e1",
+   "title": "Part pl3 – Fin plate",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-pl4": {
+   "fp": "f90d356b",
+   "noMarks": "e45ebb0c",
+   "title": "Part pl4 – Fin plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-t1": {
+   "fp": "f0987d75",
+   "noMarks": "74022002",
+   "title": "Part t1 – RHS 100x50x4",
+   "scale": "1:2",
+   "size": "A3"
+  }
+ },
+ "sampleFacade": {
+  "DWG-A-BK1": {
+   "fp": "2be29303",
+   "noMarks": "5078046d",
+   "title": "Assembly BK1 – Base plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-BK2": {
+   "fp": "829f44e1",
+   "noMarks": "a0d1b51d",
+   "title": "Assembly BK2 – Back plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-CL1": {
+   "fp": "11728804",
+   "noMarks": "13aac8b2",
+   "title": "Assembly CL1 – Cleat L 60x60x6",
+   "scale": "1:1",
+   "size": "A3"
+  },
+  "DWG-A-M1": {
+   "fp": "45b5d7cf",
+   "noMarks": "44a77af7",
+   "title": "Assembly M1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-M2": {
+   "fp": "f2b414a2",
+   "noMarks": "007915c0",
+   "title": "Assembly M2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-M3": {
+   "fp": "1df21430",
+   "noMarks": "ab9b617a",
+   "title": "Assembly M3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-M4": {
+   "fp": "6775aa6a",
+   "noMarks": "0243d954",
+   "title": "Assembly M4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-A-T1": {
+   "fp": "aa613c6e",
+   "noMarks": "977c026d",
+   "title": "Assembly T1 – RHS 80x40x3",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "DWG-AS-01": {
+   "fp": "fbe2bcdb",
+   "noMarks": "4a93dd6d",
+   "title": "Anchor schedule",
+   "scale": "—",
+   "size": "A3"
+  },
+  "DWG-DR-01": {
+   "fp": "d5517b1f",
+   "noMarks": "9ea9e0c5",
+   "title": "Drawing register",
+   "scale": "—",
+   "size": "A3"
+  },
+  "DWG-E-01": {
+   "fp": "a087ca6e",
+   "noMarks": "6fa54ee8",
+   "title": "Bracket setting-out – L00 (+0.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "DWG-E-02": {
+   "fp": "fafa5446",
+   "noMarks": "54db2ea5",
+   "title": "Bracket setting-out – L01 (+3.500)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "DWG-E-03": {
+   "fp": "fadd2601",
+   "noMarks": "6ecfe561",
+   "title": "Bracket setting-out – L02 (+7.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "DWG-ES-01": {
+   "fp": "f1ab1c02",
+   "noMarks": "213d09ae",
+   "title": "Erection sequence 1/3 – Floor L00 – L01",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "DWG-ES-02": {
+   "fp": "b10c1112",
+   "noMarks": "08273a49",
+   "title": "Erection sequence 2/3 – Floor L01 – L02",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "DWG-ES-03": {
+   "fp": "57c3cf73",
+   "noMarks": "dc9af141",
+   "title": "Erection sequence 3/3 – Above L02",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "DWG-GA-01": {
+   "fp": "12df1c71",
+   "noMarks": "8cc8bb8e",
+   "title": "General arrangement – Front elevation (looking north)",
+   "scale": "1:50",
+   "size": "A3"
+  },
+  "DWG-GA-02": {
+   "fp": "7d7c9d6a",
+   "noMarks": "c012379b",
+   "title": "General arrangement – Plan",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "DWG-P-cl1": {
+   "fp": "a0908006",
+   "noMarks": "4969220f",
+   "title": "Part cl1 – Cleat",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "DWG-P-m1": {
+   "fp": "004d5224",
+   "noMarks": "c5a78f6b",
+   "title": "Part m1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-P-m2": {
+   "fp": "4675ae31",
+   "noMarks": "dc234c08",
+   "title": "Part m2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-P-m3": {
+   "fp": "dea82452",
+   "noMarks": "5f6da608",
+   "title": "Part m3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-P-m4": {
+   "fp": "9b714e1c",
+   "noMarks": "43340dfe",
+   "title": "Part m4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-P-pl1": {
+   "fp": "fe64b12e",
+   "noMarks": "cc6d36bc",
+   "title": "Part pl1 – Base plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "DWG-P-pl2": {
+   "fp": "4b2c4fed",
+   "noMarks": "19667957",
+   "title": "Part pl2 – Back plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "DWG-P-pl3": {
+   "fp": "87389041",
+   "noMarks": "46f3019e",
+   "title": "Part pl3 – Fin plate",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "DWG-P-pl4": {
+   "fp": "d0f7d0da",
+   "noMarks": "66a01d66",
+   "title": "Part pl4 – Fin plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "DWG-P-t1": {
+   "fp": "c59a9a1a",
+   "noMarks": "a76bbaec",
+   "title": "Part t1 – RHS 80x40x3",
+   "scale": "1:2",
+   "size": "A3"
+  }
+ },
+ "sampleProjectA1Asme": {
+  "FS-001-A-BK1": {
+   "fp": "6c70556d",
+   "noMarks": "5d6c43ce",
+   "title": "Assembly BK1 – Base plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-BK2": {
+   "fp": "91f0a60f",
+   "noMarks": "ca6ba280",
+   "title": "Assembly BK2 – Back plate PL10",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-CL1": {
+   "fp": "403a828f",
+   "noMarks": "de4c9466",
+   "title": "Assembly CL1 – Cleat L 60x60x6",
+   "scale": "1:1",
+   "size": "A3"
+  },
+  "FS-001-A-CL2": {
+   "fp": "eef5ac7c",
+   "noMarks": "115ad11f",
+   "title": "Assembly CL2 – Cleat L 60x60x6",
+   "scale": "1:1",
+   "size": "A3"
+  },
+  "FS-001-A-M1": {
+   "fp": "bf1f54d4",
+   "noMarks": "9a3412ec",
+   "title": "Assembly M1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M2": {
+   "fp": "c12f8e5a",
+   "noMarks": "0dd4ae25",
+   "title": "Assembly M2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M3": {
+   "fp": "c726e96e",
+   "noMarks": "21015362",
+   "title": "Assembly M3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-M4": {
+   "fp": "b5c1521e",
+   "noMarks": "d440f999",
+   "title": "Assembly M4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-A-T1": {
+   "fp": "48062956",
+   "noMarks": "f668c3f5",
+   "title": "Assembly T1 – RHS 100x50x4",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-AS-01": {
+   "fp": "a37672e1",
+   "noMarks": "1d8bc775",
+   "title": "Anchor schedule",
+   "scale": "—",
+   "size": "A3"
+  },
+  "FS-001-DR-01": {
+   "fp": "e21b1885",
+   "noMarks": "5b7f6b94",
+   "title": "Drawing register",
+   "scale": "—",
+   "size": "A3"
+  },
+  "FS-001-E-01": {
+   "fp": "3e93da73",
+   "noMarks": "853219c1",
+   "title": "Bracket setting-out – L00 (+0.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-E-02": {
+   "fp": "ee238368",
+   "noMarks": "4a1f8145",
+   "title": "Bracket setting-out – L01 (+3.500)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-E-03": {
+   "fp": "2949c6ed",
+   "noMarks": "17735a7d",
+   "title": "Bracket setting-out – L02 (+7.000)",
+   "scale": "1:20",
+   "size": "A3"
+  },
+  "FS-001-ES-01": {
+   "fp": "652c6ad2",
+   "noMarks": "ba748840",
+   "title": "Erection sequence 1/2 – Floor L00 – L01",
+   "scale": "1:20",
+   "size": "A1"
+  },
+  "FS-001-ES-02": {
+   "fp": "fa02ef0e",
+   "noMarks": "744f2d3d",
+   "title": "Erection sequence 2/2 – Floor L01 – L02",
+   "scale": "1:20",
+   "size": "A1"
+  },
+  "FS-001-GA-01": {
+   "fp": "43a835a6",
+   "noMarks": "7fbf71b2",
+   "title": "General arrangement – Front elevation (looking north)",
+   "scale": "1:20",
+   "size": "A1"
+  },
+  "FS-001-GA-02": {
+   "fp": "d87dd080",
+   "noMarks": "64f3ab65",
+   "title": "General arrangement – Plan",
+   "scale": "1:10",
+   "size": "A1"
+  },
+  "FS-001-P-cl1": {
+   "fp": "afe32576",
+   "noMarks": "858458d9",
+   "title": "Part cl1 – Cleat",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-cl2": {
+   "fp": "581d92ed",
+   "noMarks": "f4f25cae",
+   "title": "Part cl2 – Cleat",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-m1": {
+   "fp": "d1ea711e",
+   "noMarks": "72c06fc5",
+   "title": "Part m1 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m2": {
+   "fp": "83a5f9a8",
+   "noMarks": "6a7bf684",
+   "title": "Part m2 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m3": {
+   "fp": "8f797152",
+   "noMarks": "e873b420",
+   "title": "Part m3 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-m4": {
+   "fp": "1495c85c",
+   "noMarks": "db8396a9",
+   "title": "Part m4 – SHS 100x100x5",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-pl1": {
+   "fp": "e2a7e5a8",
+   "noMarks": "edeacad5",
+   "title": "Part pl1 – Base plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-pl2": {
+   "fp": "d37d1934",
+   "noMarks": "8628afc9",
+   "title": "Part pl2 – Back plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-pl3": {
+   "fp": "688c3a83",
+   "noMarks": "0c6b0549",
+   "title": "Part pl3 – Fin plate",
+   "scale": "1:5",
+   "size": "A3"
+  },
+  "FS-001-P-pl4": {
+   "fp": "619824e2",
+   "noMarks": "5e5623ed",
+   "title": "Part pl4 – Fin plate",
+   "scale": "1:2",
+   "size": "A3"
+  },
+  "FS-001-P-t1": {
+   "fp": "c1a03bfc",
+   "noMarks": "9c3d0eb7",
+   "title": "Part t1 – RHS 100x50x4",
+   "scale": "1:2",
+   "size": "A3"
+  }
+ }
+}

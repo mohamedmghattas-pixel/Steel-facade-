@@ -13,6 +13,7 @@ const STYLE: Record<DLayer, { w: number; dash?: string }> = {
   medium: { w: 0.35 },
   border: { w: 0.7 },
   heavy: { w: 0.7 },
+  match: { w: 0.7, dash: '12 1.5 1 1.5' },
 };
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -78,6 +79,7 @@ const DXF_LAYERS: Record<DLayer, { name: string; color: number; linetype: 'CONTI
   medium: { name: 'ISO-0.35', color: 4, linetype: 'CONTINUOUS' },
   border: { name: 'ISO-FRAME-0.70', color: 7, linetype: 'CONTINUOUS' },
   heavy: { name: 'ISO-EXTRAWIDE-0.70', color: 6, linetype: 'CONTINUOUS' },
+  match: { name: 'ISO-MATCHLINE-0.70', color: 5, linetype: 'CENTER' },
 };
 
 export function drawingToDxf(d: Drawing): string {

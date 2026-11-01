@@ -102,11 +102,12 @@ const LOCAL: ViewAxes = { R: V(1, 0, 0), U: V(0, 1, 0), D: V(0, 0, 1) };
 // GA symbols
 
 /** Cutting planes and detail circles of the cuts placed on this GA view. */
-export function drawGaCuts(ctx: DrawCtx, s: Sheet, view: GaViewName, P: (v: Vec2) => Vec2, den: number) {
+export function drawGaCuts(ctx: DrawCtx, s: Sheet, view: GaViewName, P: (v: Vec2) => Vec2, den: number, only?: (c: GaCut) => boolean) {
   const ga = GA_AXES[view];
   const to2 = (q: Vec3) => P({ x: dot(q, ga.R), y: dot(q, ga.U) });
   for (const c of ctx.p.drawings.cuts ?? []) {
     if (cutView(c) !== view) continue;
+    if (only && !only(c)) continue;
     const letter = cutLetter(ctx.p, c);
     const ref = drawingNumber(ctx.p, `cut-${c.id}`);
     s.withTag({ id: `cut:${c.id}` }, () => {

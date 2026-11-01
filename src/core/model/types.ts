@@ -667,6 +667,32 @@ export interface DrawingSettings {
   extraNotes: string[];
   /** Include erection drawings (setting-out plans, anchor schedules, erection sequences) in the set. Default on. */
   erection?: boolean;
+  /** Dividing large elevations and plans into zones, one sheet per zone (GA, erection sequences). */
+  zoning?: DrawingZoning;
+}
+
+/**
+ * Zoning of large views: when a GA elevation / plan or an erection sequence is
+ * not legible on one sheet, it is divided into zones (one sheet each) with a key
+ * plan and match lines referring to the adjacent zone sheets.
+ */
+export interface DrawingZoning {
+  /** Divide views that are not legible on one sheet (default on). */
+  enabled: boolean;
+  /** Scale denominator (ISO 5455) of zone sheets; 0 = automatic (legible scale from the spacing of the marks). */
+  scale: number;
+  /** Most zones per view; when more would be needed, the next smaller ISO scale is used. */
+  maxZones: number;
+  /** Overlap shown beyond each match line, model mm. */
+  overlap: number;
+  /** Where zones are divided: at grid lines (else member lines, else equal widths), or in equal widths. */
+  splitBy: 'grids' | 'equal';
+  /**
+   * Elevation views: 'world' = front elevation looking north; 'normal' = normal
+   * to the facade (best-fit plane per facade part, true shape); 'auto' = normal
+   * where the facade is inclined more than 10° from vertical or not aligned with X.
+   */
+  viewDirection: 'auto' | 'world' | 'normal';
 }
 
 export interface DrawingRevision {

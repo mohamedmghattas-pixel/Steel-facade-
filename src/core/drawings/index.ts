@@ -1,21 +1,22 @@
 import type { Project } from '../model/types';
 import { uniqueAssemblies, uniqueParts, type DerivedModel, type Part } from '../derive/model';
 import { assemblyDrawing } from './assemblyDrawing';
-import { gaDrawing } from './gaDrawing';
+import { gaDrawings } from './gaDrawing';
 import { partDrawing as partDrawingCtx } from './partDrawing';
 import { registerDrawings } from './registerDrawing';
-import { makeCtx, type DrawCtx } from './compose';
+import { flattenSheets, makeCtx, type DrawCtx } from './compose';
 import { cutDrawings } from './cuts';
 import { erectionDrawings } from './erection';
 import type { Drawing } from './types';
 
 export * from './types';
 export { assemblyDrawing } from './assemblyDrawing';
-export { gaDrawing, type GaView } from './gaDrawing';
+export { gaDrawing, gaDrawings, type GaView } from './gaDrawing';
+export { zonePlan, zonePlanFor, zoningSettings, facadeSegments, legibleScaleByPlacement, type Zone, type ZonePlan, type FacadeSegment } from './zoning';
 export { drawingToSvg, drawingToDxf, entitiesToSvg } from './render';
-export { issueDrawings, nextRev, drawingNumber, type IssueInfo } from './register';
+export { issueDrawings, nextRev, drawingNumber, sheetFileStem, sheetLabel, type IssueInfo } from './register';
 export { STANDARDS, SHEETS, ISO_SCALES } from './standards';
-export { makeCtx, type DrawCtx } from './compose';
+export { flattenSheets, makeCtx, sheetId, type DrawCtx } from './compose';
 export {
   anchorRows,
   anchorScheduleCsv,
@@ -29,6 +30,7 @@ export {
 } from './erection';
 export { cutDrawings, cutLetter, nextCutLetter, sectionFrame, GA_AXES } from './cuts';
 export * from './edits';
+export { checkSheetLayout, MIN_TEXT, type LayoutIssue, type LayoutIssueKind } from './layoutCheck';
 export { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, activeTemplate, drawTemplateTitleBlock, newTemplate, parseTemplates, sampleTitleData, sanitizeTemplate } from './template';
 
 export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: number, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
@@ -43,13 +45,13 @@ export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: numbe
  */
 export function allDrawings(p: Project, dm: DerivedModel): Drawing[] {
   const ctx = makeCtx(p, dm);
-  const set = [
-    gaDrawing(p, dm, 'front', ctx),
-    gaDrawing(p, dm, 'plan', ctx),
+  const set = flattenSheets([
+    ...gaDrawings(p, dm, 'front', ctx),
+    ...gaDrawings(p, dm, 'plan', ctx),
     ...cutDrawings(ctx),
     ...erectionDrawings(ctx),
     ...uniqueAssemblies(dm).map(({ assembly, qty }) => assemblyDrawing(p, dm, assembly, qty, ctx)),
     ...uniqueParts(dm).map(({ part, qty }) => partDrawingCtx(ctx, part, qty)),
-  ];
-  return [...registerDrawings(ctx, set), ...set];
+  ]);
+  return [...flattenSheets(registerDrawings(ctx, set)), ...set];
 }

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { isModifyTool, useStore } from '../state/store';
-import { saveAutosave } from '../state/storage';
+import { loadIdbAutosave, migrateProject, saveAutosave, type AutosaveResult } from '../state/storage';
+import type { Project } from '../core/model/types';
 import { TopBar } from './TopBar';
 import { ToolRail } from './ToolRail';
 import { ViewportPanel } from './ViewportPanel';
@@ -25,9 +26,10 @@ export function App() {
 
   // Autosave (debounced).
   useEffect(() => {
-    const t = setTimeout(() => saveAutosave(project), 600);
+    const t = setTimeout(() => void autosave(project), 600);
     return () => clearTimeout(t);
   }, [project]);
+  useEffect(() => void restoreIdbAutosave(), []);
 
   useKeyboard();
 
@@ -50,6 +52,35 @@ export function App() {
       {toast && <Toast key={toast.n} text={toast.text} kind={toast.kind} />}
     </div>
   );
+}
+
+/** Where autosaves went last; a change (or a failure) is reported once, not on every edit. */
+let autosaveWhere: AutosaveResult['where'] | null = null;
+const mb = (n: number) => `${(n / 1048576).toFixed(1)} MB`;
+
+async function autosave(p: Project) {
+  const r = await saveAutosave(p);
+  if (r.where === autosaveWhere) return;
+  const first = autosaveWhere === null;
+  autosaveWhere = r.where;
+  const notify = useStore.getState().notify;
+  if (r.where === 'indexeddb') notify(`The project (${mb(r.bytes)}) is too large for the browser's local storage, so it is autosaved to IndexedDB instead. Save it as a file to keep a copy.`);
+  else if (r.where === 'none') notify(`Autosave failed (${r.error ?? 'browser storage is full or blocked'}). Save the project as a file (File → Save project) to keep your work.`, 'error');
+  else if (!first) notify('Autosave works again (local storage).');
+}
+
+/** A large project autosaved to IndexedDB is restored once the app has started (localStorage loads synchronously). */
+let restoring = false;
+async function restoreIdbAutosave() {
+  if (restoring) return;
+  restoring = true;
+  const s = useStore.getState();
+  if (s.revision || Object.keys(s.project.members).length) return;
+  const p = migrateProject(await loadIdbAutosave());
+  // Only when nothing has happened in the meantime.
+  if (!p || useStore.getState().revision !== s.revision) return;
+  useStore.getState().replaceProject(p);
+  useStore.getState().notify(`Restored the autosaved project "${p.info.name}" (${Object.keys(p.members).length} members) from IndexedDB.`);
 }
 
 function Toast({ text, kind }: { text: string; kind: 'info' | 'error' }) {

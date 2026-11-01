@@ -122,7 +122,10 @@ export class DxfWriter {
     for (const l of this.layers.values()) p(0, 'LAYER', 2, l.name, 70, 0, 62, l.color, 6, l.linetype ?? 'CONTINUOUS');
     p(0, 'ENDTAB');
     p(0, 'ENDSEC');
-    out.push('0', 'SECTION', '2', 'ENTITIES', ...this.ents, '0', 'ENDSEC', '0', 'EOF');
+    // No spread of the entity list: a sheet set side by side has far more values than a call takes arguments.
+    out.push('0', 'SECTION', '2', 'ENTITIES');
+    for (const v of this.ents) out.push(v);
+    out.push('0', 'ENDSEC', '0', 'EOF');
     return out.join('\n') + '\n';
   }
 }

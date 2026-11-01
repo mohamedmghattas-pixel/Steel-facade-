@@ -6,6 +6,9 @@ import { defaultPackageSettings, exportTemplates, migrateExportTemplates } from 
 import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
 
 const KEY = 'facadesteel.autosave.v1';
+/** Set (to the save time) while the autosave lives in IndexedDB because it did not fit into localStorage. */
+const IDB_MARK = 'facadesteel.autosave.idb';
+const IDB_KEY = 'autosave:project';
 
 export function loadAutosave(): Project | null {
   try {
@@ -16,11 +19,62 @@ export function loadAutosave(): Project | null {
   }
 }
 
-export function saveAutosave(p: Project) {
+/** Where the last autosave went: localStorage, IndexedDB (too large for localStorage), or nowhere. */
+export type AutosaveResult = { where: 'local' | 'indexeddb' | 'none'; bytes: number; error?: string };
+
+/**
+ * Save the project for the next visit. localStorage holds a few MB only: a larger
+ * project goes to IndexedDB instead, and the older copy in localStorage is removed
+ * so it is never restored in place of the newer one.
+ */
+export async function saveAutosave(p: Project): Promise<AutosaveResult> {
+  let text: string;
   try {
-    localStorage.setItem(KEY, JSON.stringify(p));
+    text = JSON.stringify(p);
+  } catch (e) {
+    return { where: 'none', bytes: 0, error: (e as Error).message };
+  }
+  const bytes = text.length;
+  try {
+    localStorage.setItem(KEY, text);
+    if (localStorage.getItem(IDB_MARK) !== null) {
+      localStorage.removeItem(IDB_MARK);
+      void deleteValue(IDB_KEY).catch(() => {});
+    }
+    return { where: 'local', bytes };
   } catch {
-    // Storage full or blocked: the project can still be saved as a file.
+    // Full (QuotaExceededError) or blocked: never leave an older copy behind.
+    try {
+      localStorage.removeItem(KEY);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    await putValue(IDB_KEY, text);
+    try {
+      localStorage.setItem(IDB_MARK, new Date().toISOString());
+    } catch {
+      // The marker is a few bytes; without it the IndexedDB copy is still found on load.
+    }
+    return { where: 'indexeddb', bytes };
+  } catch (e) {
+    return { where: 'none', bytes, error: (e as Error)?.message ?? String(e) };
+  }
+}
+
+/** The autosave kept in IndexedDB, when localStorage has none (see saveAutosave). */
+export async function loadIdbAutosave(): Promise<Project | null> {
+  try {
+    if (localStorage.getItem(KEY) !== null) return null;
+  } catch {
+    // localStorage blocked: IndexedDB may still have one.
+  }
+  try {
+    const text = await getValue<string>(IDB_KEY);
+    return typeof text === 'string' ? (JSON.parse(text) as Project) : null;
+  } catch {
+    return null;
   }
 }
 
@@ -142,6 +196,32 @@ export async function getBlob(key: string): Promise<ArrayBuffer | null> {
   } catch {
     return null;
   }
+}
+
+/** Like putBlob / getBlob for any cloneable value, but failures are reported (rejected). */
+async function putValue(key: string, value: unknown): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite');
+    tx.objectStore(STORE).put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error ?? new Error('IndexedDB write aborted'));
+  });
+}
+
+async function getValue<T>(key: string): Promise<T | null> {
+  const db = await openDb();
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+    req.onsuccess = () => resolve((req.result as T) ?? null);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function deleteValue(key: string): Promise<void> {
+  const db = await openDb();
+  db.transaction(STORE, 'readwrite').objectStore(STORE).delete(key);
 }
 
 export async function deleteBlob(key: string): Promise<void> {

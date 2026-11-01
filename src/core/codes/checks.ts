@@ -823,10 +823,18 @@ function coatingChecks(ctx: Ctx) {
 
   // Per connection: bimetallic contact and galvanized high-strength bolts.
   let hdgBolts = false;
+  // Parts per connection, in model order (one pass, not one scan of every part per connection).
+  const partsByConn = new Map<string, Part[]>();
+  for (const pt of dm.parts) {
+    if (!pt.connectionId) continue;
+    const l = partsByConn.get(pt.connectionId);
+    if (l) l.push(pt);
+    else partsByConn.set(pt.connectionId, [pt]);
+  }
   for (const cid of dm.connectionOut.keys()) {
     const c = p.connections[cid];
     if (!c) continue;
-    const parts = dm.parts.filter((pt) => pt.connectionId === cid);
+    const parts = [...(partsByConn.get(cid) ?? [])];
     for (const id of [c.main, ...c.secondary]) {
       const mp = id ? dm.partByRef.get(`m:${id}`) : undefined;
       if (mp) parts.push(mp);

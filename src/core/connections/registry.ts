@@ -1,5 +1,5 @@
 import type { Connection, ConnectionType, Id, ParamValue, Project } from '../model/types';
-import { addConnection, memberDirection, membersAtNode } from '../model/ops';
+import { addConnection, memberDirection, membersAtNode, membersAtNodeIndex, type MemberAtNode } from '../model/ops';
 import { getProfile } from '../library/profiles';
 import { memberAxes } from '../model/geometry';
 import { basePlate } from './basePlate';
@@ -75,12 +75,12 @@ export const APPLY_END: Partial<Record<ConnectionType, (params: Record<string, P
   stiffenedBase: () => 'lower',
 };
 
-function endsFor(p: Project, m: { id: Id; start: Id; end: Id }, rule: ApplyEnd): Id[] {
+function endsFor(p: Project, m: { id: Id; start: Id; end: Id }, rule: ApplyEnd, membersAt: (n: Id) => MemberAtNode[] = (n) => membersAtNode(p, n)): Id[] {
   const a = p.nodes[m.start].p;
   const b = p.nodes[m.end].p;
   const lower = a.z <= b.z ? m.start : m.end;
   const upper = lower === m.start ? m.end : m.start;
-  const free = (n: Id) => !membersAtNode(p, n).some((x) => x.member.id !== m.id && x.member.profile);
+  const free = (n: Id) => !membersAt(n).some((x) => x.member.id !== m.id && x.member.profile);
   const vertical = memberDirection(p, p.members[m.id]) === 'vertical';
   switch (rule) {
     case 'upper':
@@ -138,10 +138,19 @@ const BRACE_SHAPES = new Set(['FL', 'L', 'CHS', 'RHS']);
  */
 export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, onlyMembers?: Set<Id>): Id[] {
   const created: Id[] = [];
-  const covered = (node: Id, sec: Id) => Object.values(p.connections).some((c) => c.node === node && c.secondary[0] === sec);
+  // Indexed once (connections are added, members never change here): linear in the model size.
+  const membersAt = membersAtNodeIndex(p);
+  const coveredKeys = new Set(Object.values(p.connections).map((c) => `${c.node}|${c.secondary[0]}`));
+  const covered = (node: Id, sec: Id) => coveredKeys.has(`${node}|${sec}`);
+  const add = (...args: Parameters<typeof addConnection>) => {
+    const id = addConnection(...args);
+    const c = p.connections[id];
+    coveredKeys.add(`${c.node}|${c.secondary[0]}`);
+    created.push(id);
+  };
 
   for (const node of Object.values(p.nodes)) {
-    const at = membersAtNode(p, node.id).filter(
+    const at = membersAt(node.id).filter(
       (x) => x.member.profile && (!onlyMembers || onlyMembers.has(x.member.id)),
     );
     if (!at.length) continue;
@@ -155,21 +164,17 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
       const below = mullions.find((x) => otherZ(x.member) < z);
       const above = mullions.find((x) => otherZ(x.member) > z);
       if (below && !covered(node.id, below.member.id)) {
-        created.push(
-          addConnection(p, 'slabBracket', node.id, null, [below.member.id, ...(above ? [above.member.id] : [])], {
-            mount: 'edge',
-            side: o.slabSide,
-            standoff: o.standoff,
-          }),
-        );
+        add(p, 'slabBracket', node.id, null, [below.member.id, ...(above ? [above.member.id] : [])], {
+          mount: 'edge',
+          side: o.slabSide,
+          standoff: o.standoff,
+        });
       } else if (!below && above && !covered(node.id, above.member.id)) {
-        created.push(
-          addConnection(p, 'slabBracket', node.id, null, [above.member.id], {
-            mount: 'top',
-            side: o.slabSide,
-            standoff: o.standoff,
-          }),
-        );
+        add(p, 'slabBracket', node.id, null, [above.member.id], {
+          mount: 'top',
+          side: o.slabSide,
+          standoff: o.standoff,
+        });
       }
     }
 
@@ -179,7 +184,7 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
         if (x.member.role !== 'post' || x.at === 'through') continue;
         const isBottom = otherZ(x.member) > z && !vertical.some((y) => y !== x && otherZ(y.member) < z);
         if (isBottom && !covered(node.id, x.member.id)) {
-          created.push(addConnection(p, 'baseplate', node.id, null, [x.member.id]));
+          add(p, 'baseplate', node.id, null, [x.member.id]);
         }
       }
     }
@@ -200,7 +205,7 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
         if (!main) continue;
         const braceJoint = o.braceJoint ?? 'none';
         if (braceJoint !== 'none' && x.member.role === 'brace' && BRACE_SHAPES.has(getProfile(x.member.profile)?.shape.type ?? '')) {
-          created.push(addConnection(p, braceJoint, node.id, main.member.id, [x.member.id]));
+          add(p, braceJoint, node.id, main.member.id, [x.member.id]);
           continue;
         }
         // Put cleats/fins on the side of the secondary where the main member continues.
@@ -210,7 +215,7 @@ export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, o
           const up = otherZ(main.member) > z ? 1 : -1;
           params.side = Math.sign(ys.z) * up;
         }
-        created.push(addConnection(p, o.joint, node.id, main.member.id, [x.member.id], params));
+        add(p, o.joint, node.id, main.member.id, [x.member.id], params);
       }
     }
   }
@@ -257,30 +262,43 @@ export function applyConnection(p: Project, memberIds: Id[], o: ApplyOptions): I
   }
   const def = CONNECTIONS[o.type];
   const tplNeedsMain = o.type === 'custom' ? (p.library.templates.find((t) => t.id === params.template)?.needsMain ?? true) : def.needsMain;
-  const existing = (node: Id, sec: Id) => Object.values(p.connections).filter((c) => c.node === node && c.secondary[0] === sec);
+  // Connections by node, kept current below, and members at nodes indexed once (members never change here):
+  // applying to every member of a large model stays near linear.
+  const byNode = new Map<Id, Connection[]>();
+  for (const c of Object.values(p.connections)) {
+    const l = byNode.get(c.node);
+    if (l) l.push(c);
+    else byNode.set(c.node, [c]);
+  }
+  const atNode = (node: Id) => byNode.get(node) ?? [];
+  const existing = (node: Id, sec: Id) => atNode(node).filter((c) => c.secondary[0] === sec);
+  const membersAt = membersAtNodeIndex(p);
   const merged = resolveParams({ id: '', type: o.type, node: '', main: null, secondary: [], params }, p);
   const endRule = APPLY_END[o.type]?.(merged) ?? 'lower';
   for (const mid of ids) {
     const m = p.members[mid];
     if (!m?.profile) continue;
-    const ends: Id[] = tplNeedsMain ? [m.start, m.end] : endsFor(p, m, endRule);
+    const ends: Id[] = tplNeedsMain ? [m.start, m.end] : endsFor(p, m, endRule, membersAt);
     for (const node of ends) {
       const old = existing(node, mid);
       if (old.length && !o.replace) continue;
       let main: Id | null = null;
       if (tplNeedsMain) {
-        const others = membersAtNode(p, node).filter((x) => x.member.id !== mid && x.member.profile);
+        const others = membersAt(node).filter((x) => x.member.id !== mid && x.member.profile);
         const pick = COLLINEAR_TYPES.has(o.type)
           ? others.find((x) => x.at !== 'through' && collinear(p, x.member, m))
           : others.find((x) => x.at === 'through' && !collinear(p, x.member, m)) ?? others.find((x) => !collinear(p, x.member, m));
         if (!pick) continue;
         // Never splice a pair twice; one cross-bracing plate per crossing.
         const sameKind = (t: ConnectionType) => t === o.type || (COLLINEAR_TYPES.has(t) && COLLINEAR_TYPES.has(o.type));
-        if (ONE_PER_NODE.has(o.type) && Object.values(p.connections).some((c) => sameKind(c.type) && c.node === node && !old.includes(c))) continue;
+        if (ONE_PER_NODE.has(o.type) && atNode(node).some((c) => sameKind(c.type) && !old.includes(c))) continue;
         main = pick.member.id;
       }
       for (const c of old) delete p.connections[c.id];
-      created.push(addConnection(p, o.type, node, main, [mid], { ...params }));
+      if (old.length) byNode.set(node, atNode(node).filter((c) => !old.includes(c)));
+      const id = addConnection(p, o.type, node, main, [mid], { ...params });
+      created.push(id);
+      byNode.set(node, [...atNode(node), p.connections[id]]);
     }
   }
   return created;

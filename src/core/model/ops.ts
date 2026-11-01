@@ -590,20 +590,83 @@ export function splitAtIntersections(p: Project, memberIds?: Id[]) {
   mergeNodes(p);
 }
 
+export type MemberAtNode = { member: Member; at: 'start' | 'end' | 'through' };
+
 /** Members that end at, or pass through, a node. */
-export function membersAtNode(p: Project, nodeId: Id): { member: Member; at: 'start' | 'end' | 'through' }[] {
+export function membersAtNode(p: Project, nodeId: Id): MemberAtNode[] {
   const pos = p.nodes[nodeId]?.p;
   if (!pos) return [];
-  const out: { member: Member; at: 'start' | 'end' | 'through' }[] = [];
-  for (const m of Object.values(p.members)) {
-    if (m.start === nodeId) out.push({ member: m, at: 'start' });
-    else if (m.end === nodeId) out.push({ member: m, at: 'end' });
-    else {
-      const ps = pointSegment(pos, p.nodes[m.start].p, p.nodes[m.end].p);
-      if (ps.d < NODE_TOL && ps.t > 1e-4 && ps.t < 1 - 1e-4) out.push({ member: m, at: 'through' });
-    }
-  }
+  const out: MemberAtNode[] = [];
+  for (const m of Object.values(p.members)) memberAtNode(p, m, nodeId, pos, out);
   return out;
+}
+
+function memberAtNode(p: Project, m: Member, nodeId: Id, pos: Vec3, out: MemberAtNode[]) {
+  if (m.start === nodeId) out.push({ member: m, at: 'start' });
+  else if (m.end === nodeId) out.push({ member: m, at: 'end' });
+  else {
+    const ps = pointSegment(pos, p.nodes[m.start].p, p.nodes[m.end].p);
+    if (ps.d < NODE_TOL && ps.t > 1e-4 && ps.t < 1 - 1e-4) out.push({ member: m, at: 'through' });
+  }
+}
+
+/**
+ * `membersAtNode` for many nodes while the members do not change (same results, same
+ * order): incident ends from a map, pass-through members from a uniform grid, so a pass
+ * over every node stays near linear instead of nodes × members.
+ */
+export function membersAtNodeIndex(p: Project): (nodeId: Id) => MemberAtNode[] {
+  const list = Object.values(p.members);
+  const ends = new Map<Id, number[]>();
+  const addEnd = (n: Id, i: number) => {
+    const a = ends.get(n);
+    if (a) a.push(i);
+    else ends.set(n, [i]);
+  };
+  let total = 0;
+  let count = 0;
+  list.forEach((m, i) => {
+    addEnd(m.start, i);
+    if (m.end !== m.start) addEnd(m.end, i);
+    const a = p.nodes[m.start]?.p;
+    const b = p.nodes[m.end]?.p;
+    if (a && b) {
+      total += Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+      count++;
+    }
+  });
+  const cell = Math.max(100, count ? total / count : 1000);
+  const key = (x: number, y: number, z: number) => `${x},${y},${z}`;
+  const grid = new Map<string, number[]>();
+  /** Members whose box covers too many cells, tested against every node. */
+  const big: number[] = [];
+  list.forEach((m, i) => {
+    const a = p.nodes[m.start]?.p;
+    const b = p.nodes[m.end]?.p;
+    if (!a || !b) return;
+    const lo = (u: number, v: number) => Math.floor((Math.min(u, v) - NODE_TOL) / cell);
+    const hi = (u: number, v: number) => Math.floor((Math.max(u, v) + NODE_TOL) / cell);
+    const x0 = lo(a.x, b.x), x1 = hi(a.x, b.x), y0 = lo(a.y, b.y), y1 = hi(a.y, b.y), z0 = lo(a.z, b.z), z1 = hi(a.z, b.z);
+    if ((x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1) > 512) return void big.push(i);
+    for (let x = x0; x <= x1; x++)
+      for (let y = y0; y <= y1; y++)
+        for (let z = z0; z <= z1; z++) {
+          const k = key(x, y, z);
+          const c = grid.get(k);
+          if (c) c.push(i);
+          else grid.set(k, [i]);
+        }
+  });
+  return (nodeId) => {
+    const pos = p.nodes[nodeId]?.p;
+    if (!pos) return [];
+    const cand = new Set<number>(ends.get(nodeId));
+    for (const i of grid.get(key(Math.floor(pos.x / cell), Math.floor(pos.y / cell), Math.floor(pos.z / cell))) ?? []) cand.add(i);
+    for (const i of big) cand.add(i);
+    const out: MemberAtNode[] = [];
+    for (const i of [...cand].sort((x, y) => x - y)) memberAtNode(p, list[i], nodeId, pos, out);
+    return out;
+  };
 }
 
 export type Direction = 'vertical' | 'horizontal' | 'inclined';

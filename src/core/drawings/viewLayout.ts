@@ -19,6 +19,8 @@ export interface BBox {
   y1: number;
 }
 
+const NARROW = new Set(['.', ',', ':', ';', '|', '!', "'"]);
+
 /**
  * Rendered width of a text (Arial / Helvetica as used by the SVG and PDF output):
  * capitals are wider than the nominal ISO 3098 type B advance, so layout uses this
@@ -26,12 +28,14 @@ export interface BBox {
  */
 export function textExtent(text: string, h: number, bold = false): number {
   let em = 0;
+  // Character classes by code (called for every label candidate: no regular expressions per character).
   for (const ch of text) {
-    if (ch === ' ') em += 0.28;
-    else if (/[0-9]/.test(ch)) em += 0.56;
-    else if (/[A-Z]/.test(ch)) em += bold ? 0.72 : 0.67;
-    else if (/[a-z]/.test(ch)) em += bold ? 0.58 : 0.52;
-    else if (/[.,:;|!'ilj]/.test(ch)) em += 0.28;
+    const c = ch.charCodeAt(0);
+    if (c === 32) em += 0.28;
+    else if (c >= 48 && c <= 57) em += 0.56;
+    else if (c >= 65 && c <= 90) em += bold ? 0.72 : 0.67;
+    else if (c >= 97 && c <= 122) em += bold ? 0.58 : 0.52;
+    else if (NARROW.has(ch)) em += 0.28;
     else em += 0.58;
   }
   // SVG font size is 1.4 × the ISO cap height.

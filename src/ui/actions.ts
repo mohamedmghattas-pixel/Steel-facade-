@@ -31,6 +31,7 @@ import { zip } from '../core/io/zip';
 import { allDrawings, sheetFileStem } from '../core/drawings';
 import { anchorCsv, bomCsvFiles, bomXlsx, drawingDxf, dstvFiles, hasAnchors, ifcText, projectJson, XLSX_MIME } from '../core/export/outputs';
 import type { Drawing } from '../core/drawings/types';
+import type { DerivedModel } from '../core/derive/model';
 import { drawingsToPdf } from './pdf';
 import { sampleProject } from '../core/sample';
 import { parseProfileCsv, profileDefsToCsv, type ProfileDef } from '../core/library/profiles';
@@ -329,13 +330,18 @@ const drawingCache = new WeakMap<object, Drawing[]>();
  */
 export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
   const p = st().project;
-  const dm = derived(p);
+  const all = drawingsOf(p, derived(p));
+  return kind ? all.filter((d) => d.kind === kind) : all;
+}
+
+/** The drawing set of a project state and its derived model, from the same cache (the export package uses it too). */
+export function drawingsOf(p: Project, dm: DerivedModel): Drawing[] {
   let all = drawingCache.get(dm);
   if (!all) {
     all = allDrawings(p, dm);
     drawingCache.set(dm, all);
   }
-  return kind ? all.filter((d) => d.kind === kind) : all;
+  return all;
 }
 
 export function exportDrawingsDxf(list?: Drawing[]) {

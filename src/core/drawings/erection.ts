@@ -91,9 +91,28 @@ function nearestLevel(p: Project, z: number): Level {
   return best ?? { id: `z${Math.round(z / 10) * 10}`, name: fmtLevel(Math.round(z / 10) * 10), z: Math.round(z / 10) * 10 };
 }
 
+/** Parts and bolts of each connection (model order), indexed once per derived model. */
+const connIndexCache = new WeakMap<DerivedModel, { parts: Map<string, Part[]>; bolts: Map<string, BoltItem[]> }>();
+function connIndex(dm: DerivedModel) {
+  let ix = connIndexCache.get(dm);
+  if (!ix) {
+    ix = { parts: new Map(), bolts: new Map() };
+    const add = <T,>(m: Map<string, T[]>, k: string | undefined, v: T) => {
+      if (!k) return;
+      const l = m.get(k);
+      if (l) l.push(v);
+      else m.set(k, [v]);
+    };
+    for (const pt of dm.parts) add(ix.parts, pt.connectionId, pt);
+    for (const b of dm.bolts) add(ix.bolts, b.connectionId, b);
+    connIndexCache.set(dm, ix);
+  }
+  return ix;
+}
+
 /** Assembly mark of a connection's parts (its main plate, else any of its parts). */
 function connectionMark(dm: DerivedModel, cid: string): string {
-  const ps = dm.parts.filter((pt) => pt.connectionId === cid);
+  const ps = connIndex(dm).parts.get(cid) ?? [];
   return (ps.find((pt) => pt.assemblyMain) ?? ps[0])?.assembly ?? '';
 }
 
@@ -106,11 +125,11 @@ export function slabBrackets(p: Project, dm: DerivedModel): BracketInfo[] {
     if (!node) continue;
     const v = resolveParams(c, p);
     const standoff = typeof v.standoff === 'number' ? v.standoff : 150;
-    const bolts = dm.bolts.filter((b) => b.connectionId === c.id && b.kind === 'anchor');
+    const bolts = (connIndex(dm).bolts.get(c.id) ?? []).filter((b) => b.kind === 'anchor');
     const anchors: AnchorPoint[] = bolts.flatMap((b) =>
       b.positions.map((q) => ({ at: drillPoint(b, q), dir: b.dir, size: b.size, type: anchorType(b), length: b.length, perBracket: b.positions.length })),
     );
-    const parts = dm.parts.filter((pt) => pt.connectionId === c.id);
+    const parts = [...(connIndex(dm).parts.get(c.id) ?? [])];
     const members = c.secondary.map((id) => dm.partByRef.get(`m:${id}`)).filter((x): x is Part => !!x);
     // Into the slab: the axis of edge anchors; else the mullion section axis that points from
     // the wire line towards the anchors (the bracket plates sit beside the mullion).

@@ -25,6 +25,9 @@ import {
 } from './provisions';
 import { locationLabel } from './location';
 
+/** Same order as `a.localeCompare(b, undefined, { numeric: true })`, without a collator per call. */
+const byNumber = new Intl.Collator(undefined, { numeric: true }).compare;
+
 export interface MovementRow {
   id: string;
   connectionId?: Id;
@@ -121,7 +124,7 @@ export function movementReport(p: Project, dm: DerivedModel, o: ReportOptions = 
     const th = thermalMovement(L, m.material, ms);
     members.push({ memberId: m.id, mark: markOf(dm, `m:${m.id}`), role: m.role, profile: m.profile, material: m.material, alpha: th.alpha, length: L, expansion: th.expansion, contraction: th.contraction });
   }
-  members.sort((a, b) => a.mark.localeCompare(b.mark, undefined, { numeric: true }) || b.length - a.length);
+  members.sort((a, b) => byNumber(a.mark, b.mark) || b.length - a.length);
   const stacks = Object.fromEntries(FACADE_DIRS.map((d) => [d, toleranceStack(ms, d)])) as Record<FacadeDir, ToleranceStack>;
   const dT = tempRange(ms);
   return {

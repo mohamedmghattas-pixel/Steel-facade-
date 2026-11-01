@@ -4,6 +4,10 @@
  */
 import { describe, expect, it } from 'vitest';
 import { DxfWriter } from '../src/core/io/dxfWriter';
+import { addLine, createProject, facadeGrid, memberDefaults, membersAtNode, membersAtNodeIndex } from '../src/core/model/ops';
+import { applyConnection, autoConnect } from '../src/core/connections/registry';
+import type { Project } from '../src/core/model/types';
+import { sampleFacade } from './helpers';
 
 describe('large outputs', () => {
   it('writes a DXF with more values than a function call takes arguments', () => {
@@ -55,4 +59,62 @@ describe('autosave of a project too large for localStorage', () => {
       g.localStorage = prev;
     }
   });
+});
+
+/** A facade of `bays` × `storeys` straight from nodes (mullions per storey, transoms at each floor). */
+function gridFacade(bays: number, storeys: number): Project {
+  const p = createProject('Grid');
+  const base = memberDefaults(p);
+  const node = (i: number, j: number) => `n${i}_${j}`;
+  for (let i = 0; i <= bays; i++) for (let j = 0; j <= storeys; j++) p.nodes[node(i, j)] = { id: node(i, j), p: { x: i * 1500, y: 0, z: j * 3500 } };
+  let k = 0;
+  for (let i = 0; i <= bays; i++)
+    for (let j = 0; j < storeys; j++) {
+      const id = `m${k++}`;
+      p.members[id] = { ...base, id, start: node(i, j), end: node(i, j + 1), profile: 'SHS 100x100x5', role: 'mullion' };
+    }
+  for (let j = 1; j <= storeys; j++)
+    for (let i = 0; i < bays; i++) {
+      const id = `m${k++}`;
+      p.members[id] = { ...base, id, start: node(i, j), end: node(i + 1, j), profile: 'RHS 100x50x4', role: 'transom', rotation: 90 };
+    }
+  return p;
+}
+
+describe('members at a node, indexed', () => {
+  it('gives exactly what membersAtNode gives, in the same order', () => {
+    const models: Project[] = [sampleFacade(), gridFacade(6, 4)];
+    // Pass-through members, a long diagonal (more cells than the grid holds per member) and a short stub.
+    const q = createProject('Through');
+    facadeGrid(q, { plane: { kind: 'XZ', offset: 0 }, u0: 0, v0: 0, bays: [1500, 1500], rows: [1200, 1200], floorLines: [0], mullionProfile: 'SHS 100x100x5', transomProfile: 'RHS 80x40x3', transomDepthNormal: true, addLevels: false });
+    addLine(q, { x: -500, y: 0, z: 1200 }, { x: 3500, y: 0, z: 1200 }, { profile: 'RHS 80x40x3', role: 'transom' });
+    addLine(q, { x: 0, y: 0, z: 0 }, { x: 300000, y: 250000, z: 200000 }, { profile: 'RHS 80x40x3', role: 'brace' });
+    addLine(q, { x: 1500, y: 0, z: 2400 }, { x: 1500, y: 300, z: 2400 }, { profile: 'RHS 80x40x3', role: 'other' });
+    models.push(q);
+    for (const p of models) {
+      const at = membersAtNodeIndex(p);
+      let through = 0;
+      for (const id of Object.keys(p.nodes)) {
+        const want = membersAtNode(p, id);
+        through += want.filter((x) => x.at === 'through').length;
+        expect(at(id).map((x) => `${x.member.id}:${x.at}`)).toEqual(want.map((x) => `${x.member.id}:${x.at}`));
+      }
+      if (p === q) expect(through).toBeGreaterThan(0);
+    }
+  });
+
+  it('auto-connects and applies connections to a large facade in near-linear time', () => {
+    const p = gridFacade(100, 40); // 8 140 members, 4 141 nodes
+    let t0 = performance.now();
+    const made = autoConnect(p);
+    const auto = performance.now() - t0;
+    expect(made.length).toBeGreaterThan(8000);
+    t0 = performance.now();
+    const applied = applyConnection(p, Object.keys(p.members), { type: 'finPlate', replace: true });
+    const apply = performance.now() - t0;
+    expect(applied.length).toBeGreaterThan(7000);
+    // Both were nodes × members (about 40 s and 60 s here); now well under a second each.
+    expect(auto).toBeLessThan(5000);
+    expect(apply).toBeLessThan(5000);
+  }, 120000);
 });

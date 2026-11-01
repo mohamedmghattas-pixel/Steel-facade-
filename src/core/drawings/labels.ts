@@ -124,8 +124,10 @@ export class LabelPlacer {
       { x: ax + 1.6, y: ay - 0.35 * h },
       { x: ax - 1.6 - w, y: ay - 0.35 * h },
     ];
+    // The box of a candidate (labelBox without measuring the text again).
+    const box = (p: Vec2): BBox => ({ x0: p.x, y0: p.y - 0.3 * h, x1: p.x + w, y1: p.y + h });
     for (const p of near) {
-      const b = labelBox(p, text, h);
+      const b = box(p);
       if (this.free(b)) {
         this.add(b, true);
         this.placed++;
@@ -139,7 +141,7 @@ export class LabelPlacer {
           const e = { x: ax + Math.cos(a) * r, y: ay + Math.sin(a) * r };
           const right = Math.cos(a) >= -1e-9;
           const p = { x: right ? e.x + 0.6 : e.x - 0.6 - w, y: e.y - 0.35 * h };
-          const b = labelBox(p, text, h);
+          const b = box(p);
           if (!this.free(b) || !this.leaderFree(anchor, e)) continue;
           this.add(b, true);
           this.placed++;

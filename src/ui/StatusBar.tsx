@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { useStore, type SnapSettings } from '../state/store';
+import { isModifyTool, useStore, type SnapSettings } from '../state/store';
+import { toolPlaceholder } from './modifyTools';
 
 const SNAPS: { key: keyof SnapSettings; label: string; title: string }[] = [
   { key: 'endpoint', label: 'End', title: 'Snap to line ends / nodes' },
@@ -18,7 +19,7 @@ export function StatusBar() {
   const apply = useStore((s) => s.apply);
   const set = useStore((s) => s.set);
   const [text, setText] = useState('');
-  const drawing = tool !== 'select';
+  const drawing = tool !== 'select' && !(isModifyTool(tool) && !toolPlaceholder(tool));
 
   return (
     <footer className="statusbar">
@@ -26,7 +27,7 @@ export function StatusBar() {
       {drawing && (
         <input
           className="coord-input"
-          placeholder="x,y,z · u,v · @dx,dy · length ⏎"
+          placeholder={isModifyTool(tool) ? toolPlaceholder(tool) : 'x,y,z · u,v · @dx,dy · length ⏎'}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {

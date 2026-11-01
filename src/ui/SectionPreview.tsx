@@ -21,6 +21,7 @@ export function SectionPreview({
   onGrid,
   onInsertion,
   title,
+  mirror,
 }: {
   profile?: string | Profile | null;
   /** Instead of a catalogue profile: a shape and its insertion point (outline coordinates). */
@@ -33,6 +34,8 @@ export function SectionPreview({
   onGrid?: (y: Align, z: Align) => void;
   onInsertion?: () => void;
   title?: string;
+  /** Member.mirrorSection: draw the section (and its grid) mirrored about the vertical axis, as it sits on the member. */
+  mirror?: boolean;
 }) {
   const prof = typeof profile === 'string' ? getProfile(profile) : (profile ?? undefined);
   const sh = shape ?? prof?.shape;
@@ -59,13 +62,14 @@ export function SectionPreview({
   const y1 = Math.max(...allY);
   const ext = Math.max(x1 - x0, y1 - y0, 1);
   const pad = ext * 0.14;
-  const vb = `${x0 - pad} ${-y1 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`;
+  const vb = `${(mirror ? -x1 : x0) - pad} ${-y1 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`;
   const r = ext * 0.035;
   const gridOn = mode !== 'insertion' || !ins;
   const dots: { ay: Align; az: Align; x: number; y: number }[] = [];
   for (const az of [1, 0, -1] as Align[]) for (const ay of [-1, 0, 1] as Align[]) dots.push({ ay, az, x: (minX + maxX) / 2 + (ay * w) / 2, y: (minY + maxY) / 2 + (az * h) / 2 });
   return (
-    <svg className="sec-preview" viewBox={vb} width={size} height={size} role="img" aria-label={title ?? `${prof?.name ?? 'Section'} with insertion point`}>
+    <svg className="sec-preview" viewBox={vb} width={size} height={size} role="img" aria-label={title ?? `${prof?.name ?? 'Section'} with insertion point${mirror ? ' (mirrored)' : ''}`}>
+      <g transform={mirror ? 'scale(-1 1)' : undefined}>
       <path className="sec-fill" d={[o.outer, ...o.holes].map(path).join(' ')} fillRule="evenodd" />
       <rect className="sec-box" x={minX} y={-maxY} width={w} height={h} />
       {dots.map((d) => {
@@ -91,6 +95,7 @@ export function SectionPreview({
           <title>Profile insertion point</title>
         </g>
       )}
+      </g>
     </svg>
   );
 }

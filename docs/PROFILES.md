@@ -60,7 +60,7 @@ For which way local y and z point on a member, see
 - **Facade grid transoms** with "depth normal to the facade": rotation 90°, so local z = −Y.
 
 On an XZ facade whose slab lies at +Y, the top of a mullion sketch therefore faces the
-building and the bottom faces the outside. Rotate a member 180° to flip its section.
+building and the bottom faces the outside. Rotate a member 180° to flip its section, or mirror it (*Mirrored section*, `Member.mirrorSection`) to open an asymmetric outline the other way; see [MODIFY.md §8](MODIFY.md).
 
 | Shape | Drawing coordinates |
 | --- | --- |

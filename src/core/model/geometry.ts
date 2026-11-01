@@ -167,9 +167,22 @@ export function alignModeOf(m: Pick<Member, 'alignMode'>, profile?: { insertion?
  * - insertion (`profile.insertion` = the insertion point relative to the box
  *   centre, alignModeOf(m, profile) = 'insertion'): −insertion, so the wire
  *   line runs through the insertion point.
- * offsetY / offsetZ are added in both modes.
+ * offsetY / offsetZ are added in both modes. A mirrored section
+ * (`mirrorSection`) is mirrored about the wire line's local z: the y shift
+ * changes sign.
  */
 export function sectionShift(
+  m: Pick<Member, 'alignY' | 'alignZ' | 'offsetY' | 'offsetZ' | 'alignMode' | 'mirrorSection'>,
+  width: number,
+  height: number,
+  profile?: { insertion?: Vec2 } | null,
+): Vec2 {
+  const s = plainSectionShift(m, width, height, profile);
+  return m.mirrorSection ? { x: -s.x, y: s.y } : s;
+}
+
+/** sectionShift before mirroring (the alignment and offsets as set). */
+export function plainSectionShift(
   m: Pick<Member, 'alignY' | 'alignZ' | 'offsetY' | 'offsetZ' | 'alignMode'>,
   width: number,
   height: number,

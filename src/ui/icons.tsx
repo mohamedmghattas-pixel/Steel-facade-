@@ -46,6 +46,18 @@ const paths: Record<string, JSX.Element> = {
     </>
   ),
   measure: <path d="M2 14l12-12 4 4L6 18zM6 10l2 2M9 7l2 2M12 4l2 2" />,
+  // Modify group
+  join: <path d="M2 10h6M12 10h6M8 7l3 3-3 3M12 7l-3 3 3 3" />,
+  extend: <path d="M3 10h9M12 7l3 3-3 3M17 4v12" />,
+  trim: <path d="M10 3v14M3 10h7M13 7l4 6M17 7l-4 6" />,
+  break: <path d="M2 10h6M12 10h6M8 6v8M12 6v8" />,
+  stretch: <path d="M3 16L12 7M12 7h-4M12 7v4M15 4l2 2" />,
+  rotate: <path d="M15.5 6.5A6.5 6.5 0 104 13M15.5 3v3.5H12M10 10v.1" />,
+  mirror: <path d="M10 2v16M3 5l4 2v6l-4 2zM17 5l-4 2v6l4 2z" />,
+  offset: <path d="M3 14L14 3M7 17L17 7M14 3l3 0M17 7V4" />,
+  reverse: <path d="M3 7h12l-3-3M17 13H5l3 3" />,
+  match: <path d="M4 3h8v4H4zM8 7v3h6v7M12 17h4" />,
+  section: <path d="M6 4h8v3h-2.5v6H14v3H6v-3h2.5V7H6zM16.5 8a7 7 0 01-1 7" />,
   plane: <path d="M2 14l6-8h10l-6 8z" />,
   orient: <path d="M2 16l5-6h11l-5 6zM10 13V3M10 3L8 5.5M10 3l2 2.5" />,
   zoom: <path d="M3 7V3h4M13 3h4v4M17 13v4h-4M7 17H3v-4" />,

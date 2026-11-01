@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { derived, useStore, type ViewName } from '../state/store';
+import { derived, isModifyTool, useStore, type ViewName } from '../state/store';
 import { provideReferenceCentre } from '../state/runtime';
 import { Viewer } from '../viewer/Viewer';
 import { getBlob } from '../state/storage';
@@ -13,6 +13,9 @@ import { WorkPlaneControl } from './dialogs/ModellingDialogs';
 import { disposeObject } from '../viewer/meshes';
 import { filterSelection } from '../core/management/grouping';
 import { ColorByControl, SelectFilterChip } from './dialogs/ManagementDialogs';
+import { beginTool, pointOnMember, toolClick, toolHover, toolPress, toolTyped, viewerHooks } from './modifyTools';
+import { ModifyToolBar, openModifyMenu } from './ModifyPanels';
+import { measureText } from './modifyActions';
 
 let viewerInstance: Viewer | null = null;
 export const getViewer = () => viewerInstance;
@@ -60,7 +63,20 @@ export function ViewportPanel() {
         const s = useStore.getState();
         if (s.tool === 'move' || s.tool === 'copy' || s.tool === 'calibrate') s.setTool('select');
       },
+      isModifyTool: (t) => isModifyTool(t),
+      onToolHover: (t, info) => isModifyTool(t) && toolHover(t, info),
+      onToolPress: (t, info) => isModifyTool(t) && toolPress(t, info),
+      onToolClick: (t, info) => isModifyTool(t) && toolClick(t, info),
+      onContextMenu: (hit, x, y, info) => {
+        const s = useStore.getState();
+        if (hit?.kind !== 'member') return;
+        // Right-click on a member outside the selection selects it.
+        if (!s.selection.members.includes(hit.id)) s.select({ members: [hit.id] });
+        openModifyMenu({ x, y, member: hit.id, point: pointOnMember(hit.id, info) });
+      },
     });
+    viewerHooks.overlay = (o) => v.setToolPreview(o);
+    viewerHooks.anchor = (q) => v.setToolAnchor(q);
     viewerRef.current = v;
     viewerInstance = v;
     provideReferenceCentre(() => v.referenceCentre());
@@ -90,6 +106,11 @@ export function ViewportPanel() {
   }, [workPlane, project]);
   useEffect(() => {
     viewerRef.current?.resetTool();
+    beginTool(isModifyTool(tool) ? tool : null);
+    // Measure with members selected: their length, angles and the angle between the first two.
+    const s = useStore.getState();
+    const sel = s.selection.members.filter((id) => s.project.members[id]);
+    if (tool === 'measure' && sel.length) s.notify(measureText(s.project, sel));
   }, [tool]);
   useEffect(() => {
     if (viewRequest.n) viewerRef.current?.setView(viewRequest.name);
@@ -99,7 +120,7 @@ export function ViewportPanel() {
   }, [zoomRequest]);
   useEffect(() => {
     if (!typedInput) return;
-    const err = viewerRef.current?.typed(typedInput.text);
+    const err = isModifyTool(useStore.getState().tool) ? toolTyped(typedInput.text) : viewerRef.current?.typed(typedInput.text);
     if (err) useStore.getState().notify(err, 'error');
   }, [typedInput]);
 
@@ -120,6 +141,9 @@ export function ViewportPanel() {
         <button className="chip" title="Zoom to fit (F)" onClick={() => set({ zoomRequest: Date.now() })}>
           <Icon name="zoom" size={15} /> Fit
         </button>
+      </div>
+      <div className="viewport-overlay bottom-center">
+        <ModifyToolBar />
       </div>
       <div className="viewport-overlay top-right">
         <WorkPlaneControl />

@@ -85,6 +85,15 @@ export interface Display {
   colorBy?: ColorBy;
 }
 
+/** Pointer state handed to the modify tools: member under the cursor, snapped point, pick ray. */
+export interface ToolPointerInfo {
+  member: Id | null;
+  point: Vec3 | null;
+  kind: string;
+  ray: { origin: Vec3; dir: Vec3 } | null;
+  shift: boolean;
+}
+
 export interface ViewerCallbacks {
   getState(): { tool: Tool; snap: SnapSettings; workPlane: WorkPlane; gridStep: number };
   onPick(hit: PickHit | null, additive: boolean): void;
@@ -93,6 +102,14 @@ export interface ViewerCallbacks {
   onCursor(p: Vec3 | null, kind: string): void;
   onPrompt(text: string): void;
   onToolDone(): void;
+  /** Modify tools (isModifyTool): hover, press (true = grabbed, e.g. a Stretch grip) and click. */
+  onToolHover?(tool: Tool, info: ToolPointerInfo): void;
+  onToolPress?(tool: Tool, info: ToolPointerInfo): boolean;
+  onToolClick?(tool: Tool, info: ToolPointerInfo): void;
+  /** Right click without dragging (context menu). */
+  onContextMenu?(hit: PickHit | null, clientX: number, clientY: number, info: ToolPointerInfo): void;
+  /** Whether a tool is handled through the modify-tool callbacks. */
+  isModifyTool?(tool: Tool): boolean;
 }
 
 type SnapKind = 'end' | 'mid' | 'node' | 'ref' | 'grid' | 'plane';
@@ -185,6 +202,11 @@ export class Viewer {
   private marker: HTMLDivElement;
   private boxDiv: HTMLDivElement;
   private down: { x: number; y: number; button: number; shift: boolean } | null = null;
+  /** Right-button press (context menu when released without dragging). */
+  private rdown: { x: number; y: number } | null = null;
+  /** A modify tool grabbed something on press (Stretch grip): the release is the target. */
+  private grabbed = false;
+  private toolOverlay: THREE.Object3D | null = null;
   private raf = 0;
   private dirty = true;
   private ro: ResizeObserver;
@@ -258,6 +280,15 @@ export class Viewer {
       this.cb.onCursor(null, '');
     });
     el.addEventListener('contextmenu', (e) => e.preventDefault());
+    el.addEventListener('pointerdown', (e) => {
+      if (e.button === 2) this.rdown = { x: e.clientX, y: e.clientY };
+    });
+    el.addEventListener('pointerup', (e) => {
+      if (e.button !== 2 || !this.rdown) return;
+      const moved = Math.abs(e.clientX - this.rdown.x) > 4 || Math.abs(e.clientY - this.rdown.y) > 4;
+      this.rdown = null;
+      if (!moved && this.cb.onContextMenu) this.cb.onContextMenu(this.pick(e), e.clientX, e.clientY, this.toolInfo(e));
+    });
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(container);
     this.resize();
@@ -765,6 +796,70 @@ export class Viewer {
     return { x: c.x, y: c.y, z: c.z };
   }
 
+  /**
+   * Preview of a modify tool (what a click would do), drawn on top of the model
+   * like the wireframe-check overlay; null removes it.
+   */
+  setToolPreview(o: { segments: number[]; colors: number[]; points: number[]; pointColors: number[] } | null) {
+    if (this.toolOverlay) {
+      this.helperGroup.remove(this.toolOverlay);
+      disposeObject(this.toolOverlay);
+      this.toolOverlay = null;
+    }
+    if (o && (o.segments.length || o.points.length)) {
+      const g = new THREE.Group();
+      const rgb = (list: number[], per: number) => {
+        const out = new Float32Array(list.length * per * 3);
+        const c = new THREE.Color();
+        list.forEach((hex, i) => {
+          c.setHex(hex);
+          for (let k = 0; k < per; k++) out.set([c.r, c.g, c.b], (i * per + k) * 3);
+        });
+        return out;
+      };
+      if (o.segments.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(o.segments, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(rgb(o.colors, 2), 3));
+        const ls = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true, opacity: 0.95 }));
+        ls.renderOrder = 14;
+        g.add(ls);
+      }
+      if (o.points.length) {
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.Float32BufferAttribute(o.points, 3));
+        geo.setAttribute('color', new THREE.BufferAttribute(rgb(o.pointColors, 1), 3));
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({ vertexColors: true, size: 8, sizeAttenuation: false, depthTest: false }));
+        pts.renderOrder = 15;
+        g.add(pts);
+      }
+      this.toolOverlay = g;
+      this.helperGroup.add(g);
+    }
+    this.requestRender();
+  }
+
+  /** Anchor of a modify tool's rubber band (and of ortho snapping), or null. */
+  setToolAnchor(p: Vec3 | null) {
+    this.pending = p ? [p] : [];
+    if (!p) this.rubber.visible = false;
+    this.requestRender();
+  }
+
+  /** Member under the cursor, snapped point and pick ray, for the modify tools. */
+  private toolInfo(e: PointerEvent, snapped?: Snap | null): ToolPointerInfo {
+    const hit = this.pick(e);
+    const snap = snapped !== undefined ? snapped : (this.snapAt(e) ?? this.lastCursor);
+    const rc = this.rayAt(e);
+    return {
+      member: hit?.kind === 'member' ? hit.id : null,
+      point: snap?.p ?? null,
+      kind: snap?.kind ?? '',
+      ray: { origin: { x: rc.ray.origin.x, y: rc.ray.origin.y, z: rc.ray.origin.z }, dir: { x: rc.ray.direction.x, y: rc.ray.direction.y, z: rc.ray.direction.z } },
+      shift: e.shiftKey,
+    };
+  }
+
   /** Aim the camera at a box (e.g. the members of a check item) from the current viewing direction. */
   focusBox(min: Vec3, max: Vec3) {
     const c = { x: (min.x + max.x) / 2, y: (min.y + max.y) / 2, z: (min.z + max.z) / 2 };
@@ -993,6 +1088,7 @@ export class Viewer {
 
   private updatePrompt() {
     const { tool } = this.cb.getState();
+    if (this.cb.isModifyTool?.(tool)) return; // modify tools keep their own prompts
     const prompts = PROMPTS[tool];
     if (!prompts) {
       this.cb.onPrompt(tool === 'select' ? 'Click to select · drag a box (left→right inside, right→left crossing) · Shift adds' : '');
@@ -1091,6 +1187,8 @@ export class Viewer {
   private onDown = (e: PointerEvent) => {
     if (e.button !== 0) return;
     this.down = { x: e.clientX, y: e.clientY, button: e.button, shift: e.shiftKey };
+    const { tool } = this.cb.getState();
+    this.grabbed = !!this.cb.isModifyTool?.(tool) && !!this.cb.onToolPress?.(tool, this.toolInfo(e));
   };
 
   private onMove = (e: PointerEvent) => {
@@ -1116,6 +1214,7 @@ export class Viewer {
     }
     const snap = this.snapAt(e);
     this.lastCursor = snap;
+    if (this.cb.isModifyTool?.(tool)) this.cb.onToolHover?.(tool, this.toolInfo(e, snap));
     if (!snap) {
       this.marker.style.display = 'none';
       return;
@@ -1151,6 +1250,14 @@ export class Viewer {
       this.boxDiv.style.display = 'none';
       if (dragged) this.boxSelect(d.x, d.y, e.clientX, e.clientY, e.shiftKey);
       else this.cb.onPick(this.pick(e), e.shiftKey || e.ctrlKey || e.metaKey);
+      return;
+    }
+    if (this.cb.isModifyTool?.(tool)) {
+      // A grabbed grip (Stretch): the release after a drag is the target; a plain click only grabbed it.
+      const grabbed = this.grabbed;
+      this.grabbed = false;
+      if (grabbed ? !dragged : dragged) return;
+      this.cb.onToolClick?.(tool, this.toolInfo(e));
       return;
     }
     if (dragged) return;

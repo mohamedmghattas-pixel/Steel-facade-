@@ -971,8 +971,10 @@ export function addStiffeners(
   const cl = centreLine(p, m)!;
   const L = dist(p.nodes[m.start].p, p.nodes[m.end].p);
   const want = o.sides ?? 'both';
-  const sides = st.sides.filter((s) => want === 'both' || s === want);
-  if (!sides.length) throw new Error('A channel takes stiffeners on its open (+y) side only.');
+  // A mirrored channel (mirrorSection) opens towards −y.
+  const offered = m.mirrorSection ? st.sides.map((s) => (s === 'pos' ? 'neg' : 'pos')) : st.sides;
+  const sides = offered.filter((s) => want === 'both' || s === want);
+  if (!sides.length) throw new Error(`A channel takes stiffeners on its open (${m.mirrorSection ? '−y' : '+y'}) side only.`);
   const out: Id[] = [];
   for (const d of distances) {
     if (d < 0 || d > L) throw new Error(`Distance ${d} mm is outside the member (0…${Math.round(L)} mm).`);

@@ -4,14 +4,16 @@ import { Icon } from './icons';
 import { CONNECTION_LIST } from '../core/connections/registry';
 import { CATALOG, CATEGORIES } from '../core/connections/catalog';
 import { ConnectionLibraryHost, openConnectionLibrary } from './ConnectionLibrary';
-import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool, splitSelection } from './actions';
+import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool } from './actions';
 import { fitSelection, mitreSelection } from './dialogs/modellingActions';
 import { openOrientDialog } from './surfaceActions';
+import { MODIFY_KEYS } from './modifyTools';
 
-function ToolBtn({ tool, icon, label, shortcut }: { tool: Tool; icon: string; label: string; shortcut?: string }) {
+function ToolBtn({ tool, icon, label, shortcut, title }: { tool: Tool; icon: string; label: string; shortcut?: string; title?: string }) {
   const active = useStore((s) => s.tool === tool);
+  const tip = title ?? label;
   return (
-    <button className={`rail-btn ${active ? 'on' : ''}`} title={shortcut ? `${label} (${shortcut})` : label} onClick={() => setTool(tool)} aria-pressed={active}>
+    <button className={`rail-btn ${active ? 'on' : ''}`} title={shortcut ? `${tip} (${shortcut})` : tip} onClick={() => setTool(tool)} aria-pressed={active}>
       <Icon name={icon} />
       <span>{label}</span>
     </button>
@@ -65,9 +67,23 @@ export function ToolRail() {
         <ToolBtn tool="move" icon="move" label="Move" shortcut="M" />
         <ToolBtn tool="copy" icon="copy" label="Copy" shortcut="C" />
         <ActionBtn icon="array" label="Array" onClick={() => set({ dialog: 'array' })} title="Copy the selection several times" />
-        <ActionBtn icon="split" label="Split" onClick={splitSelection} title="Split lines where they cross" />
         <ToolBtn tool="measure" icon="measure" label="Measure" />
         <ActionBtn icon="trash" label="Delete" onClick={deleteSelection} title="Delete selection (Del)" />
+      </div>
+      <div className="rail-group">
+        <span className="rail-title">Modify</span>
+        <ToolBtn tool="join" icon="join" label="Join" shortcut={MODIFY_KEYS.join} title="Join collinear members, corner two members, or join one onto another (T)" />
+        <ToolBtn tool="split" icon="split" label="Split" shortcut={MODIFY_KEYS.split} title="Split at a point, a distance, into N parts, stock lengths, a plane or at crossings" />
+        <ToolBtn tool="extend" icon="extend" label="Extend" shortcut={MODIFY_KEYS.extend} title="Extend or trim an end: by a distance, to a length, a member (axis / face) or a plane" />
+        <ToolBtn tool="trim" icon="trim" label="Trim" shortcut={MODIFY_KEYS.trim} title="Trim at a boundary member, or delete the segment between two crossings" />
+        <ToolBtn tool="break" icon="break" label="Break" shortcut={MODIFY_KEYS.break} title="Split with a gap (stack / movement joint)" />
+        <ToolBtn tool="stretch" icon="stretch" label="Stretch" shortcut={MODIFY_KEYS.stretch} title="Move a member end: drag the grip, or pick / type the target" />
+        <ToolBtn tool="rotate" icon="rotate" label="Rotate" shortcut={MODIFY_KEYS.rotate} title="Rotate members about an axis (copy option)" />
+        <ToolBtn tool="mirror" icon="mirror" label="Mirror" shortcut={MODIFY_KEYS.mirror} title="Mirror members about a plane — sections are mirrored too" />
+        <ToolBtn tool="offset" icon="offset" label="Offset" shortcut={MODIFY_KEYS.offset} title="Offset / copy parallel along local y, local z or the normal" />
+        <ToolBtn tool="reverse" icon="reverse" label="Reverse" shortcut={MODIFY_KEYS.reverse} title="Swap start and end; the section and end preparations stay in place" />
+        <ToolBtn tool="match" icon="match" label="Match" shortcut={MODIFY_KEYS.match} title="Match properties: pick a source member, then the targets" />
+        <ToolBtn tool="section" icon="section" label="Section ⟳" shortcut={MODIFY_KEYS.section} title="Rotate, flip or mirror sections; next / previous size" />
       </div>
       <div className="rail-group">
         <span className="rail-title">2 · Members</span>

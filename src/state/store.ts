@@ -25,7 +25,11 @@ export function syncCustomProfiles(p: Project) {
 const initialProject = migrateProject(loadAutosave()) ?? createProject();
 syncCustomProfiles(initialProject);
 
-export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure' | 'plate' | 'arc' | 'plane3';
+/** Member / profile modify tools (ui/modifyTools.ts, core/model/modify.ts). */
+export type ModifyTool = 'join' | 'split' | 'extend' | 'trim' | 'break' | 'stretch' | 'rotate' | 'mirror' | 'offset' | 'reverse' | 'match' | 'section';
+export const MODIFY_TOOLS: readonly ModifyTool[] = ['join', 'split', 'extend', 'trim', 'break', 'stretch', 'rotate', 'mirror', 'offset', 'reverse', 'match', 'section'];
+export const isModifyTool = (t: string): t is ModifyTool => (MODIFY_TOOLS as readonly string[]).includes(t);
+export type Tool = 'select' | 'line' | 'polyline' | 'move' | 'copy' | 'calibrate' | 'measure' | 'plate' | 'arc' | 'plane3' | ModifyTool;
 export type ViewName = '3d' | 'front' | 'plan' | 'side';
 export type SidePanel = 'assistant' | 'properties' | 'library' | 'model';
 export type OutputTab = 'bom' | 'nesting' | 'drawings' | 'checks' | 'fabrication' | 'survey' | 'clashes';

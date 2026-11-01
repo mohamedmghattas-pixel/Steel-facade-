@@ -4,8 +4,8 @@
  * `DerivedModel` so they always agree with each other.
  */
 import type { Finish, Id, Member, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
-import { cross, dot, len, madd, normalize, toLocal, type Frame } from '../model/geometry';
-import { cutAngle, massLength, type EndCut } from '../geometry/endPrep';
+import { cross, dot, len, madd, normalize, scale, toLocal, type Frame } from '../model/geometry';
+import { anglesFromNormal, cutAngle, massLength, type EndCut } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
 import { CONNECTIONS, resolveParams } from '../connections/registry';
@@ -312,8 +312,17 @@ export function deriveModel(p: Project): DerivedModel {
     const prof = g.profile!;
     if (g.length <= 1) warnings.push({ memberId: m.id, text: `Member is cut back to zero length.` });
     for (const w of g.prepWarnings ?? []) warnings.push({ memberId: m.id, text: `End preparation — ${w}` });
-    const lp = linearPart(g.frame, g.length, g.cuts, prof.shape, prof.area, { y: prof.cy ?? 0, z: prof.cz ?? 0 });
-    const slots = slotsToLocal(lp.frame, lp.length, memberSlots.get(m.id) ?? [], (text) => warnings.push({ memberId: m.id, text }));
+    // A mirrored section is the plain profile seen from the other end: the part
+    // gets that right-handed frame (and the plain outline), so every output reads it as is.
+    const pf = m.mirrorSection ? mirroredPartFrame(g.frame, g.length, g.cuts) : { frame: g.frame, cuts: g.cuts };
+    const lp = linearPart(pf.frame, g.length, pf.cuts, prof.shape, prof.area, { y: prof.cy ?? 0, z: prof.cz ?? 0 });
+    const wslots = memberSlots.get(m.id) ?? [];
+    const slots = slotsToLocal(
+      lp.frame,
+      lp.length,
+      m.mirrorSection ? wslots.map((s) => ({ ...s, end: s.end === 'start' ? ('end' as const) : ('start' as const) })) : wslots,
+      (text) => warnings.push({ memberId: m.id, text }),
+    );
     parts.push({
       ref: `m:${m.id}`,
       kind: 'member',
@@ -492,6 +501,27 @@ export function linearPart(
     ends: sig ? { start, end } : undefined,
     sig,
   };
+}
+
+/**
+ * Part frame of a member with a mirrored section (Member.mirrorSection). In the
+ * member frame (x, y, z) the material is the outline mirrored in y; the same
+ * material is the plain outline in the frame (−x, −y, z) with its origin at the
+ * far end — a right-handed frame, so the part is the stock profile seen from the
+ * other end. End cuts swap ends: x' = L − x, n' = (−nx, −ny, nz).
+ */
+export function mirroredPartFrame(
+  frame: Frame,
+  length: number,
+  cuts: { start: EndCut; end: EndCut; xMin: number; xMax: number } | undefined,
+): { frame: Frame; cuts?: { start: EndCut; end: EndCut; xMin: number; xMax: number } } {
+  const f: Frame = { origin: madd(frame.origin, frame.x, length), x: scale(frame.x, -1), y: scale(frame.y, -1), z: frame.z };
+  if (!cuts) return { frame: f };
+  const flip = (c: EndCut, end: 'start' | 'end'): EndCut => {
+    const n = { x: -c.n.x, y: -c.n.y, z: c.n.z };
+    return { ...c, n, x: length - c.x, ...anglesFromNormal(end, n), copes: c.copes.map((k) => ({ ...k })) };
+  };
+  return { frame: f, cuts: { start: flip(cuts.end, 'start'), end: flip(cuts.start, 'end'), xMin: length - cuts.xMax, xMax: length - cuts.xMin } };
 }
 
 /** Free plates, bent plates and stiffeners (Project.plates) as plate parts. */

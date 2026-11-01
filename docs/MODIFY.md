@@ -1,0 +1,308 @@
+# Modify: join, split, extend, trim, break, stretch, rotate, mirror, offset and section operations
+
+The member and profile modify toolkit changes existing members:
+- the wire line: join, split, extend / trim, break, stretch, rotate, mirror, offset, reverse
+- the section on it: rotate, flip, mirror, change profile, next / previous size, alignment, match properties.
+
+Every operation is a pure function in `src/core/model/modify.ts` that edits a
+project draft. The UI and the assistant run it through `store.apply`, so each
+one is a single undo step. A refused operation throws a `ModifyError` with a
+message for the user and leaves the model unchanged.
+
+| Part | File |
+| --- | --- |
+| Operations (pure, tested) | `src/core/model/modify.ts` |
+| Mirrored sections in parts | `src/core/derive/model.ts` (`mirroredPartFrame`), `src/core/model/geometry.ts` (`sectionShift`), `src/core/geometry/endPrep.ts` (`fitPlane`) |
+| Shared with the wireframe check | `memberPropsDiff` (`src/core/wireframe/analyze.ts`), `repointMemberRefs`, `pieceAt` (`src/core/wireframe/apply.ts`) |
+| Interactive tools (state, preview, typed input) | `src/ui/modifyTools.ts` |
+| Selection commands (menu, keys, properties) | `src/ui/modifyActions.ts` |
+| Options bar, context menu, Operations section | `src/ui/ModifyPanels.tsx`, `src/ui/modify.css` |
+| Viewer hooks (hover, press / drag, click, right-click, preview overlay) | `src/viewer/Viewer.ts` |
+| Assistant tools | `src/assistant/modules/modify.ts` |
+| Tests | `tests/modify.test.ts` |
+
+## 1. Using the tools
+
+- **Tool rail → Modify:** Join, Split, Extend, Trim, Break, Stretch, Rotate, Mirror, Offset, Reverse, Match, Section ⟳.
+- **While a tool is active:**
+  - The status bar prompts for the next step.
+  - The options bar at the bottom of the 3D view shows the tool's settings.
+  - Hovering shows a **preview** of what a click would do. The operation runs on a copy of the model and the changes are drawn on top: orange for new and moved lines and for the new section outline, grey for the old outline, red for removed pieces and split points, cyan for picked members and points.
+  - **Typing** (a number, `=`, `@`, `/`, `<`, `>` or `-`) goes straight into the typed-input box. Enter applies it.
+- **Enter** accepts the defaults, or applies the tool to the selection. **Esc** steps back. A second Esc leaves the tool.
+- **Right-click a member:**
+  - The member is selected if it was not already.
+  - A menu lists the operations for the selection (one member, two members, or many), with their shortcuts.
+  - "Here" items (*Split here*, *Break 30 mm gap here*, *Delete segment here*) use the clicked point on the member's axis.
+- **Properties → Operations** (members selected):
+  - length, angle to horizontal and to vertical; with two members, the angle between them
+  - Split in N, at crossings
+  - Extend ± a distance at the start, end or both ends
+  - Rotate the section ±90°, flip 180°, mirror the section
+  - Previous / next size (by mass, wall or outer size)
+  - Reverse, Match from…, Join / Corner, Break…
+  - A *Mirrored section* check box sits under the rotation.
+- **Measure tool:**
+  - Picking two points gives the distance, its components and the angle to horizontal.
+  - Points on members add the member's length and angles, and the 3D angle between two members.
+  - Activating Measure with members selected reports the same.
+
+### Shortcuts
+
+| Key | Action | Key | Action |
+| --- | --- | --- | --- |
+| J | Join | Shift+M | Mirror |
+| K | Split | Shift+O | Offset |
+| E | Extend / trim an end | V | Reverse |
+| T | Trim | Shift+P | Match properties |
+| B | Break (gap) | Shift+R | Section tool |
+| G | Stretch (move an end) | ] / [ | Rotate the selected sections +90° / −90° |
+| R | Rotate | Shift+F | Flip the selected sections 180° |
+| + / − | Next / previous size of the selection (outside a modify tool) | Shift+X | Mirror the selected sections |
+
+While a modify tool is active, digits, `-` and `=` go to the typed input (the view keys 1–4 apply again after Esc).
+
+## 2. Join
+
+**Collinear join** (`joinMembers`):
+- **What it joins:**
+  - two members, or a chain, on one line: direction within 1°, ends within 2 mm of the line
+  - pieces that share a node, or are separated by a gap or overlap of up to *max gap* (default 100 mm; *Close gap* allows 1,000 mm).
+- **Result:** one member.
+  - The **longest piece** keeps its id and properties (with *keep first*, the first picked).
+  - The outer ends keep their end preparations and extensions, re-expressed in the joined member's frame. A piece drawn the other way round is handled.
+  - Connections, end-preparation targets (mitre / fit `to`) and welded plates of the absorbed pieces are re-pointed to the joined member. This uses the wireframe check's `repointMemberRefs`.
+  - End preparations at the joint are dropped (reported). Orphan nodes are removed. A node used by other members stays as a through-node.
+- **Refused when:**
+  - **a connection sits on a node between the pieces** (`code: 'connection'`; delete it first)
+  - the pieces' properties differ (`code: 'conflict'`): profile, role, material, finish, phase / zone / batch, manual mark (the wireframe check's `memberPropsDiff`), or the **physical** section placement (orientation and position across the line, through the section's symmetry). Raw rotation values do not count, so pieces drawn in opposite directions join when their sections sit the same way.
+  - The UI then asks *Keep first?* and retries with `keep: 'first'`.
+
+**Corner join** (`cornerJoin`, two non-collinear members):
+- Both members are extended or trimmed to the **closest approach** of their axes. This works in 3D: skew axes within the tolerance (default 50 mm) meet at the midpoint of the shortest connecting segment.
+- The two ends are merged into one node.
+- Inside a member, the shorter side is cut off (`keepA` / `keepB` choose the end to keep).
+- Refused for parallel members, or axes further apart than the tolerance.
+
+**Join to member (T)** (`joinToMember`):
+- The end of A nearer to B is extended or trimmed onto B's axis, where A's axis passes closest to it (within the tolerance), and connected to a node on B.
+- B stays continuous (the node is a through-node, see `membersAtNode`) unless *split B* is chosen; then B is cut there.
+
+**Close gap** (`closeGap`) is a collinear join across the gap: the inverse of Break.
+
+**Join tool:** pick the first member, then the second.
+- Collinear: join. At an angle: corner. Shift+click (or mode *T* / *T + split*): join to member.
+- Typed: a number sets the max gap; `t`, `s`, `c`, `a` set the mode.
+- Enter joins the selected members (a collinear chain, or a corner of two).
+
+## 3. Split
+
+Splitting uses `splitMember`, so connections and mitres follow the piece at their node. Welded plates go to the piece they sit on. The first piece keeps the id.
+
+| Function | Splits |
+| --- | --- |
+| `splitAtPoint` | at the axis point nearest to a picked point |
+| `splitAtDistance` | at a distance from the start or end |
+| `splitInto` | into N equal parts (2 … 1000) |
+| `splitAtLengths` | into fixed lengths (e.g. stock 6,000) from one end; the remainder stays at the other end (14,000 → 6,000 + 6,000 + 2,000) |
+| `splitAtPlane` | where a plane crosses the members: a level (horizontal at its z), a grid line (vertical), the work plane, three points, `x / y / z = value`, or point + normal (`resolvePlane`) |
+| `splitAtCrossingMembers` | only these members, where other members cross them or end on them (within 1 mm); `mullionTransomOnly` uses the wireframe check's junction rule (`isMainRole` / `isSecondaryRole`); the other members stay continuous |
+
+Pieces shorter than 1 mm are never made.
+
+**Split tool:** click a member to split it with the current mode.
+
+| Typed | Mode |
+| --- | --- |
+| `/3` or `n3` | N parts |
+| `500` / `-500` | distance from the start / end |
+| `L6000` | stock lengths |
+| `p` | at the picked point |
+| `z=3500`, `x=…`, `y=…`, `wp`, `level L01`, `grid B` | at a plane |
+| `x` | all crossings |
+| `mt` | mullion–transom crossings only |
+
+- With a selection, typing applies the mode to the selection at once.
+- Enter in *Crossings* mode with nothing selected splits every line at its crossings: the previous rail *Split* command, which now lives here.
+
+## 4. Extend and trim
+
+Moving an end uses `moveMemberEnd` (§6):
+- *auto*: the node moves when nothing else uses it, else the end detaches
+- *detach*
+- *node*.
+
+| Function | Does |
+| --- | --- |
+| `extendBy(d, start / end / both)` | extends (d > 0) or shortens (d < 0) along the member's own axis |
+| `setLength(L, anchor)` | exact length, keeping the start, the end or the centre |
+| `extendToMember(to: 'axis' / 'face', gap)` | extends or trims along the member's own axis to where it passes closest to the other member's axis, or to that member's **outer face** there, plus `gap` |
+| `extendToPlane` | to a plane (the nearer end unless given) |
+| `trimAtBoundary(keep)` | cuts the member where the boundary member crosses it (or its axis meets the boundary's span within 10 mm) and keeps the side `keep` (`start` / `end`, or a point on that side); the other piece is deleted with its connections and welded plates (reported) |
+| `deleteSegment(pick)` | AutoCAD-style trim: deletes the piece between the crossings (members crossing it or ending on it) on either side of the pick; between an end and the first crossing, that end piece goes |
+
+The face distance is the same function the connections use (`faceDistance`,
+[CONNECTION_GEOMETRY.md §4.3](CONNECTION_GEOMETRY.md)): a transom at 30° in plan into an SHS 100 stops 50 / cos 30° = 57.74 mm from the axis.
+
+**Extend tool:**
+- Click near the end to change.
+- Then click a member (extend to its axis or face, as set in the options bar), click a point (the end goes to its projection on the axis), or type:
+  - a distance (`200`, `-150`); Enter repeats the last distance (default 100 mm)
+  - `=3000` for the length with the other end kept, `=3000c` with the centre kept
+  - a plane token
+  - `axis` / `face`, `g10` for the gap.
+
+**Trim tool:**
+- Pick the boundary, then click each member on the side to **keep**. The boundary stays picked for the next member.
+- Enter or `seg` switches to *Delete segment*: click the piece between two crossings.
+
+## 5. Break and close gap
+
+`breakMember(at, gap = 30, side)` splits at a station or point and opens a gap of `gap` mm (a stack or movement joint):
+- symmetric about the point (`both`), or towards the `start` / `end`
+- **refused when a connection on the member sits inside the gap**
+- other members whose ends fall inside the gap no longer touch the member (reported).
+
+The two pieces copy the member. Close the gap with **Join** (collinear, max gap ≥ the gap) or *Close gap* in the context menu.
+
+**Break tool:** click the member where the gap goes. Type the gap (`50`), or `<` / `>` / `=` for the side.
+
+## 6. Stretch (move an end)
+
+`moveMemberEnd(id, end, to, mode)`:
+
+| Mode | Moves |
+| --- | --- |
+| `node` | the node: every member and connection on it follows |
+| `detach` | only this member's end: it gets its own node at `to` (an existing node there is reused); connections at the old node that concern only this member go with it, the others stay and are reported |
+| `auto` | `node` when nothing else uses the node, else `detach` |
+
+A node moved onto another node is merged into it.
+
+**Stretch tool:**
+- **Press on a member end and drag** (snapping as for drawing), or click the end and then pick or type the target: `x,y,z`, `@dx,dy,dz`, `u,v` on the work plane, or a single distance along the member.
+- Options: *Move node* / *Detach end*. Shift+click uses the other one.
+
+## 7. Rotate, mirror, offset
+
+`transformMembers(ids, map, { copy })` applies a rigid map: `rotationMap`, `mirrorMap` or `translationMap`.
+
+**Nodes:**
+- The selected members move as a rigid group.
+- A node also used by members outside the selection is left to them: the group gets its own node there.
+- Connections at such a node that involve only the group move with it. Others stay (reported).
+- Coincident nodes merge afterwards.
+
+**Sections follow the map:**
+- Each member is re-posed (`poseMember`): rotation, mirror flag, alignment and offsets are chosen so the section's world placement is the mapped one.
+- Placements that are equivalent through the section's symmetry are preferred when they avoid the mirror flag or an alignment change.
+- **A mirror mirrors the section, not only the line.** A reflection turns a right-handed member frame into a left-handed one, so an asymmetric section (channel, angle, Z, custom outline) gets `mirrorSection`. A symmetric one is placed through its symmetry instead (for example, an RHS on its +y face becomes an RHS on its −y face).
+
+**Also mapped:**
+- **End preparations:** saw angles are re-expressed in the new frame; copes swap top / bottom when local z flips.
+- **Welded plates:** mirrored plates keep a right-handed frame, with the flat pattern, holes and bend lines mirrored.
+
+**Connections:**
+- Their side parameters (fin plate / cleat side across the member, bracket side along its depth) are flipped where the member's local axis flipped relative to the mapped one, so the parts follow.
+- *Copy* also copies the welded plates, mitre partners within the set and the connections whose members are all copied.
+- A mirror reports that asymmetric connection parameters (offsets, slot directions) should be checked.
+
+**Operations:**
+- `rotateMembers(ids, point, dir, deg)`
+- `mirrorMembers(ids, plane)`
+- `offsetMembers(ids, distance, dir)`:
+  - `dir`: each member's local `y` or `z`, its surface normal (falls back to local z until members carry one), or a world vector
+  - copies by default
+  - members moving by different vectors no longer share their nodes.
+
+**Tools:**
+
+| Tool | Steps | Options and typed input |
+| --- | --- | --- |
+| Rotate | pick the members (or start with a selection); then the axis: a centre point (axis = the work-plane normal), two points, or a member's axis | the angle (Enter: the option, default 90°); `c` toggles copy |
+| Mirror | pick the members; then two points of a mirror line on the work plane (the plane contains the work-plane normal), three points, a member's axis, or Enter / `wp` for the work plane itself | copy is on by default |
+| Offset | pick the members; click the side, or type the distance (a negative value is the other side) or `@dx,dy,dz` | `y` / `z` / `n` direction, `c` toggles copy |
+
+## 8. Section operations ("over the profiles")
+
+| Function | Does |
+| --- | --- |
+| `rotateSections(ids, deg)` | adds to the rotation (±90°, 180° flip) |
+| `mirrorSections(ids, on?)` | toggles `Member.mirrorSection` (below) |
+| `changeProfile(ids, name)` | swaps the profile, keeping the wire line's place on the section: the 3×3 grid is relative to the box; a member on an insertion point whose new profile has none moves to the nearest grid point (reported); the profile's material comes along |
+| `profileSizeStep(name, ±1, mode)`, `stepProfiles` | next / previous size in the **same family, standard and section type, ordered by mass**: `mass` any size; `wall` the same outer size with the next wall (RHS 100x50x4 → 100x50x5); `size` the same wall with the next outer size (→ for example RHS 120x60x4) |
+| `setAlignment(ids, { alignY, alignZ, mode })` | the 3×3 grid point or the profile's insertion point for a selection |
+| `matchProperties(src, targets, fields)` | "format painter"; fields: profile, material, finish, rotation, alignment / insertion (with offsets), mirror, role, phase / zone / batch, end preparations (saw cuts, copes and extensions; mitres and fits belong to their partner and are skipped) |
+| `reverseMembers(ids)` | swaps start and end; see below |
+
+**Reverse:**
+- The section stays where it is physically: rotation, mirror flag and alignment are re-posed.
+- End preparations and extensions stay on their physical ends, with saw angles and cope sides re-expressed.
+- Connection side parameters follow.
+- Joints whose movement (slotted) end was automatic (the member's end node) get it set explicitly, so the slots stay where they were.
+- RHS and other doubly symmetric sections never need the mirror flag. A channel reverses with z flipped. An angle needs the flag.
+
+**Mirror section** (`Member.mirrorSection`):
+- **What it does:** mirrors the outline about the member's local z axis through the wire line (local y → −y). The section shift mirrors with it, so the wire line stays at the same point of the section.
+- **The part:** a mirrored channel is physically the same channel seen from the other end. `deriveModel` therefore gives the part the right-handed frame (−x, −y, z) with its origin at the far end, the **plain** outline, and its end cuts swapped (`mirroredPartFrame`).
+- **Outputs:** every output reads parts, so the mirror reaches:
+  - the 3D mesh and the instancing
+  - IFC (the plain profile definition in the reversed placement, re-read with web-ifc in the tests)
+  - DSTV (the start / end saw angles swap)
+  - drawings
+  - clash solids (the open side stays free)
+  - BOM, nesting and numbering (a mirrored and a plain channel of the same cut are the same mark).
+- **Connections and fits:** connection geometry uses the section box, which a mirror does not change. `fitPlane` swaps the channel's web faces. Stiffeners go on a mirrored channel's open (−y) side.
+
+**Section tool:** click members to apply the action (rotate by the angle, flip, mirror, next / previous size). Type an angle, or `f`, `m`, `+`, `−`. Enter applies to the selection.
+
+## 9. Assistant
+
+| Tool | Does |
+| --- | --- |
+| `modify_join` | collinear / corner / tee join (`mode`, `keep`, `maxGap`, `tol`, `splitB`) |
+| `modify_split` | point, distance (+ from), parts, length (stock), plane, crossings (+ mullionTransomOnly) |
+| `modify_extend` | distance (+ end), length (+ anchor), toMember (+ to axis / face, gap), plane |
+| `modify_trim` | at a boundary (+ keep), or delete the segment at a point |
+| `modify_break` | distance or point, gap, side |
+| `modify_move_end` | stretch to / by, mode |
+| `modify_transform` | rotate (axis point + direction or member), mirror (plane), offset (distance, direction), copy |
+| `modify_section` | rotate, flip, mirror, profile, step (next / previous, mode), alignment |
+| `modify_match` | source, targets, fields |
+| `modify_reverse` | — |
+| `modify_measure` | length, angles, angle between two members |
+
+- Members are chosen by `filter`: `ids`, `selected` (the default), `all`, `role`, `profile` or `direction`, as in the core tools.
+- Planes are `{ kind: level | grid | workPlane | x | y | z | points | plane, … }`.
+- Replies carry the message, the resulting member ids (selected in the view) and the warnings.
+
+## 10. Rules for connections, end preparations and plates
+
+| Operation | Connections | End preparations | Welded plates |
+| --- | --- | --- | --- |
+| Join | re-pointed to the joined member; refused if one sits between the pieces | outer ends kept (converted), inner ends dropped | re-pointed |
+| Split / break | follow the piece at their node; break refused with one in the gap | kept at their ends; new cut ends square | to the piece they sit on |
+| Extend / stretch | follow a moved node; with *detach*, ones that concern only this member follow, others stay (reported) | kept | — |
+| Trim / delete segment | of the removed piece: deleted (reported) | of the removed piece: gone | of the removed piece: deleted |
+| Rotate / mirror / offset | follow the nodes; side parameters flipped where the axis flipped; copies copy the connections whose members are all copied | converted to the new frame | mapped (mirrored plates stay right-handed) |
+| Reverse | side parameters and automatic movement ends kept physically | swapped to the other field, angles converted | — |
+| Section ops / match | unchanged (connections follow the box) | match copies saw cuts and copes | — |
+
+After every operation, `connectionIssues` reports connections whose supported member no longer ends at their node, or whose main member no longer meets it.
+
+## 11. Member vectors
+
+Operations that derive a member from another write it as `{ ...m, … }`, so new optional member fields carry over.
+
+Two single helpers in `modify.ts` are the place for stored directions (a surface normal, for example):
+- `transformMemberVectors(m, fn)`: called once per member by rotate, mirror and copies
+- `memberAxes`: the section axes used by the re-posing.
+
+## Limits
+
+- **Axes and preview:** operations work on the wire line (straight members). The preview runs the operation on a copy of nodes, members, connections and plates on every hover; it is fast on facade-size models, and on very large models it can lag.
+- **Connection parameters:** connections are re-pointed, flipped for their side parameters, or reported. Other asymmetric connection parameters (offsets, slot directions) are not mirrored. The side table covers fin plates, angle and tee cleats, wall angles, slab brackets and the concrete brackets; other types keep their parameters.
+- **Moving ends under connections:** extending or stretching an end that carries a connection whose main member stays where it is leaves the connection at its node. It is reported, not re-placed.
+- **Offset along the normal:** members do not carry a surface normal yet, so it falls back to local z (reported).
+- **Mirror section:** members only. Connection profiles (cleats) are not mirrored.
+- **Measure:** angles are between axes (wire lines), not section faces.

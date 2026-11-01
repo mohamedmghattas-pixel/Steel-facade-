@@ -80,7 +80,9 @@ export function memberGeom(p: Project, m: Member, trims?: Trims, governed?: Gove
       length = r.end.x - x0;
       const start = { ...r.start, x: 0 };
       const end = { ...r.end, x: length };
-      const env = cutEnvelope(shapeOutline(profile.shape).outer, start, end);
+      // The material in this (member) frame: a mirrored section has its outline mirrored in y.
+      const outer = shapeOutline(profile.shape).outer;
+      const env = cutEnvelope(m.mirrorSection ? outer.map((v) => ({ x: -v.x, y: v.y })) : outer, start, end);
       g.frame = { origin, ...axes };
       g.length = Math.max(0, length);
       g.cuts = { start, end, xMin: env.xMin, xMax: env.xMax };

@@ -19,7 +19,8 @@ import {
   deletePlates,
 } from '../core/model/ops';
 import { handleModellingPoints } from './dialogs/modellingActions';
-import { dist, sub, worldToPlane } from '../core/model/geometry';
+import { dist, pointSegment, sub, worldToPlane } from '../core/model/geometry';
+import { measureText } from './modifyActions';
 import { APPLY_END, applyConnection, autoConnect, CONNECTIONS } from '../core/connections/registry';
 import type { ConnectionType } from '../core/model/types';
 import { derived, useStore, type Tool } from '../state/store';
@@ -196,7 +197,13 @@ export function handleToolPoints(tool: Tool, pts: Vec3[]) {
     }
   } else if (tool === 'measure') {
     const d = sub(b, a);
-    notify(`Distance ${dist(a, b).toFixed(1)} mm  (dx ${d.x.toFixed(1)}, dy ${d.y.toFixed(1)}, dz ${d.z.toFixed(1)})`);
+    const along = Math.hypot(d.x, d.y);
+    const slope = dist(a, b) > 1e-6 ? (Math.atan2(Math.abs(d.z), along) * 180) / Math.PI : 0;
+    // Members picked by the two points: their length and angles, and the 3D angle between them.
+    const on = (q: Vec3) => Object.values(s.project.members).find((m) => pointSegment(q, s.project.nodes[m.start].p, s.project.nodes[m.end].p).d < 1)?.id;
+    const ids = [...new Set([on(a), on(b)].filter((x): x is string => !!x))];
+    const info = ids.length ? ` · ${ids.length === 1 ? 'member' : 'members'}: ${measureText(s.project, ids)}` : '';
+    notify(`Distance ${dist(a, b).toFixed(1)} mm  (dx ${d.x.toFixed(1)}, dy ${d.y.toFixed(1)}, dz ${d.z.toFixed(1)}, ${slope.toFixed(1)}° to horizontal)${info}`);
   } else if (tool === 'calibrate') {
     void calibrate(a, b);
   }

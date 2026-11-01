@@ -48,6 +48,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - **Orient profiles to surface** (Members → *Orient*, Manage menu, member properties, or the assistant's `orient_to_surface`): profiles are always perpendicular to the facade. The surfaces are found from where mullions and transoms meet, so sloped, V-shaped, folded and curved facades work: every section's depth (local z) follows the surface normal and its width lies in the surface. Fold members between two surface patches get the bisector (or follow one patch), brackets get their depth along the mullion they stand on, and the exterior side can be flipped for the whole model or per patch.
    - **Custom profiles:** draw your own section in the **profile sketcher** (outlines, holes, thin walls with bend radii, fillets, mirror, typed coordinates), or upload them from **DXF** (closed polylines with holes), JSON or CSV. Each can carry an **insertion point**, the point the wire line runs through.
    - **Profiles by role:** give mullions, transoms and the other roles their own profile in Library → *Profiles by role*, and apply it to all members of a role at once. See [docs/PROFILES.md](docs/PROFILES.md).
+   - **Modify:** join (collinear, corner, T), split (point, distance, N parts, stock lengths, level / grid / plane, crossings), extend / trim (distance, length, to a member's axis or face, to a plane), break with a gap, stretch an end, rotate / mirror / offset, reverse, and section operations (rotate, flip, mirror section, next / previous size, match properties). Each is a tool in the rail's *Modify* group with a 3D preview and typed input, in the right-click menu on members and in Properties → *Operations*. See [docs/MODIFY.md](docs/MODIFY.md).
 4. **Connections.** Parametric joints that create plates, bolts, anchors, holes and cut-backs.
    - **Steel to concrete:**
      - Slab bracket (edge or top mount, with slotted fin and anchors)
@@ -159,7 +160,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [MODIFY](docs/MODIFY.md) (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

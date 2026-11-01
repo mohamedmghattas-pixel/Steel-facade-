@@ -92,6 +92,14 @@ export interface Member {
   /** Extra offset of the section from the line, local y / z, mm. */
   offsetY: number;
   offsetZ: number;
+  /**
+   * Mirror the section about the member's local z axis through the wire line
+   * (local y → −y): asymmetric profiles (channels, angles, Z, custom outlines)
+   * open the other way. The shift from the wire line mirrors with it. The part
+   * is the same stock profile seen from the other end, so derived parts carry
+   * the plain outline in a reversed frame (see docs/MODIFY.md §7).
+   */
+  mirrorSection?: boolean;
   /** Positive extends the member past its node, negative cuts it back (mm). */
   startExt: number;
   endExt: number;

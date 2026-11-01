@@ -6,6 +6,7 @@
 import type { Id, WireframeCheckSettings, WireframeSummary } from '../core/model/types';
 import { analyzeWireframe, applyWireframePlan, predictSummary, recordApproval, type ApplyResult, type WireframePlan } from '../core/wireframe';
 import { useStore, type WireScope } from '../state/store';
+import { assignProfilesByRole, roleProfile } from '../core/model/roleProfiles';
 
 const st = () => useStore.getState();
 
@@ -31,13 +32,44 @@ export interface ConfirmInput {
  * Apply the accepted items as one undo step, keep the settings with the project and,
  * only when `confirm` is given, record the client confirmation of the result.
  */
-export function applyWireframeCheck(plan: WireframePlan, accepted: Set<string>, confirm?: ConfirmInput, scope: WireScope = 'all'): ApplyResult {
+/** Roles whose profile the check gives to unprofiled lines it classified. */
+export const CHECK_PROFILE_ROLES = ['mullion', 'transom', 'bracket'] as const;
+
+/** Role profiles that the check would assign, e.g. ["mullion → SHS 100x100x5"]. */
+export function checkRoleProfiles(): string[] {
+  const p = st().project;
+  return CHECK_PROFILE_ROLES.flatMap((r) => {
+    const rp = roleProfile(p, r);
+    return rp ? [`${r} → ${rp.profile}`] : [];
+  });
+}
+
+export interface ApplyCheckOptions {
+  /**
+   * Give lines in the result that still have no profile the profile of their role
+   * (Library → Profiles by role). Lines that already have a profile keep it.
+   */
+  assignRoleProfiles?: boolean;
+}
+
+export function applyWireframeCheck(
+  plan: WireframePlan,
+  accepted: Set<string>,
+  confirm?: ConfirmInput,
+  scope: WireScope = 'all',
+  opts: ApplyCheckOptions = {},
+): ApplyResult & { profiled: number } {
   if (confirm && !confirm.by.trim()) throw new Error('Enter who confirmed the wireframe.');
   let res: ApplyResult | null = null;
+  let profiled = 0;
   const summary: WireframeSummary = predictSummary(plan, accepted);
   const label = confirm ? 'Wireframe check: apply and confirm' : 'Wireframe check: apply';
   st().apply(label, (d) => {
     res = applyWireframePlan(d, plan, accepted);
+    if (opts.assignRoleProfiles !== false) {
+      const bare = (res as ApplyResult).members.filter((id) => d.members[id] && !d.members[id].profile);
+      profiled = assignProfilesByRole(d, bare, CHECK_PROFILE_ROLES);
+    }
     d.wireframe.settings = { ...plan.settings };
     if (confirm) recordApproval(d, { by: confirm.by, note: confirm.note, summary, changes: res.applied });
   });
@@ -45,7 +77,7 @@ export function applyWireframeCheck(plan: WireframePlan, accepted: Set<string>, 
   if (!out) throw new Error('The wireframe check did not run.');
   // "Last import" keeps pointing at the same lines after merging and cutting.
   if (scope === 'import') st().set({ lastImport: out.members });
-  return out;
+  return { ...out, profiled };
 }
 
 /** Record a confirmation of the model as it is (no changes). */

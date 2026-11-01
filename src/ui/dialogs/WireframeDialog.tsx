@@ -10,7 +10,7 @@ import type { Id, Vec3, WireframeCheckSettings, WireframeSummary } from '../../c
 import { GROUP_LABEL, GROUP_ORDER, predictSummary, STATUS_LABEL, wireframeStatus, type PlanGroup, type PlanItem, type WireframePlan } from '../../core/wireframe';
 import { ROLE_COLORS } from '../../viewer/meshes';
 import { getViewer } from '../ViewportPanel';
-import { applyWireframeCheck, confirmWireframe, resolveWireScope, runWireframeCheck } from '../wireframeActions';
+import { applyWireframeCheck, checkRoleProfiles, confirmWireframe, resolveWireScope, runWireframeCheck } from '../wireframeActions';
 import './wireframe.css';
 
 const LIST_LIMIT = 200;
@@ -95,6 +95,8 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<WireframeCheckSettings>(() => ({ ...project.wireframe.settings }));
   const [by, setBy] = useState(() => project.wireframe.approvals.at(-1)?.by ?? project.info.client ?? '');
   const [note, setNote] = useState('');
+  const [giveProfiles, setGiveProfiles] = useState(true);
+  const roleProfiles = checkRoleProfiles();
   const [open, setOpen] = useState<Partial<Record<PlanGroup, boolean>>>({});
   // The scope's member ids are frozen when the scope is chosen (selection changes from zoom-to must not re-run the check).
   const [scopeIds, setScopeIds] = useState<Id[] | null>(() => resolveWireScope(initialScope));
@@ -144,12 +146,13 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
   const doApply = (confirm: boolean) => {
     if (!plan) return;
     try {
-      const res = applyWireframeCheck(plan, accepted, confirm ? { by, note } : undefined, scope);
+      const res = applyWireframeCheck(plan, accepted, confirm ? { by, note } : undefined, scope, { assignRoleProfiles: giveProfiles });
       const parts = [
         res.merged ? `${res.merged} pieces merged` : '',
         res.splits ? `${res.splits} cuts` : '',
         res.snapped ? `${res.snapped} ends snapped` : '',
         res.roles ? `${res.roles} roles set` : '',
+        res.profiled ? `${res.profiled} profiles assigned by role` : '',
         res.deleted ? `${res.deleted} deleted` : '',
         res.construction ? `${res.construction} construction lines` : '',
       ].filter(Boolean);
@@ -179,6 +182,14 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={
         <div className="wf-footer">
+          <label className="check" title="Library → Profiles by role">
+            <input type="checkbox" checked={giveProfiles && roleProfiles.length > 0} disabled={!roleProfiles.length} onChange={(e) => setGiveProfiles(e.target.checked)} />
+            <span>
+              {roleProfiles.length
+                ? `Give unprofiled lines their role profile (${roleProfiles.join(', ')})`
+                : 'No role profiles set: set mullion / transom profiles in Library → Profiles by role to make the lines steel in the same step.'}
+            </span>
+          </label>
           <div className="row2">
             <Field label="Confirmed by" hint="Name of the client / reviewer (needed to confirm)">
               <input type="text" value={by} onChange={(e) => setBy(e.target.value)} onKeyDown={(e) => e.stopPropagation()} placeholder="e.g. client facade engineer" aria-label="Confirmed by" />

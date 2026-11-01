@@ -2,16 +2,20 @@ import { useMemo, useState } from 'react';
 import { derived, useStore } from '../state/store';
 import { Icon } from './icons';
 import { Field, NumberInput, ProfilePicker, Segmented, Select, TextInput, kg, mm } from './widgets';
-import { MEMBER_ROLES, type Align, type Finish, type Member, type MemberRole } from '../core/model/types';
+import { MEMBER_ROLES, type Align, type AlignMode, type Finish, type Member, type MemberRole } from '../core/model/types';
 import { ROLE_LABEL, updateMembers, newId } from '../core/model/ops';
+import { setMemberRole } from '../core/model/roleProfiles';
+import { alignModeOf } from '../core/model/geometry';
 import { MATERIALS } from '../core/library/materials';
 import { BOLT_SIZES } from '../core/library/bolts';
-import { PROFILES, getProfile, profileFamilies, type Standard } from '../core/library/profiles';
-import { shapeOutline } from '../core/library/shapes';
+import { PROFILES, getProfile, profileFamilies, profileMassIn, type ProfileDef, type Standard } from '../core/library/profiles';
 import { CONNECTIONS, paramSpecs, resolveParams } from '../core/connections/registry';
 import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
-import { assignActiveProfile, exportProfileCsv, importProfileCsv, removeReference } from './actions';
+import { assignActiveProfile, removeReference } from './actions';
+import { SectionPreview } from './SectionPreview';
+import { RoleProfilesPanel } from './RoleProfilesPanel';
+import { deleteCustomProfile, exportProfileDxf, exportProfilesCsv, exportProfilesJson, openProfileImport, openSketcher } from './profileActions';
 import { AssistantPanel } from './AssistantPanel';
 import { ConnectionPreviewView, openConnectionLibrary } from './ConnectionLibrary';
 import { askConfirm } from './askState';
@@ -99,7 +103,15 @@ function MemberProps({ ids }: { ids: string[] }) {
         {mass > 0 && <span>{kg(mass)}</span>}
       </div>
       <Field label="Profile">
-        <ProfilePicker allowNone value={profile.value as string | null} mixed={profile.mixed} onChange={(v) => patch('Profile', { profile: v })} />
+        <ProfilePicker
+          allowNone
+          value={profile.value as string | null}
+          mixed={profile.mixed}
+          onChange={(v) => {
+            const mat = v ? getProfile(v)?.material : undefined;
+            patch('Profile', mat ? { profile: v, material: mat } : { profile: v });
+          }}
+        />
       </Field>
       <div className="row2">
         <Field label="Role">
@@ -107,7 +119,11 @@ function MemberProps({ ids }: { ids: string[] }) {
             value={c((m) => m.role).value as MemberRole}
             mixed={c((m) => m.role).mixed}
             options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
-            onChange={(v) => patch('Role', { role: v })}
+            onChange={(v) => {
+              apply('Role', (d) => void setMemberRole(d, ids, v));
+              const rp = project.settings.roleProfiles?.[v];
+              if (rp) useStore.getState().notify(`${ROLE_LABEL[v]} profile ${rp.profile} applied (Library → Profiles by role).`);
+            }}
           />
         </Field>
         <Field label="Material">
@@ -123,6 +139,7 @@ function MemberProps({ ids }: { ids: string[] }) {
         <Select<Finish> value={c((m) => m.finish).value as Finish} mixed={c((m) => m.finish).mixed} options={FINISHES} onChange={(v) => patch('Finish', { finish: v })} />
       </Field>
       <h4>Position on the wire line</h4>
+      <WirePosition ms={ms} ids={ids} />
       <div className="row2">
         <Field label="Rotation">
           <NumberInput value={c((m) => m.rotation).value as number} mixed={c((m) => m.rotation).mixed} unit="°" onChange={(v) => patch('Rotation', { rotation: v })} />
@@ -144,7 +161,7 @@ function MemberProps({ ids }: { ids: string[] }) {
               { value: 0, label: '◫', title: 'Centred' },
               { value: 1, label: '◨', title: 'Line on the +y face' },
             ]}
-            onChange={(v) => patch('Align', { alignY: v })}
+            onChange={(v) => patch('Align', { alignY: v, alignMode: 'grid' })}
           />
         </Field>
         <Field label="Depth (local z)">
@@ -155,7 +172,7 @@ function MemberProps({ ids }: { ids: string[] }) {
               { value: 0, label: '◫', title: 'Centred' },
               { value: 1, label: '⬒', title: 'Line on the top (+z) face' },
             ]}
-            onChange={(v) => patch('Align', { alignZ: v })}
+            onChange={(v) => patch('Align', { alignZ: v, alignMode: 'grid' })}
           />
         </Field>
       </div>
@@ -186,6 +203,48 @@ function MemberProps({ ids }: { ids: string[] }) {
         </Field>
       )}
     </section>
+  );
+}
+
+/** Section preview with the 3×3 grid and the profile insertion point; switches the alignment mode. */
+function WirePosition({ ms, ids }: { ms: Member[]; ids: string[] }) {
+  const apply = useStore((s) => s.apply);
+  const names = [...new Set(ms.map((m) => m.profile).filter(Boolean))] as string[];
+  if (names.length !== 1) return null;
+  const prof = getProfile(names[0]);
+  if (!prof) return null;
+  const modes = new Set(ms.map((m) => alignModeOf(m, prof)));
+  const mode: AlignMode | undefined = modes.size === 1 ? [...modes][0] : undefined;
+  const ay = new Set(ms.map((m) => m.alignY)).size === 1 ? ms[0].alignY : undefined;
+  const az = new Set(ms.map((m) => m.alignZ)).size === 1 ? ms[0].alignZ : undefined;
+  const set = (label: string, p: Partial<Member>) => apply(label, (d) => updateMembers(d, ids, p));
+  return (
+    <div className="wire-pos">
+      <SectionPreview
+        profile={prof}
+        size={124}
+        mode={mode}
+        alignY={ay}
+        alignZ={az}
+        onGrid={(y, z) => set('Align', { alignMode: 'grid', alignY: y, alignZ: z })}
+        onInsertion={prof.insertion ? () => set('Align', { alignMode: 'insertion' }) : undefined}
+      />
+      <div className="wire-pos-side">
+        {prof.insertion ? (
+          <Segmented<AlignMode>
+            value={mode}
+            options={[
+              { value: 'insertion', label: 'Insertion point', title: "The wire line runs through the profile's insertion point" },
+              { value: 'grid', label: '3×3 grid', title: 'The wire line on a face, an edge or the centre of the bounding box' },
+            ]}
+            onChange={(v) => set('Align', { alignMode: v })}
+          />
+        ) : (
+          <span className="muted">No insertion point on this profile: the wire line sits on the 3×3 grid.</span>
+        )}
+        <span className="muted">Click a grid point{prof.insertion ? ' or the insertion point (cross)' : ''} to place the wire line. Offsets add on top.</span>
+      </div>
+    </div>
   );
 }
 
@@ -366,7 +425,7 @@ function ProjectProps() {
         </Field>
       </div>
       <h4>Auto-assign rules</h4>
-      <p className="muted">Applied by Members → Auto-assign. Layer rules win over direction rules.</p>
+      <p className="muted">Applied by Members → Auto-assign. Layer rules win over role rules, role rules over direction rules.</p>
       {s.autoRules.map((r, i) => (
         <div className="rule" key={i}>
           <Select
@@ -376,10 +435,18 @@ function ProjectProps() {
               { value: 'horizontal', label: 'Horizontal' },
               { value: 'inclined', label: 'Inclined' },
               { value: 'layer', label: 'DXF layer' },
+              { value: 'role', label: 'Has role' },
             ]}
             onChange={(v) => apply('Rule', (p) => void (p.settings.autoRules[i].match = v as typeof r.match))}
           />
           {r.match === 'layer' && <TextInput value={r.layer ?? ''} placeholder="layer name" onChange={(v) => apply('Rule', (p) => void (p.settings.autoRules[i].layer = v))} />}
+          {r.match === 'role' && (
+            <Select<MemberRole>
+              value={r.ofRole ?? 'other'}
+              options={MEMBER_ROLES.map((x) => ({ value: x, label: ROLE_LABEL[x] }))}
+              onChange={(v) => apply('Rule', (p) => void (p.settings.autoRules[i].ofRole = v))}
+            />
+          )}
           <ProfilePicker value={r.profile} onChange={(v) => v && apply('Rule', (p) => void (p.settings.autoRules[i].profile = v))} />
           <Select<MemberRole>
             value={r.role}
@@ -449,22 +516,18 @@ function ProjectProps() {
 function ProfilePreview({ name }: { name: string }) {
   const p = getProfile(name);
   if (!p) return null;
-  const o = shapeOutline(p.shape);
-  const pad = Math.max(p.h, p.b) * 0.15;
-  const vb = `${-p.b / 2 - pad} ${-p.h / 2 - pad} ${p.b + 2 * pad} ${p.h + 2 * pad}`;
-  const path = (pts: { x: number; y: number }[]) => `M${pts.map((q) => `${q.x},${-q.y}`).join('L')}Z`;
   return (
     <div className="profile-preview">
-      <svg viewBox={vb} width="120" height="120" aria-label={`${name} cross-section`}>
-        <path d={[o.outer, ...o.holes].map(path).join(' ')} fillRule="evenodd" />
-      </svg>
+      <SectionPreview profile={p} size={120} mode={p.insertion ? 'insertion' : 'grid'} title={`${name} cross-section`} />
       <dl>
         <dt>h × b</dt>
         <dd>
           {p.h.toFixed(1)} × {p.b.toFixed(1)} mm
         </dd>
         <dt>Mass</dt>
-        <dd>{p.mass.toFixed(2)} kg/m</dd>
+        <dd>
+          {profileMassIn(p).toFixed(2)} kg/m{p.material ? ` ${p.material}` : ''}
+        </dd>
         <dt>Area</dt>
         <dd>{(p.area / 100).toFixed(2)} cm²</dd>
         <dt>Iy / Iz</dt>
@@ -477,6 +540,14 @@ function ProfilePreview({ name }: { name: string }) {
         </dd>
         <dt>Surface</dt>
         <dd>{p.surface.toFixed(3)} m²/m</dd>
+        {p.insertion && (
+          <>
+            <dt>Insertion</dt>
+            <dd>
+              {p.insertion.x.toFixed(1)}, {p.insertion.y.toFixed(1)} from centre
+            </dd>
+          </>
+        )}
       </dl>
     </div>
   );
@@ -526,14 +597,22 @@ function LibraryPanel() {
         {list.map((p) => (
           <button key={p.name} role="option" aria-selected={p.name === active} className={p.name === active ? 'on' : ''} onClick={() => set({ activeProfile: p.name })}>
             <span>{p.name}</span>
-            <span className="muted">{p.mass.toFixed(1)} kg/m</span>
+            <span className="muted">{profileMassIn(p).toFixed(1)} kg/m</span>
           </button>
         ))}
       </div>
       {active && <ProfilePreview name={active} />}
       <div className="row2">
         <Field label="Role for assign / draw">
-          <Select<MemberRole> value={role} options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))} onChange={(v) => set({ activeRole: v })} />
+          <Select<MemberRole>
+            value={role}
+            options={MEMBER_ROLES.map((r) => ({ value: r, label: ROLE_LABEL[r] }))}
+            onChange={(v) => {
+              // A role with its own profile makes that the active profile (new members of the role get it).
+              const rp = useStore.getState().project.settings.roleProfiles?.[v];
+              set(rp && getProfile(rp.profile) ? { activeRole: v, activeProfile: rp.profile } : { activeRole: v });
+            }}
+          />
         </Field>
         <Field label="Draw new lines as">
           <Segmented
@@ -549,16 +628,26 @@ function LibraryPanel() {
       <button className="primary-btn wide" disabled={!selCount} onClick={assignActiveProfile}>
         Assign {active ?? ''} to {selCount} selected line{selCount === 1 ? '' : 's'}
       </button>
+      <RoleProfilesPanel />
       <h4>Custom and imported profiles</h4>
       <p className="muted">
-        {customCount} custom profile{customCount === 1 ? '' : 's'} in this project. Import a supplier catalogue as CSV with columns <code>name,family,type,h,b,tw,tf,r,t,d,c,mass</code>{' '}
-        (type: I, U, L, T, RHS, CHS, RD, FL, C, Z).
+        {customCount} custom profile{customCount === 1 ? '' : 's'} in this project. Draw one with its insertion point, or upload DXF outlines (closed polylines, holes inside), JSON or a
+        CSV catalogue <code>name,family,type,h,b,tw,tf,r,t,d,c,mass</code>.
       </p>
       <div className="btn-row">
-        <button className="secondary-btn" onClick={() => void importProfileCsv()}>
-          Import CSV…
+        <button className="primary-btn" onClick={() => openSketcher()}>
+          New custom profile…
         </button>
-        <button className="secondary-btn" disabled={!customCount} onClick={exportProfileCsv}>
+        <button className="secondary-btn" onClick={() => void openProfileImport()}>
+          Import profiles (DXF / JSON / CSV)…
+        </button>
+      </div>
+      <CustomProfileList />
+      <div className="btn-row">
+        <button className="secondary-btn" disabled={!customCount} onClick={exportProfilesJson}>
+          Export JSON
+        </button>
+        <button className="secondary-btn" disabled={!customCount} onClick={exportProfilesCsv}>
           Export CSV
         </button>
         <button
@@ -570,6 +659,41 @@ function LibraryPanel() {
         </button>
       </div>
     </section>
+  );
+}
+
+/** The project's custom profiles with edit / export / remove. */
+function CustomProfileList() {
+  const defs = useStore((s) => s.project.library.profiles) as unknown as ProfileDef[];
+  const set = useStore((s) => s.set);
+  const active = useStore((s) => s.activeProfile);
+  if (!defs.length) return null;
+  return (
+    <div className="custom-list">
+      {defs.map((d) => {
+        const p = getProfile(d.name);
+        return (
+          <div key={d.name} className={`custom-item ${active === d.name ? 'on' : ''}`}>
+            <SectionPreview profile={p ?? null} size={40} mode={p?.insertion ? 'insertion' : 'grid'} />
+            <button className="link-btn custom-name" onClick={() => set({ activeProfile: d.name })} title="Make it the active profile">
+              {d.name}
+              <span className="muted"> {p ? `${profileMassIn(p).toFixed(2)} kg/m` : 'invalid'}</span>
+            </button>
+            {d.shape?.type === 'POLY' && (
+              <button className="link-btn" onClick={() => openSketcher(d.name)}>
+                Edit
+              </button>
+            )}
+            <button className="link-btn" onClick={() => exportProfileDxf(d)} title="Download as DXF">
+              DXF
+            </button>
+            <button className="icon-btn" title={`Remove ${d.name}`} onClick={() => void deleteCustomProfile(d.name)}>
+              ×
+            </button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -53,6 +53,13 @@ export type Finish = 'none' | 'hdg' | 'paint' | 'hdg+paint';
 export type Align = -1 | 0 | 1;
 
 /**
+ * How the wire line sits on the section: 'grid' = the 3×3 bounding-box grid
+ * (alignY / alignZ), 'insertion' = through the profile's insertion point
+ * (custom profiles that define one; others fall back to the grid).
+ */
+export type AlignMode = 'grid' | 'insertion';
+
+/**
  * A wireframe line. With `profile === null` it is a pure construction line;
  * once a profile is assigned it becomes a steel member.
  */
@@ -65,9 +72,15 @@ export interface Member {
   role: MemberRole;
   /** Rotation of the section about the member axis, degrees. */
   rotation: number;
-  /** Where the wireframe line sits on the section (local y / local z). */
+  /** Where the wireframe line sits on the section (local y / local z), in alignment mode 'grid'. */
   alignY: Align;
   alignZ: Align;
+  /**
+   * Alignment mode. Absent: 'insertion' when the profile defines an insertion
+   * point, else 'grid' (so models made before insertion points are unchanged).
+   * Offsets apply on top in both modes.
+   */
+  alignMode?: AlignMode;
   /** Extra offset of the section from the line, local y / z, mm. */
   offsetY: number;
   offsetZ: number;
@@ -531,12 +544,25 @@ export interface Underlay {
 }
 
 export interface AutoAssignRule {
-  /** Match lines by direction and/or DXF layer name. */
-  match: 'vertical' | 'horizontal' | 'inclined' | 'layer';
+  /** Match lines by direction, DXF layer name or their current role. */
+  match: 'vertical' | 'horizontal' | 'inclined' | 'layer' | 'role';
   layer?: string;
+  /** For match 'role': the role a line must already have. */
+  ofRole?: MemberRole;
   profile: string;
   role: MemberRole;
   rotation?: number;
+}
+
+/** The profile (and how it is set) that members of one role get (ProjectSettings.roleProfiles). */
+export interface RoleProfile {
+  profile: string;
+  /** Section rotation about the member axis, degrees (absent: members keep theirs). */
+  rotation?: number;
+  /** Alignment mode (absent: members keep theirs). */
+  alignMode?: AlignMode;
+  /** Material (absent: the profile's own material if it has one, else members keep theirs). */
+  material?: string;
 }
 
 export interface ProjectSettings {
@@ -556,6 +582,8 @@ export interface ProjectSettings {
   /** Prefix for loose connection assemblies such as brackets. */
   bracketPrefix: string;
   autoRules: AutoAssignRule[];
+  /** Profile per member role (mullions, transoms …): new members of a role get it; "apply" updates existing ones. */
+  roleProfiles: Partial<Record<MemberRole, RoleProfile>>;
   gridStep: number;
   /** Code used for detailing checks and defaults; 'auto' follows the profile library in use. */
   designCode: 'auto' | 'AISC360' | 'EC3';

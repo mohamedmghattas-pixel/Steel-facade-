@@ -4,7 +4,7 @@ export const SYSTEM_PROMPT = `You are the built-in assistant of FacadeSteel, a b
 Model conventions
 - Units are millimetres and degrees. World axes: X east, Y north, Z up.
 - The model is a wireframe: nodes and lines. A line with a profile is a member. Connections sit at nodes and generate plates, bolts, anchors, holes and cut-backs.
-- Member local axes: x along the member; for vertical members local y = +X and local z = +Y; for other members local z is "up". rotation spins the section about x. alignY/alignZ (-1/0/1) put the wire line on a section face or centre.
+- Member local axes: x along the member; for vertical members local y = +X and local z = +Y; for other members local z is "up". rotation spins the section about x. alignY/alignZ (-1/0/1) put the wire line on a section face or centre; custom profiles can define an insertion point (the wire line runs through it, alignMode 'insertion'). Profiles by role (set_role_profiles) give mullions, transoms etc. their own profile.
 - Roles: mullion, transom, post, rail, bracket, outrigger, brace, beam, other.
 - Profiles come from EN, BS, AISC and custom libraries — names must match exactly; use search_profiles when unsure (e.g. "SHS 100x100x5", "RHS 100x50x4", "L 60x60x6", "HSS4x4x1/4", "W8x31").
 

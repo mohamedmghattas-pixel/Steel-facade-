@@ -78,6 +78,7 @@ const tools: ToolModule['tools'] = [
         include: { type: 'array', items: { type: 'string' } },
         exclude: { type: 'array', items: { type: 'string' } },
         confirm: { type: 'boolean' },
+        assignRoleProfiles: { type: 'boolean', description: 'Give unprofiled lines their role profile (Profiles by role). Default true.' },
         confirmedBy: { type: 'string' },
         note: { type: 'string' },
       },
@@ -140,7 +141,9 @@ const run: ToolModule['run'] = {
       }
       return { applied: 0, confirmed: false, message: 'Nothing to apply.', ...statusOut(), ...(unknown.length ? { unknownIds: unknown } : {}) };
     }
-    const res = applyWireframeCheck(plan, accepted, confirm ? { by, note: input.note as string | undefined } : undefined, Array.isArray(input.ids) ? 'all' : scope);
+    const res = applyWireframeCheck(plan, accepted, confirm ? { by, note: input.note as string | undefined } : undefined, Array.isArray(input.ids) ? 'all' : scope, {
+      assignRoleProfiles: input.assignRoleProfiles !== false,
+    });
     const { members, ...counts } = res;
     return { ...counts, members: members.length, confirmed: confirm, ...statusOut(), ...(unknown.length ? { unknownIds: unknown } : {}), undo: 'One undo step (Ctrl+Z or the history tool).' };
   },

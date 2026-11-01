@@ -125,7 +125,7 @@ export function centreLine(p: Project, m: Member): CentreLine | null {
   const prof = getProfile(m.profile);
   const w = prof?.b ?? 0;
   const h = prof?.h ?? 0;
-  const sh = sectionShift(m, w, h);
+  const sh = sectionShift(m, w, h, prof);
   return { origin: toWorld({ origin: a, ...ax }, 0, sh.x, sh.y), ...ax, w, h, shape: prof?.shape };
 }
 

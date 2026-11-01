@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { PROFILES, getProfile, searchProfiles, type Standard } from '../core/library/profiles';
+import { PROFILES, getProfile, profileLibraryRevision, profileMassIn, searchProfiles, type Standard } from '../core/library/profiles';
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
   return (
@@ -147,14 +147,15 @@ export function ProfilePicker({
   }, [open]);
   const list = useMemo(
     () => searchProfiles(q, std === 'all' ? undefined : std).filter((p) => !filter || filter(p.name)).slice(0, 120),
-    [q, std, filter],
+    // The catalogue revision: custom profiles come and go with the project.
+    [q, std, filter, profileLibraryRevision()],
   );
   const label = mixed ? '— mixed —' : value ? value : allowNone ? 'Wireframe (no profile)' : 'Choose profile';
   return (
     <div className="profile-picker" ref={ref}>
       <button type="button" className="picker-btn" onClick={() => setOpen(!open)}>
         <span>{label}</span>
-        <span className="muted">{value && getProfile(value) ? `${getProfile(value)!.mass.toFixed(1)} kg/m` : ''}</span>
+        <span className="muted">{value && getProfile(value) ? `${profileMassIn(getProfile(value)!).toFixed(1)} kg/m` : ''}</span>
       </button>
       {open && (
         <div className="picker-pop">
@@ -176,7 +177,7 @@ export function ProfilePicker({
               <button type="button" key={p.name} className={p.name === value ? 'on' : ''} onClick={() => (onChange(p.name), setOpen(false))}>
                 <span>{p.name}</span>
                 <span className="muted">
-                  {p.family} · {p.mass.toFixed(1)} kg/m
+                  {p.family} · {profileMassIn(p).toFixed(1)} kg/m{p.insertion ? ' · ⌖' : ''}
                 </span>
               </button>
             ))}

@@ -1,0 +1,516 @@
+/* Custom profiles: section previews, profile sketcher, import review, profiles by role. */
+
+/* ---------------------------------------------------------------- section preview */
+.sec-preview {
+  flex: none;
+  background: var(--bg-0);
+  border-radius: 6px;
+}
+.sec-preview.empty {
+  display: inline-block;
+  border: 1px dashed var(--line-2);
+}
+.sec-preview .sec-fill {
+  fill: #6f8fb8;
+  stroke: #c7d6ea;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.sec-preview .sec-box {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 3 3;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.sec-preview .sec-dot {
+  fill: var(--bg-3);
+  stroke: var(--text-2);
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+}
+.sec-preview .sec-dot.on {
+  fill: var(--accent);
+  stroke: var(--accent-2);
+}
+.sec-preview .pick {
+  cursor: pointer;
+}
+.sec-preview .sec-dot.pick:hover {
+  fill: var(--accent-2);
+}
+.sec-preview .sec-ins line,
+.sec-preview .sec-ins circle {
+  stroke: var(--err);
+  stroke-width: 1.5px;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+.sec-preview .sec-ins circle {
+  fill: rgb(239 100 97 / 0.15);
+}
+.sec-preview .sec-ins.on circle {
+  fill: var(--err);
+}
+.sec-preview .sec-ins.pick:hover circle {
+  fill: rgb(239 100 97 / 0.6);
+}
+
+.wire-pos {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin: 4px 0 8px;
+}
+.wire-pos-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  font-size: 11.5px;
+}
+
+/* ---------------------------------------------------------------- library lists */
+.custom-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0;
+}
+.custom-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+.custom-item.on {
+  background: var(--bg-2);
+}
+.custom-item .custom-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.role-profiles {
+  margin: 10px 0 4px;
+  padding: 8px;
+  background: var(--bg-2);
+  border-radius: 8px;
+}
+.role-profiles h4 {
+  margin-top: 0;
+}
+.rp-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+.rp-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rp-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 12px;
+}
+.rp-opts {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 4px;
+  align-items: center;
+  font-size: 11px;
+}
+.rp-opts > select:last-child {
+  grid-column: 1 / -1;
+}
+.rp-opts label {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--text-3);
+}
+.rp-opts select {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------- import review */
+.pi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.pi-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px;
+  background: var(--bg-2);
+  border-radius: 8px;
+}
+.pi-item.off {
+  opacity: 0.6;
+}
+.pi-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.pi-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pi-name {
+  flex: 1;
+  min-width: 0;
+}
+.pi-name.err,
+.sk-typed input.err {
+  border-color: var(--err);
+}
+.pi-props {
+  font-size: 11px;
+}
+.pi-small {
+  font-size: 11px;
+}
+
+/* ---------------------------------------------------------------- sketcher page */
+.sk-page {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-0);
+}
+.sk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--line);
+}
+.sk-head h2 {
+  margin: 0;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sk-head-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.sk-sep {
+  width: 1px;
+  height: 20px;
+  background: var(--line-2);
+  margin: 0 4px;
+}
+.sk-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 168px 1fr 300px;
+}
+.sk-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  background: var(--bg-1);
+  border-right: 1px solid var(--line);
+  overflow-y: auto;
+}
+.sk-tool {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sk-tool:hover {
+  background: var(--bg-2);
+}
+.sk-tool.on {
+  background: var(--bg-3);
+  border-color: var(--accent);
+}
+.sk-key {
+  display: inline-block;
+  width: 16px;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  border: 1px solid var(--line-2);
+  border-radius: 3px;
+}
+.sk-toolopts {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.sk-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.sk-small {
+  font-size: 11px;
+  margin: 2px 0;
+}
+.sk-canvas-wrap {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--viewport-bg);
+}
+.sk-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  touch-action: none;
+  user-select: none;
+  cursor: crosshair;
+}
+.sk-canvas.tool-select {
+  cursor: default;
+}
+.sk-grid line {
+  stroke: rgb(255 255 255 / 0.05);
+  stroke-width: 1;
+}
+.sk-grid line.major {
+  stroke: rgb(255 255 255 / 0.11);
+}
+.sk-axis {
+  stroke: rgb(91 155 213 / 0.55);
+  stroke-width: 1;
+  stroke-dasharray: 8 4 2 4;
+}
+.sk-box rect {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-dasharray: 4 4;
+}
+.sk-box circle {
+  fill: var(--text-3);
+}
+.sk-fill {
+  fill: rgb(111 143 184 / 0.42);
+  stroke: none;
+}
+.sk-edge {
+  fill: none;
+  stroke: #c7d6ea;
+  stroke-width: 1.4;
+}
+.sk-edge.hole {
+  stroke: #9fb6d4;
+}
+.sk-edge.sel {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.sk-centre {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-dasharray: 6 3;
+}
+.sk-centre.sel {
+  stroke-width: 2;
+}
+.sk-centroid circle,
+.sk-centroid line {
+  stroke: var(--info);
+  stroke-width: 1.2;
+  fill: none;
+}
+.sk-vtx {
+  fill: var(--bg-1);
+  stroke: #c7d6ea;
+  stroke-width: 1;
+}
+.sk-vtx.on {
+  fill: var(--accent);
+  stroke: var(--accent-2);
+}
+.sk-vtx.draft {
+  fill: var(--accent);
+  stroke: none;
+}
+.sk-label {
+  fill: var(--text-2);
+  font-size: 10.5px;
+  font-family: var(--mono);
+}
+.sk-rubber {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+.sk-ins circle,
+.sk-ins line {
+  stroke: var(--err);
+  stroke-width: 1.8;
+  fill: rgb(239 100 97 / 0.18);
+}
+.sk-snap rect {
+  fill: none;
+  stroke: var(--ok);
+  stroke-width: 1.4;
+}
+.sk-snap.grid rect,
+.sk-snap.none rect {
+  stroke: var(--text-3);
+}
+.sk-snap text {
+  fill: var(--ok);
+  font-size: 10.5px;
+}
+.sk-status {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  top: 6px;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 11.5px;
+  pointer-events: none;
+}
+.sk-hint {
+  color: var(--text-3);
+  margin-left: auto;
+  text-align: right;
+}
+.sk-typed {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: rgb(22 27 35 / 0.9);
+  border: 1px solid var(--line-2);
+  border-radius: 8px;
+  font-size: 12px;
+}
+.sk-typed input {
+  width: 190px;
+  font-family: var(--mono);
+}
+.sk-side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--bg-1);
+  border-left: 1px solid var(--line);
+  overflow-y: auto;
+}
+.sk-side section h4 {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 0 0 6px;
+}
+.sk-ins-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 34px);
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.sk-ins-grid .chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 0;
+}
+.sk-pre-box {
+  fill: none;
+  stroke: var(--text-3);
+  stroke-width: 1;
+}
+.sk-pre-dot {
+  fill: var(--err);
+}
+.sk-props {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.sk-props dt {
+  color: var(--text-3);
+}
+.sk-props dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+.sk-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.sk-legend {
+  position: absolute;
+  right: 8px;
+  bottom: 12px;
+  font-size: 11px;
+  color: var(--text-3);
+  pointer-events: none;
+}
+
+.rp-pick {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.rp-pick .profile-picker {
+  flex: 1;
+  min-width: 0;
+}

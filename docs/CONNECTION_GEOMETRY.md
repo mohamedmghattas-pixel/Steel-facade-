@@ -196,12 +196,21 @@ uses fixed values: mullion 0 / 90, transom 90 when `transomDepthNormal`
   transom local z is `−Y = +n` (`src/core/model/ops.ts:497-498`). "Side ±1"
   parameters therefore point opposite ways on mullions and transoms.
 
-### 3.2 Alignment and offsets (`sectionShift`, `src/core/model/geometry.ts:116-124`)
+### 3.2 Alignment and offsets (`sectionShift`, `src/core/model/geometry.ts`)
 
 ```
-shift.x (along ŷ) = −alignY·w/2 + offsetY        w = profile.b
-shift.y (along ẑ) = −alignZ·h/2 + offsetZ        h = profile.h
+grid mode:       shift.x (along ŷ) = −alignY·w/2 + offsetY        w = profile.b
+                 shift.y (along ẑ) = −alignZ·h/2 + offsetZ        h = profile.h
+insertion mode:  shift = (−insertion.x + offsetY, −insertion.y + offsetZ)
+                 insertion = Profile.insertion, the profile's insertion point from its box centre
 ```
+
+The mode is `Member.alignMode`. When it is absent, the member uses insertion mode if its
+profile defines an insertion point, else grid mode. Earlier models therefore derive
+unchanged. Insertion mode on a profile without an insertion point is grid mode
+(`alignModeOf`). Connections place their parts from the section centre line and the
+bounding-box faces, so they follow the shifted section. See
+[PROFILES.md §2](PROFILES.md) for drawing coordinates and the role of the insertion point.
 
 `Align` is −1 for the line at the section's negative edge, 0 for centre, +1
 for the positive edge (`src/core/model/types.ts:52-53`).

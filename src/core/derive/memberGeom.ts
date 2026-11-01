@@ -11,7 +11,7 @@ export interface MemberGeom {
   /** Wireframe end points. */
   a: Vec3;
   b: Vec3;
-  /** Offset of the section centre from the wire line, in local (y, z). */
+  /** Offset of the section centre (bounding-box centre) from the wire line, in local (y, z): grid alignment or the profile's insertion point (sectionShift). */
   shift: Vec2;
   /** Section height (local z) and width (local y). */
   h: number;
@@ -51,7 +51,7 @@ export function memberGeom(p: Project, m: Member, trims?: Trims, governed?: Gove
   const profile = getProfile(m.profile);
   const h = profile?.h ?? 0;
   const w = profile?.b ?? 0;
-  const shift = sectionShift(m, w, h);
+  const shift = sectionShift(m, w, h, profile);
   const t = trims?.get(m.id) ?? { start: 0, end: 0 };
   const ext = appliedExt(m, governed);
   const startOff = -ext.start + t.start;

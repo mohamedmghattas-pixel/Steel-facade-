@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Member, MemberRole, Vec2, Vec3 } from '../core/model/types';
 import { clipHalfPlane, type Frame } from '../core/model/geometry';
-import { shapeBox, shapeOutline, type Shape } from '../core/library/shapes';
+import { shapeBox, shapeOutline, shapeSignature, type Shape } from '../core/library/shapes';
 import type { Hole2D } from '../core/connections/common';
 import type { Part } from '../core/derive/model';
 import { cutXAt, type Cope, type EndCut } from '../core/geometry/endPrep';
@@ -36,16 +36,21 @@ const profileGeoCache = new Map<string, { mesh: THREE.BufferGeometry; edges: THR
 
 /** Unit-length extrusion of a profile along +Z (scaled per member by its matrix). */
 export function profileGeometry(name: string, shape: Shape) {
-  let g = profileGeoCache.get(name);
+  // Keyed by name and shape content: a custom profile can be edited under the same name.
+  const key = `${name}~${shapeSignature(shape)}`;
+  let g = profileGeoCache.get(key);
   if (!g) {
     const o = shapeOutline(shape);
     const mesh = new THREE.ExtrudeGeometry(toShape(o.outer, o.holes), { depth: 1, bevelEnabled: false, curveSegments: 8 });
     const edges = new THREE.EdgesGeometry(mesh, 35);
     g = { mesh, edges };
-    profileGeoCache.set(name, g);
+    profileGeoCache.set(key, g);
   }
   return g;
 }
+
+/** Profile name plus shape signature, for geometry keys (see profileGeometry). */
+const profileKey = (part: Part) => (part.shape ? `${part.profile}~${shapeSignature(part.shape)}` : part.profile);
 
 /** Matrix mapping section x → frame.y, section y → frame.z, extrusion → frame.x × length. */
 export function linearMatrix(frame: Frame, length: number): THREE.Matrix4 {
@@ -177,7 +182,7 @@ const memberGeoCache = new Map<string, { mesh: THREE.BufferGeometry; edges: THRE
  * the section with the corner radius stepped in thin slices.
  */
 export function preparedMemberGeometry(part: Part) {
-  const key = `${part.profile}#${part.length.toFixed(2)}#${part.sigExtra ?? ''}`;
+  const key = `${profileKey(part)}#${part.length.toFixed(2)}#${part.sigExtra ?? ''}`;
   const hit = memberGeoCache.get(key);
   if (hit) return hit;
   const shape = part.shape!;
@@ -422,11 +427,12 @@ export function partGeometryKey(part: Part, member?: Member): string {
     return `pl|${part.thickness}|${o}|${h}${b}`;
   }
   // End-prepared parts (cuts, mitres, copes) carry their cut geometry in part.ends (derive/model.ts).
-  if (part.ends && part.shape) return `prep|${part.profile}|${q(part.length)}|${part.sigExtra ?? ''}`;
+  const pk = profileKey(part);
+  if (part.ends && part.shape) return `prep|${pk}|${q(part.length)}|${part.sigExtra ?? ''}`;
   // Open end slots (knife / tongue / stem inserts).
-  if (part.slots?.length && part.shape) return `slot|${part.profile}|${q(part.length)}|${part.slots.map((k) => `${k.face}${q(k.x0)},${q(k.x1)},${q(k.offset)},${q(k.width)}`).join(';')}`;
+  if (part.slots?.length && part.shape) return `slot|${pk}|${q(part.length)}|${part.slots.map((k) => `${k.face}${q(k.x0)},${q(k.x1)},${q(k.offset)},${q(k.width)}`).join(';')}`;
   const prepped = !!member && ((!!member.startPrep && member.startPrep.kind !== 'square') || (!!member.endPrep && member.endPrep.kind !== 'square'));
-  return prepped ? `lin|${part.profile}|${q(part.length)}|${JSON.stringify([member!.startPrep ?? null, member!.endPrep ?? null])}` : `lin|${part.profile}`;
+  return prepped ? `lin|${pk}|${q(part.length)}|${JSON.stringify([member!.startPrep ?? null, member!.endPrep ?? null])}` : `lin|${pk}`;
 }
 
 /** Whether a key is a unit-length extrusion scaled by the part length. */
@@ -459,13 +465,14 @@ function sharpShape(s: Shape): Shape {
  * corners and 8-sided tubes — about a fifth of the triangles of profileGeometry.
  */
 export function coarseProfileGeometry(name: string, shape: Shape) {
-  let g = coarseGeoCache.get(name);
+  const key = `${name}~${shapeSignature(shape)}`;
+  let g = coarseGeoCache.get(key);
   if (!g) {
     const s = sharpShape(shape);
     const o = s.type === 'CHS' ? { outer: ngon(s.d / 2, 8), holes: [ngon(s.d / 2 - s.t, 8).reverse()] } : s.type === 'RD' ? { outer: ngon(s.d / 2, 8), holes: [] } : shapeOutline(s);
     const mesh = new THREE.ExtrudeGeometry(toShape(o.outer, o.holes), { depth: 1, bevelEnabled: false, curveSegments: 1 });
     g = { mesh, edges: new THREE.EdgesGeometry(mesh, 35) };
-    coarseGeoCache.set(name, g);
+    coarseGeoCache.set(key, g);
   }
   return g;
 }

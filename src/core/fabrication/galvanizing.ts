@@ -72,7 +72,8 @@ export function classifyDip(dims: Dims | number[], bath: Bath, clearance: number
   return { cls: 'oversize', orientation: '', note: 'Oversize for the bath: split the item, bolt it together on site, or use a larger bath. Confirm with the galvanizer.' };
 }
 
-const isHollow = (shape?: { type: string }) => shape?.type === 'RHS' || shape?.type === 'CHS';
+/** Closed hollow sections need vent and drain holes: tubes, and outline profiles with voids. */
+const isHollow = (shape?: { type: string; holes?: unknown[] }) => shape?.type === 'RHS' || shape?.type === 'CHS' || (shape?.type === 'POLY' && !!shape.holes?.length);
 
 export function isHdgAssembly(dm: DerivedModel, a: Assembly): boolean {
   return a.parts.some((r) => {

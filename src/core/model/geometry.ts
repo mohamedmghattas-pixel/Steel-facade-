@@ -1,4 +1,4 @@
-import type { Align, Member, NamedWorkPlane, Project, Vec2, Vec3, WorkPlane } from './types';
+import type { Align, AlignMode, Member, NamedWorkPlane, Project, Vec2, Vec3, WorkPlane } from './types';
 
 export const EPS = 1e-6;
 
@@ -112,12 +112,35 @@ export function memberLine(p: Project, m: Member): [Vec3, Vec3] {
   return [nodePos(p, m.start), nodePos(p, m.end)];
 }
 
-/** Offset of the section centre from the wireframe line given alignment + offsets. */
+/**
+ * Effective alignment mode of a member: its own `alignMode`, else 'insertion'
+ * when the profile defines an insertion point, else 'grid'. 'insertion' on a
+ * profile without one behaves like 'grid'.
+ */
+export function alignModeOf(m: Pick<Member, 'alignMode'>, profile?: { insertion?: Vec2 } | null): AlignMode {
+  const mode = m.alignMode ?? (profile?.insertion ? 'insertion' : 'grid');
+  return mode === 'insertion' && profile?.insertion ? 'insertion' : 'grid';
+}
+
+/**
+ * Offset of the section centre (the bounding-box centre) from the wireframe
+ * line, in local (y, z), given alignment + offsets:
+ * - grid: −align·(w/2, h/2), the line on a face, edge or the centre of the box;
+ * - insertion (`profile.insertion` = the insertion point relative to the box
+ *   centre, alignModeOf(m, profile) = 'insertion'): −insertion, so the wire
+ *   line runs through the insertion point.
+ * offsetY / offsetZ are added in both modes.
+ */
 export function sectionShift(
-  m: Pick<Member, 'alignY' | 'alignZ' | 'offsetY' | 'offsetZ'>,
+  m: Pick<Member, 'alignY' | 'alignZ' | 'offsetY' | 'offsetZ' | 'alignMode'>,
   width: number,
   height: number,
+  profile?: { insertion?: Vec2 } | null,
 ): Vec2 {
+  if (profile && alignModeOf(m, profile) === 'insertion') {
+    const ins = profile.insertion!;
+    return { x: -ins.x + (m.offsetY || 0), y: -ins.y + (m.offsetZ || 0) };
+  }
   const ay: Align = m.alignY ?? 0;
   const az: Align = m.alignZ ?? 0;
   return { x: -ay * (width / 2) + (m.offsetY || 0), y: -az * (height / 2) + (m.offsetZ || 0) };

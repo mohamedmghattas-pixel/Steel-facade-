@@ -69,6 +69,8 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - Material lists (XLSX, or CSV in a zip)
    - Cut optimisation for bars (1D) and plates (2D nesting)
    - A numbered drawing set (PDF / DXF) to ISO drawing standards: drawing register, GA, assembly and part drawings with revision tables, cross-references, hole tables and machining steps. See [docs/DRAWING_STANDARDS.md](docs/DRAWING_STANDARDS.md).
+     - **Sheet layout:** one layout engine places every view, table, legend and note clear of each other and of the title block; long tables continue on sheet 2/N of the same drawing, and a layout check (overlaps, frame, lettering heights, overlapping marks) runs on every sheet, with warnings in the Drawings tab.
+     - **Large facades:** GA elevations and plans and erection sequences that are not legible on one sheet are divided into zones at a legible ISO scale — at grid lines, else member lines — one sheet per zone with a key plan, match lines (*SEE DRAWING …*) and only that zone's assemblies. Inclined or folded (V-shaped) facades are drawn normal to each facade plane in true shape. Marks are placed without overlapping (leaders where needed). Settings under *Drawing settings → Large facades — zones*; A1 is suggested for big facades.
    - DSTV NC1 files for CNC
    - Checks (warnings, clashing bolt holes, unassigned lines)
 

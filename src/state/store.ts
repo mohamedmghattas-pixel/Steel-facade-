@@ -48,6 +48,7 @@ export type DialogName =
   | 'arcMembers'
   | 'curvedFacade'
   | 'wireframeCheck'
+  | 'exportPackage'
   | ManagementDialogName;
 
 export interface Selection {

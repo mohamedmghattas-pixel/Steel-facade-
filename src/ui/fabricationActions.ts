@@ -6,25 +6,31 @@ import type { FabricationSettings, LabelLayout, StockItem } from '../core/model/
 import { derived, useStore } from '../state/store';
 import { download, pickFile, safeName } from '../state/storage';
 import { zip } from '../core/io/zip';
-import { exportIfc } from '../core/io/ifcExport';
-import { exportDstvPlates } from '../core/fabrication/dstv';
-import { exportNestedSheets, exportPlateDxfAll } from '../core/fabrication/plateDxf';
-import { nestPlates } from '../core/optimize/plateNesting';
-import { planBars } from '../core/optimize/barNesting';
-import { fabSettings } from '../core/fabrication/settings';
-import { labelItems, labelPages } from '../core/fabrication/labels';
-import { packingListPages, packingLists, packingListsXlsx } from '../core/fabrication/packing';
-import { galvanizingReport, galvanizingXlsx } from '../core/fabrication/galvanizing';
-import { paintAreas, paintXlsx } from '../core/fabrication/paint';
-import { misCsvFiles, misExport } from '../core/fabrication/mis';
-import { parseStockCsv, stockToCsv } from '../core/fabrication/stock';
-import { sheetsToXlsx, type Row } from '../core/reports/bom';
-import type { SvgPage } from '../core/reports/tablePages';
+import { parseStockCsv } from '../core/fabrication/stock';
+import {
+  dstvFiles,
+  galvanizingFile,
+  ifcText,
+  labelSheetPages,
+  misCsv,
+  misData,
+  misJson,
+  nestedDxfFiles,
+  packingLists,
+  packingPages,
+  packingXlsx,
+  paintFile,
+  plateDxfFiles,
+  purchaseXlsx,
+  stockCsv,
+  XLSX_MIME as XLSX,
+  type OutFile,
+} from '../core/export/outputs';
+import { svgPagesToPdf } from './pdf';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
 const fileBase = () => safeName(st().project.info.name);
-const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function guard(): boolean {
   if (!derived(st().project).parts.length) {
@@ -34,28 +40,7 @@ function guard(): boolean {
   return true;
 }
 
-/** Vector PDF from SVG pages (mm), one PDF page per SVG page. */
-export async function svgPagesToPdf(pages: SvgPage[]): Promise<Blob> {
-  const [{ jsPDF }, { svg2pdf }] = await Promise.all([import('jspdf'), import('svg2pdf.js')]);
-  const first = pages[0] ?? { w: 210, h: 297 };
-  const orient = (s: { w: number; h: number }) => (s.w >= s.h ? 'landscape' : 'portrait');
-  // Compressed: label sheets hold one vector path per QR code and barcode.
-  const doc = new jsPDF({ orientation: orient(first), unit: 'mm', format: [first.w, first.h], compress: true });
-  const host = document.createElement('div');
-  host.style.cssText = 'position:fixed;left:-10000px;top:0;width:0;height:0;overflow:hidden';
-  document.body.appendChild(host);
-  try {
-    for (const [i, pg] of pages.entries()) {
-      if (i > 0) doc.addPage([pg.w, pg.h], orient(pg));
-      host.innerHTML = pg.svg;
-      const el = host.querySelector('svg');
-      if (el) await svg2pdf(el, doc, { x: 0, y: 0, width: pg.w, height: pg.h });
-    }
-  } finally {
-    host.remove();
-  }
-  return doc.output('blob');
-}
+const zipDownload = (name: string, files: OutFile[]) => download(name, zip(files), 'application/zip');
 
 // ---------------------------------------------------------------------------
 // Plate CNC
@@ -63,12 +48,12 @@ export async function svgPagesToPdf(pages: SvgPage[]): Promise<Blob> {
 export function exportPlateDxf(): number {
   if (!guard()) return 0;
   const p = st().project;
-  const files = exportPlateDxfAll(p, derived(p));
+  const files = plateDxfFiles(p, derived(p));
   if (!files.length) {
     notify('There are no plate parts to export.', 'error');
     return 0;
   }
-  download(`${fileBase()}-plates-dxf.zip`, zip(files.map((f) => ({ name: f.name, data: f.content }))), 'application/zip');
+  zipDownload(`${fileBase()}-plates-dxf.zip`, files);
   const n = files.length - 1;
   notify(`Exported ${n} plate DXF file${n === 1 ? '' : 's'} (1:1 mm, layers OUTLINE / HOLES / MARKING).`);
   return n;
@@ -77,13 +62,12 @@ export function exportPlateDxf(): number {
 export function exportNestedDxf(): number {
   if (!guard()) return 0;
   const p = st().project;
-  const dm = derived(p);
-  const files = exportNestedSheets(p, dm, nestPlates(p, dm));
+  const files = nestedDxfFiles(p, derived(p));
   if (!files.length) {
     notify('No nested sheets — there are no plates, or none fits the stock sheets.', 'error');
     return 0;
   }
-  download(`${fileBase()}-nested-sheets-dxf.zip`, zip(files.map((f) => ({ name: f.name, data: f.content }))), 'application/zip');
+  zipDownload(`${fileBase()}-nested-sheets-dxf.zip`, files);
   const n = files.length - 1;
   notify(`Exported ${n} nested sheet${n === 1 ? '' : 's'} as DXF with a placement list.`);
   return n;
@@ -92,12 +76,12 @@ export function exportNestedDxf(): number {
 export function exportPlateNc(): number {
   if (!guard()) return 0;
   const p = st().project;
-  const files = exportDstvPlates(p, derived(p));
+  const files = dstvFiles(p, derived(p), 'plates');
   if (!files.length) {
     notify('There are no plate parts to export.', 'error');
     return 0;
   }
-  download(`${fileBase()}-plates-nc1.zip`, zip(files.map((f) => ({ name: f.name, data: f.content }))), 'application/zip');
+  zipDownload(`${fileBase()}-plates-nc1.zip`, files);
   notify(`Exported ${files.length} plate NC1 file${files.length === 1 ? '' : 's'} (DSTV).`);
   return files.length;
 }
@@ -108,17 +92,14 @@ export function exportPlateNc(): number {
 export async function exportLabels(opts: { layout?: LabelLayout; per?: 'piece' | 'mark' } = {}): Promise<number> {
   if (!guard()) return 0;
   const p = st().project;
-  const s = fabSettings(p);
-  const layout = opts.layout ?? s.labelLayout;
-  const items = labelItems(p, derived(p), opts.per ?? s.labelPer);
-  const pages = labelPages(items, layout);
-  notify(`Creating ${items.length} label${items.length === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}…`);
+  const { pages, labels, layout } = labelSheetPages(p, derived(p), opts);
+  notify(`Creating ${labels} label${labels === 1 ? '' : 's'} on ${pages.length} page${pages.length === 1 ? '' : 's'}…`);
   try {
     download(`${fileBase()}-labels-${layout}.pdf`, await svgPagesToPdf(pages), 'application/pdf');
   } catch (e) {
     notify(`Label PDF failed: ${(e as Error).message}`, 'error');
   }
-  return items.length;
+  return labels;
 }
 
 export async function exportPackingLists(kind: 'xlsx' | 'pdf'): Promise<number> {
@@ -126,11 +107,11 @@ export async function exportPackingLists(kind: 'xlsx' | 'pdf'): Promise<number> 
   const p = st().project;
   const lists = packingLists(p, derived(p));
   if (kind === 'xlsx') {
-    download(`${fileBase()}-packing-lists.xlsx`, packingListsXlsx(p, lists), XLSX);
+    download(`${fileBase()}-packing-lists.xlsx`, packingXlsx(p, lists), XLSX);
     return lists.length;
   }
   try {
-    download(`${fileBase()}-packing-lists.pdf`, await svgPagesToPdf(packingListPages(p, lists)), 'application/pdf');
+    download(`${fileBase()}-packing-lists.pdf`, await svgPagesToPdf(packingPages(p, lists)), 'application/pdf');
   } catch (e) {
     notify(`Packing list PDF failed: ${(e as Error).message}`, 'error');
   }
@@ -140,18 +121,18 @@ export async function exportPackingLists(kind: 'xlsx' | 'pdf'): Promise<number> 
 export function exportGalvanizing(): void {
   if (!guard()) return;
   const p = st().project;
-  const r = galvanizingReport(p, derived(p));
-  if (!r.totals.pieces) return notify('No parts are hot-dip galvanized (finish HDG or HDG + paint).', 'error');
-  download(`${fileBase()}-galvanizing.xlsx`, galvanizingXlsx(p, r), XLSX);
-  if (r.totals.oversize) notify(`${r.totals.oversize} piece(s) are oversize for the galvanizing bath — see the list.`, 'error');
+  const g = galvanizingFile(p, derived(p));
+  if (!g) return notify('No parts are hot-dip galvanized (finish HDG or HDG + paint).', 'error');
+  download(`${fileBase()}-galvanizing.xlsx`, g.data, XLSX);
+  if (g.oversize) notify(`${g.oversize} piece(s) are oversize for the galvanizing bath — see the list.`, 'error');
 }
 
 export function exportPaint(): void {
   if (!guard()) return;
   const p = st().project;
-  const r = paintAreas(p, derived(p));
-  if (!r.rows.length) return notify('No parts are painted (finish Paint or HDG + paint).', 'error');
-  download(`${fileBase()}-paint-areas.xlsx`, paintXlsx(p, r), XLSX);
+  const data = paintFile(p, derived(p));
+  if (!data) return notify('No parts are painted (finish Paint or HDG + paint).', 'error');
+  download(`${fileBase()}-paint-areas.xlsx`, data, XLSX);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,13 +142,12 @@ export function exportMis(): void {
   if (!guard()) return;
   const p = st().project;
   const dm = derived(p);
-  const data = misExport(p, dm);
-  const files: { name: string; data: string }[] = [
-    { name: 'facadesteel-mis.json', data: JSON.stringify(data, null, 1) },
-    ...misCsvFiles(data).map((f) => ({ name: `csv/${f.name}`, data: f.content })),
-    { name: `${fileBase()}.ifc`, data: exportIfc(p, dm) },
-  ];
-  download(`${fileBase()}-mis-erp.zip`, zip(files), 'application/zip');
+  const data = misData(p, dm);
+  zipDownload(`${fileBase()}-mis-erp.zip`, [
+    { name: 'facadesteel-mis.json', data: misJson(data) },
+    ...misCsv(data).map((f) => ({ name: `csv/${f.name}`, data: f.data })),
+    { name: `${fileBase()}.ifc`, data: ifcText(p, dm) },
+  ]);
   notify(`Exported ${data.parts.length} part marks, ${data.assemblies.length} assemblies and ${data.operations.length} operations for MIS/ERP.`);
 }
 
@@ -195,29 +175,14 @@ export async function importStockCsv(): Promise<void> {
 }
 
 export function exportStockCsv(): void {
-  download(`${fileBase()}-stock.csv`, stockToCsv(st().project.settings.stock), 'text/csv');
+  download(`${fileBase()}-stock.csv`, stockCsv(st().project), 'text/csv');
 }
 
 /** Purchase list and remaining stock after nesting (XLSX). */
 export function exportPurchaseList(): void {
   if (!guard()) return;
   const p = st().project;
-  const plan = planBars(p, derived(p));
-  const buy: Row[] = [['Profile', 'Material', 'Length (mm)', 'Qty']];
-  for (const x of plan.purchase) buy.push([x.profile, x.material, x.length, x.qty]);
-  const used: Row[] = [['Profile', 'Material', 'Length (mm)', 'Qty']];
-  for (const x of plan.used) used.push([x.profile, x.material, x.length, x.qty]);
-  const left: Row[] = [['Profile', 'Length (mm)', 'Qty left', 'Material']];
-  for (const x of plan.remaining) left.push([x.profile, x.length, x.qty < 0 ? 'unlimited' : x.qty, x.material ?? '']);
-  download(
-    `${fileBase()}-purchase-list.xlsx`,
-    sheetsToXlsx([
-      { name: 'Purchase', rows: buy },
-      { name: 'From stock', rows: used },
-      { name: 'Remaining stock', rows: left },
-    ]),
-    XLSX,
-  );
+  download(`${fileBase()}-purchase-list.xlsx`, purchaseXlsx(p, derived(p)), XLSX);
 }
 
 export function setFabSettings(patch: Partial<FabricationSettings>, label = 'Fabrication settings'): void {

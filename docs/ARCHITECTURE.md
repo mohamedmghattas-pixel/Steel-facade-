@@ -291,6 +291,11 @@ lists and NC files cannot disagree.
 - **Nesting:** bar nesting (stock on hand first, then purchase) and MaxRects plate nesting.
 - **Labels:** QR and Code 128 (own encoder).
 - **Lists:** packing, galvanizing with dip checks, paint, MIS JSON/CSV, BCF 2.1.
+- **Export package** (`src/core/export`): every output as `{ name, data }` files placed by an
+  editable template (folder tree + file-name patterns with tokens) into one package folder or
+  ZIP, with a manifest, run report, STEP / OBJ from the viewer's mesh builders, and QAF / VCF
+  forms filled into the user's workbook by patching only the sheet XML. See
+  [EXPORT_PACKAGE.md](EXPORT_PACKAGE.md).
 
 ### 3.9 Viewer (`src/viewer`)
 

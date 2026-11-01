@@ -2,6 +2,7 @@ import type { Project } from '../core/model/types';
 import { defaultDrawingSet, defaultSettings, defaultWireframeSettings } from '../core/model/ops';
 
 import { zip } from '../core/io/zip';
+import { defaultPackageSettings, exportTemplates, migrateExportTemplates } from '../core/export/template';
 import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
 
 const KEY = 'facadesteel.autosave.v1';
@@ -64,6 +65,10 @@ export function migrateProject(p: Project | null): Project | null {
     approvals: Array.isArray(p.wireframe?.approvals) ? p.wireframe.approvals : [],
     settings: { ...defaultWireframeSettings(), ...(p.wireframe?.settings ?? {}) },
   };
+  p.exportTemplates = migrateExportTemplates(p.exportTemplates);
+  if (p.activeExportTemplate && !exportTemplates(p).some((t) => t.id === p.activeExportTemplate)) delete p.activeExportTemplate;
+  if (p.exportPackage && typeof p.exportPackage === 'object') p.exportPackage = { ...defaultPackageSettings(), ...p.exportPackage };
+  else delete p.exportPackage;
   return p;
 }
 

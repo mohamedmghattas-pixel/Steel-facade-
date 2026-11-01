@@ -71,6 +71,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - A numbered drawing set (PDF / DXF) to ISO drawing standards: drawing register, GA, assembly and part drawings with revision tables, cross-references, hole tables and machining steps. See [docs/DRAWING_STANDARDS.md](docs/DRAWING_STANDARDS.md).
    - DSTV NC1 files for CNC
    - Checks (warnings, clashing bolt holes, unassigned lines)
+   - **Export package** (Export → Export package…): every output in one package folder (`{project}-{code}-{seq}-{rev}`, default layout `00-References` … `10-Quality Check List`) with a combined bookmarked PDF, STEP / OBJ models, QAF / VCF forms (filled into your own workbook if uploaded) and a README manifest; to a folder or as one ZIP, from an editable, shareable template. See [docs/EXPORT_PACKAGE.md](docs/EXPORT_PACKAGE.md).
 
 Mouse: right-drag orbits, middle-drag (or Shift + right-drag) pans, the wheel zooms.
 
@@ -153,7 +154,7 @@ Every output is computed from this model by `deriveModel()`, so the 3D view, IFC
 
 Technical documentation:
 - [docs/CONNECTION_GEOMETRY.md](docs/CONNECTION_GEOMETRY.md): how members and connection parts are positioned (frames, points, planes, holes, bolts, trims), with a worked example and a checklist for adding connection types.
-- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [CODE_RULES](docs/CODE_RULES.md).
+- Feature references: [PROFILES](docs/PROFILES.md) (custom profiles, insertion points, sketcher, profiles by role), [WIREFRAME_CHECK](docs/WIREFRAME_CHECK.md) (wireframe clean-up and client confirmation), [CONNECTIONS](docs/CONNECTIONS.md), [MODELLING](docs/MODELLING.md), [MOVEMENT](docs/MOVEMENT.md), [MODEL_MANAGEMENT](docs/MODEL_MANAGEMENT.md), [DRAWING_STANDARDS](docs/DRAWING_STANDARDS.md), [FABRICATION](docs/FABRICATION.md), [EXPORT_PACKAGE](docs/EXPORT_PACKAGE.md), [CODE_RULES](docs/CODE_RULES.md).
 
 ## Notes and limits
 

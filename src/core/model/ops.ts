@@ -169,6 +169,7 @@ export function createProject(name = 'New facade project'): Project {
     markLocks: {},
     clashes: { clearance: 10, issues: [] },
     wireframe: { approvals: [], settings: defaultWireframeSettings() },
+    exportTemplates: [],
   };
 }
 

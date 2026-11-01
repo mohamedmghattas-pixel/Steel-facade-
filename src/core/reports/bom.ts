@@ -124,6 +124,58 @@ export function colName(i: number): string {
   return s;
 }
 
+function formSheetXml(rows: Row[], f: XlsxForm): string {
+  const styles = f.styles ?? {};
+  const maxRow = Math.max(rows.length, ...Object.keys(styles).map((r) => Number(r.match(/\d+/)?.[0] ?? 0)));
+  const byRow = new Map<number, Map<number, { v: string | number; s?: number }>>();
+  rows.forEach((row, r) =>
+    row.forEach((v, c) => {
+      if (v === '' || v === undefined || v === null) return;
+      if (!byRow.has(r)) byRow.set(r, new Map());
+      byRow.get(r)!.set(c, { v });
+    }),
+  );
+  for (const [ref, st] of Object.entries(styles)) {
+    const m = ref.match(/^([A-Z]+)(\d+)$/);
+    if (!m) continue;
+    let c = 0;
+    for (const ch of m[1]) c = c * 26 + (ch.charCodeAt(0) - 64);
+    const r = Number(m[2]) - 1;
+    if (!byRow.has(r)) byRow.set(r, new Map());
+    const cell = byRow.get(r)!.get(c - 1) ?? { v: '' };
+    cell.s = FORM_STYLE[st];
+    byRow.get(r)!.set(c - 1, cell);
+  }
+  let body = '';
+  for (let r = 0; r < maxRow; r++) {
+    const cells = byRow.get(r);
+    const ht = f.heights?.[r + 1];
+    if (!cells?.size && !ht) continue;
+    const attrs = ht ? ` ht="${ht}" customHeight="1"` : '';
+    const xs = [...(cells ?? new Map()).entries()].sort((a, b) => a[0] - b[0]).map(([c, { v, s }]) => {
+      const ref = `${colName(c)}${r + 1}`;
+      const sa = s ? ` s="${s}"` : '';
+      if (v === '') return `<c r="${ref}"${sa}/>`;
+      if (typeof v === 'number' && Number.isFinite(v)) return `<c r="${ref}"${sa}><v>${v}</v></c>`;
+      return `<c r="${ref}" t="inlineStr"${sa}><is><t xml:space="preserve">${xmlEsc(String(v))}</t></is></c>`;
+    });
+    body += `<row r="${r + 1}"${attrs}>${xs.join('')}</row>`;
+  }
+  const cols = f.cols?.length
+    ? `<cols>${[...f.cols].sort((a, b) => a.col - b.col).map((c) => `<col min="${c.col}" max="${c.col}" width="${c.width}" customWidth="1"${c.hidden || c.width === 0 ? ' hidden="1"' : ''}/>`).join('')}</cols>`
+    : '';
+  const merges = f.merges?.length ? `<mergeCells count="${f.merges.length}">${f.merges.map((m) => `<mergeCell ref="${m}"/>`).join('')}</mergeCells>` : '';
+  const lists = f.lists?.length
+    ? `<dataValidations count="${f.lists.length}">${f.lists.map((d) => `<dataValidation type="list" allowBlank="1" showErrorMessage="1" sqref="${d.sqref}"><formula1>${xmlEsc(d.formula)}</formula1></dataValidation>`).join('')}</dataValidations>`
+    : '';
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    cols +
+    `<sheetData>${body}</sheetData>${merges}${lists}</worksheet>`
+  );
+}
+
 function sheetXml(rows: Row[], boldFirst = true): string {
   const widths = rows[0]?.map((_, c) => Math.min(60, Math.max(8, ...rows.map((r) => String(r[c] ?? '').length + 2)))) ?? [];
   const cols = widths.length
@@ -177,6 +229,25 @@ export function bomToXlsx(b: BomTables, p: Project): Uint8Array {
 export interface XlsxSheet {
   name: string;
   rows: Row[];
+  /** Form layout (merged cells, fixed widths, styles, lists) instead of a table with a frozen header. */
+  form?: XlsxForm;
+}
+
+/** Cell styles of form sheets: title (bold 14, centred), head (bold, border, centred, grey), cell (border, wrap), tick (border, centred), label (bold). */
+export type FormStyle = 'title' | 'head' | 'cell' | 'tick' | 'label';
+const FORM_STYLE: Record<FormStyle, number> = { title: 2, head: 3, cell: 4, tick: 5, label: 1 };
+
+export interface XlsxForm {
+  /** Ranges such as "B2:F2". */
+  merges?: string[];
+  /** Column widths (1-based column number); width 0 or hidden hides the column. */
+  cols?: { col: number; width: number; hidden?: boolean }[];
+  /** List validations: cells and the list source, e.g. { sqref: 'E11:E20', formula: '$V$2:$W$2' }. */
+  lists?: { sqref: string; formula: string }[];
+  /** Style per cell ("B2" → 'title'); empty cells with a style are written too (borders). */
+  styles?: Record<string, FormStyle>;
+  /** Row heights in points (1-based row number). */
+  heights?: Record<number, number>;
 }
 
 /** Excel sheet names: ≤ 31 characters, none of []:*?/\ and unique within the workbook. */
@@ -242,15 +313,20 @@ export function sheetsToXlsx(sheets: XlsxSheet[]): Uint8Array {
       data:
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
         `<styleSheet xmlns="${ns}/spreadsheetml/2006/main">` +
-        '<fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts>' +
-        '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
-        '<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>' +
+        '<fonts count="3"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="14"/><name val="Calibri"/></font></fonts>' +
+        '<fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFD9D9D9"/><bgColor indexed="64"/></patternFill></fill></fills>' +
+        '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left style="thin"/><right style="thin"/><top style="thin"/><bottom style="thin"/><diagonal/></border></borders>' +
         '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
-        '<cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs>' +
+        // 0 normal, 1 bold, 2 form title, 3 form head, 4 form cell, 5 form tick
+        '<cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>' +
+        '<xf numFmtId="0" fontId="2" fillId="0" borderId="1" xfId="0" applyFont="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+        '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf>' +
+        '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf></cellXfs>' +
         '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
         '</styleSheet>',
     },
-    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s.rows) })),
+    ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: s.form ? formSheetXml(s.rows, s.form) : sheetXml(s.rows) })),
   ];
   return zip(files);
 }

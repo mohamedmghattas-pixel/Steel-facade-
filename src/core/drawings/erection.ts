@@ -31,7 +31,7 @@ import { bounds, partCorners } from './project';
 import { designation, finalize, newSheet, type DrawCtx } from './compose';
 import { drawingNumber, seriesNumber } from './register';
 import { cutPrism, drawCut, hatch, partPrism, projectPrism, viewLabel, type ViewAxes } from './section';
-import { blit, entsBox } from './viewLayout';
+import { blit, entsBox, textExtent } from './viewLayout';
 import { drawGaView, zoneInfo } from './gaDrawing';
 import { zoneNumber, zonePlanFor, zoneSheetLayout, zoningSettings, type Zone, type ZonePlan } from './zoning';
 import { drawZoneView, keyPlanBlock, zoneNotes } from './zoneView';
@@ -331,12 +331,23 @@ function edgeKeyPlan(edge: SetoutEdge, w: number): Block {
       const y0 = yTop - 18;
       const y1 = yTop - 8;
       const k = (w - 2) / L;
-      edge.spans.forEach(([a, b], i) => {
-        // Each sheet covers up to halfway to its neighbours.
+      // Each sheet covers up to halfway to its neighbours.
+      const xs = edge.spans.map(([a, b], i) => {
         const a1 = i ? (edge.spans[i - 1][1] + a) / 2 : lo;
         const b1 = i < edge.spans.length - 1 ? (b + edge.spans[i + 1][0]) / 2 : hi;
-        const xa = x + 1 + (a1 - lo) * k;
-        const xb = x + 1 + (b1 - lo) * k;
+        return [x + 1 + (a1 - lo) * k, x + 1 + (b1 - lo) * k];
+      });
+      // Sheet numbers under their boxes, kept inside the block. With many sheets on one edge the boxes
+      // get narrower than the numbers: this sheet's number is always shown, others only where they fit.
+      const labels = xs.map(([xa, xb], i) => {
+        const half = textExtent(edge.numbers[i], TEXT.label) / 2;
+        const c = Math.min(Math.max((xa + xb) / 2, x + half), x + w - half);
+        return { c, x0: c - half, x1: c + half };
+      });
+      const shown = labels.map((_, i) => i === edge.index);
+      const clear = (i: number, j: number) => labels[i].x1 + 0.6 <= labels[j].x0 || labels[j].x1 + 0.6 <= labels[i].x0;
+      for (let i = 0; i < labels.length; i++) if (!shown[i] && shown.every((on, j) => !on || clear(i, j))) shown[i] = true;
+      xs.forEach(([xa, xb], i) => {
         const box = [
           { x: xa, y: y0 },
           { x: xb, y: y0 },
@@ -345,7 +356,7 @@ function edgeKeyPlan(edge: SetoutEdge, w: number): Block {
         ];
         if (i === edge.index) hatch(sh, [box], { spacing: 1.2, angle: 45 });
         sh.poly(box, true, i === edge.index ? 'visible' : 'medium');
-        sh.text({ x: (xa + xb) / 2, y: y0 - 3.4 }, edge.numbers[i], TEXT.label, 'middle');
+        if (shown[i]) sh.text({ x: labels[i].c, y: y0 - 3.4 }, edge.numbers[i], TEXT.label, 'middle');
       });
     },
   };

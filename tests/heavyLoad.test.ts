@@ -8,6 +8,9 @@ import { addLine, createProject, facadeGrid, memberDefaults, membersAtNode, memb
 import { applyConnection, autoConnect } from '../src/core/connections/registry';
 import type { Project } from '../src/core/model/types';
 import { sampleFacade } from './helpers';
+import { deriveModel } from '../src/core/derive/model';
+import { allDrawings } from '../src/core/drawings';
+import { checkSheetLayout } from '../src/core/drawings/layoutCheck';
 
 describe('large outputs', () => {
   it('writes a DXF with more values than a function call takes arguments', () => {
@@ -117,4 +120,17 @@ describe('members at a node, indexed', () => {
     expect(auto).toBeLessThan(5000);
     expect(apply).toBeLessThan(5000);
   }, 120000);
+});
+
+describe('set-out sheets of a long slab edge', () => {
+  it('keep the key plan inside the frame when the edge is split over many sheets', () => {
+    const p = gridFacade(80, 1); // 81 brackets along one 120 m slab edge, about 20 sheets at 1:20
+    autoConnect(p);
+    const sheets = allDrawings(p, deriveModel(p)).filter((d) => d.kind === 'setout');
+    expect(sheets.length).toBeGreaterThan(15);
+    const problems = sheets.flatMap((d) => checkSheetLayout(d).map((i) => `${d.id}: ${i.message}`));
+    expect(problems).toEqual([]);
+    // Every sheet still names itself in its key plan.
+    for (const d of sheets) expect(d.entities.some((e) => e.t === 'text' && e.text === d.number)).toBe(true);
+  });
 });

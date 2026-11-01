@@ -5,7 +5,11 @@
  *      existing model nodes take precedence and never move);
  *   2. zero-length segments and duplicates are dropped; collinear segments that
  *      overlap are merged into one (kept split where another line attaches);
- *   3. optionally, segments are split where a node lies on them (T-junctions)
+ *   3. optionally, chains of collinear pieces (a polyline drawn as one straight
+ *      line with extra vertices) become one line: a node where exactly two
+ *      pieces of one layer continue straight (within 1°, the chain within 1 mm
+ *      of its chord) is dropped;
+ *   4. optionally, segments are split where a node lies on them (T-junctions)
  *      and where two segments really cross in 3D (closest distance within the
  *      tolerance — lines that only cross in a projection are left alone).
  * Broad phase for 2 and 3 is a uniform grid; each segment is entered in the
@@ -29,6 +33,8 @@ export interface JoinOptions {
   anchors?: Vec3[];
   /** Drop resulting edges shorter than this (default 0). */
   minLength?: number;
+  /** Merge chains of collinear pieces into whole lines (default false). */
+  mergeCollinear?: boolean;
 }
 
 export interface JoinEdge {
@@ -48,6 +54,8 @@ export interface JoinStats {
   overlaps: number;
   /** Points where a segment was split. */
   splits: number;
+  /** Pass-through points removed by merging collinear pieces. */
+  merged: number;
   edges: number;
   /** Nodes used by the edges (anchors included). */
   nodes: number;
@@ -228,7 +236,7 @@ export function joinSegments(segments: JoinSegment[], o: JoinOptions): JoinResul
   const anchors = o.anchors ?? [];
   for (const p of anchors) pool.add(p);
   const P = pool.pts;
-  const stats: JoinStats = { input: segments.length, zeroLength: 0, duplicates: 0, overlaps: 0, splits: 0, edges: 0, nodes: 0, newNodes: 0 };
+  const stats: JoinStats = { input: segments.length, zeroLength: 0, duplicates: 0, overlaps: 0, splits: 0, merged: 0, edges: 0, nodes: 0, newNodes: 0 };
   const finite = (p: Vec3) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z);
 
   // 1. Join endpoints.
@@ -250,7 +258,10 @@ export function joinSegments(segments: JoinSegment[], o: JoinOptions): JoinResul
   // 2b. Collinear overlaps.
   edges = mergeOverlaps(P, edges, tol, geomTol, anchors.length, stats);
 
-  // 3. Splits.
+  // 3. Collinear chains → whole lines.
+  if (o.mergeCollinear && edges.length > 1) edges = mergeChains(P, edges, anchors.length, stats);
+
+  // 4. Splits.
   if (o.split && edges.length) edges = splitEdges(pool, edges, anchors.length, tol, geomTol, stats);
 
   edges = dedupe(edges, stats);
@@ -382,6 +393,95 @@ function mergeOverlaps(P: Vec3[], edges: JoinEdge[], tol: number, geomTol: numbe
     chain.push(last.n);
     for (let k = 0; k + 1 < chain.length; k++) out.push({ a: chain[k], b: chain[k + 1], layer });
     stats.overlaps += g.length - (chain.length - 1);
+  }
+  return out;
+}
+
+const CHAIN_COS = Math.cos(Math.PI / 180);
+const CHAIN_STRAIGHT = 1;
+
+/** Drop pass-through nodes: exactly two pieces of one layer continuing straight (anchors stay). */
+function mergeChains(P: Vec3[], edges: JoinEdge[], anchorCount: number, stats: JoinStats): JoinEdge[] {
+  const inc = new Map<number, number[]>();
+  const push = (n: number, e: number) => {
+    const l = inc.get(n);
+    if (l) l.push(e);
+    else inc.set(n, [e]);
+  };
+  edges.forEach((e, i) => {
+    push(e.a, i);
+    push(e.b, i);
+  });
+  const unit = (from: number, to: number) => {
+    const d = { x: P[to].x - P[from].x, y: P[to].y - P[from].y, z: P[to].z - P[from].z };
+    const l = Math.hypot(d.x, d.y, d.z) || 1;
+    return { x: d.x / l, y: d.y / l, z: d.z / l };
+  };
+  const other = (e: JoinEdge, n: number) => (e.a === n ? e.b : e.a);
+  const through = (n: number): boolean => {
+    if (n < anchorCount) return false;
+    const l = inc.get(n);
+    if (!l || l.length !== 2) return false;
+    const [e1, e2] = [edges[l[0]], edges[l[1]]];
+    if (e1.layer !== e2.layer) return false;
+    const d1 = unit(n, other(e1, n));
+    const d2 = unit(n, other(e2, n));
+    return d1.x * d2.x + d1.y * d2.y + d1.z * d2.z <= -CHAIN_COS;
+  };
+  const done = new Uint8Array(edges.length);
+  const out: JoinEdge[] = [];
+  for (let i = 0; i < edges.length; i++) {
+    if (done[i]) continue;
+    // Walk back from edge i through pass-through nodes to the chain start.
+    let e = i;
+    let n = edges[i].a;
+    const guard = new Set<number>([i]);
+    while (through(n)) {
+      const l = inc.get(n)!;
+      const next = l[0] === e ? l[1] : l[0];
+      if (guard.has(next)) break;
+      guard.add(next);
+      e = next;
+      n = other(edges[e], n);
+    }
+    // Forward: collect nodes.
+    const nodes = [n];
+    const layer = edges[e].layer;
+    for (;;) {
+      done[e] = 1;
+      const m = other(edges[e], n);
+      nodes.push(m);
+      if (!through(m)) break;
+      const l = inc.get(m)!;
+      const next = l[0] === e ? l[1] : l[0];
+      if (done[next]) break;
+      e = next;
+      n = m;
+    }
+    // Straightness: keep a node where the chain bends more than CHAIN_STRAIGHT from its chord.
+    const stack: [number, number][] = [[0, nodes.length - 1]];
+    const marks = new Uint8Array(nodes.length);
+    marks[0] = marks[nodes.length - 1] = 1;
+    while (stack.length) {
+      const [i0, i1] = stack.pop()!;
+      let worst = -1;
+      let wd = CHAIN_STRAIGHT;
+      for (let k = i0 + 1; k < i1; k++) {
+        const d = pointSegment(P[nodes[k]], P[nodes[i0]], P[nodes[i1]]).d;
+        if (d > wd) {
+          wd = d;
+          worst = k;
+        }
+      }
+      if (worst >= 0) {
+        marks[worst] = 1;
+        stack.push([i0, worst], [worst, i1]);
+      }
+    }
+    const keep: number[] = [];
+    for (let k = 0; k < nodes.length; k++) if (marks[k]) keep.push(k);
+    for (let k = 0; k + 1 < keep.length; k++) out.push({ a: nodes[keep[k]], b: nodes[keep[k + 1]], layer });
+    stats.merged += nodes.length - keep.length;
   }
   return out;
 }

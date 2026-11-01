@@ -1,5 +1,5 @@
 import type { Project } from '../core/model/types';
-import { defaultDrawingSet, defaultSettings } from '../core/model/ops';
+import { defaultDrawingSet, defaultSettings, defaultWireframeSettings } from '../core/model/ops';
 
 import { zip } from '../core/io/zip';
 import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
@@ -60,6 +60,10 @@ export function migrateProject(p: Project | null): Project | null {
   p.clashes ??= { clearance: 10, issues: [] };
   p.clashes.issues ??= [];
   p.clashes.clearance ??= 10;
+  p.wireframe = {
+    approvals: Array.isArray(p.wireframe?.approvals) ? p.wireframe.approvals : [],
+    settings: { ...defaultWireframeSettings(), ...(p.wireframe?.settings ?? {}) },
+  };
   return p;
 }
 

@@ -438,6 +438,68 @@ export interface ClashSettings {
   touchTolerance?: number;
 }
 
+// ---------------------------------------------------------------------------
+// Wireframe check and client confirmation (core/wireframe)
+
+/** Rules of the wireframe check (merge, junction splits, roles, issues). */
+export interface WireframeCheckSettings {
+  /**
+   * Two axes this close (3D gap where they meet) form a junction; the line end is snapped onto the
+   * other line's axis, mm. Default 10.
+   */
+  junctionTolerance: number;
+  /** A line end may be extended or trimmed along its own axis by up to this much to reach that junction, mm. Default 50. */
+  maxExtension: number;
+  /** Split mullions where transoms meet them (default true). Off: mullions stay continuous; transom ends become through-nodes. */
+  splitMullions: boolean;
+  /** Lines shorter than this are flagged, mm. Default 20. */
+  minLength: number;
+  /** Ends this close to another line (beyond the junction tolerance) are flagged as near-misses, mm. Default 100. */
+  nearMiss: number;
+  /** Re-assign roles the user already set (default false: only lines with role "other" get a role). */
+  reclassify: boolean;
+  /** What to do with isolated lines (touching nothing): make them construction lines (no profile) or delete them. */
+  isolated: 'construction' | 'delete';
+  /** Short lines with one end on a mullion and the other end free become brackets up to this length, mm. Default 600. */
+  bracketMaxLength: number;
+}
+
+/** Counts shown before / after a check and stored with each confirmation. */
+export interface WireframeSummary {
+  /** Wire lines (members, with or without profile). */
+  lines: number;
+  nodes: number;
+  mullions: number;
+  transoms: number;
+  brackets: number;
+  /** Lines with any other role. */
+  other: number;
+  /** Lines that touch nothing. */
+  isolated: number;
+  /** Mullion–transom junction points found (T-junctions, counted once per point, and crossings). */
+  junctions: number;
+  /** Of those, junctions where the lines already meet at one node (gap ≤ 0.5 mm). */
+  connected: number;
+}
+
+/** A recorded client confirmation of the wireframe. */
+export interface WireframeApproval {
+  /** ISO date-time. */
+  date: string;
+  by: string;
+  note?: string;
+  /** wireframeFingerprint() of the confirmed model. */
+  fingerprint: string;
+  summary: WireframeSummary;
+  /** Number of check changes applied together with this confirmation (0 = confirmed as is). */
+  changes?: number;
+}
+
+export interface WireframeRecord {
+  approvals: WireframeApproval[];
+  settings: WireframeCheckSettings;
+}
+
 /** An imported reference model (concrete, primary steel). Bytes live in IndexedDB. */
 export interface ReferenceModel {
   id: Id;
@@ -686,4 +748,6 @@ export interface Project {
   /** Locked marks: assembly/part signature → mark, kept stable through renumbering. */
   markLocks: Record<string, string>;
   clashes: ClashSettings;
+  /** Wireframe check settings and client confirmations (approvals). */
+  wireframe: WireframeRecord;
 }

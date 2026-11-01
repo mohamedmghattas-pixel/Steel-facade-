@@ -42,6 +42,7 @@ export type DialogName =
   | 'bentPlate'
   | 'arcMembers'
   | 'curvedFacade'
+  | 'wireframeCheck'
   | ManagementDialogName;
 
 export interface Selection {
@@ -62,6 +63,19 @@ export interface SnapSettings {
 }
 
 export const emptySelection = (): Selection => ({ members: [], nodes: [], connections: [] });
+
+/** Which members the wireframe check looks at. */
+export type WireScope = 'all' | 'selection' | 'import';
+
+/** Coloured preview drawn over the model while the wireframe check is open. */
+export interface WireOverlay {
+  /** Flat x, y, z pairs (two points per segment) and one 0xRRGGBB colour per segment. */
+  segments: number[];
+  colors: number[];
+  /** Marker points: flat x, y, z and one colour each. */
+  points: number[];
+  pointColors: number[];
+}
 
 interface State {
   project: Project;
@@ -98,6 +112,12 @@ interface State {
   refStatus: Record<Id, string>;
   /** Bumped to focus the assistant input. */
   assistantFocus: number;
+  /** Members created by the last wireframe import (scope "last import" of the wireframe check). */
+  lastImport: Id[];
+  /** Scope the wireframe check opens with (set before opening the dialog). */
+  wireScope: WireScope;
+  /** Preview of the wireframe check in the 3D view (null = none). */
+  wireOverlay: WireOverlay | null;
 
   apply: (label: string, fn: (draft: Project) => void) => void;
   replaceProject: (p: Project) => void;
@@ -140,6 +160,9 @@ export const useStore = create<State>((set, get) => ({
   calibrateTarget: null,
   refStatus: {},
   assistantFocus: 0,
+  lastImport: [],
+  wireScope: 'all',
+  wireOverlay: null,
 
   apply: (_label, fn) => {
     const { project, past, revision } = get();

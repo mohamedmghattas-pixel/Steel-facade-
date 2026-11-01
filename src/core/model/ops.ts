@@ -21,6 +21,7 @@ import type {
   ProjectSettings,
   MovementSettings,
   DrawingSet,
+  WireframeCheckSettings,
   Vec3,
   WorkPlane,
 } from './types';
@@ -138,6 +139,11 @@ export function defaultDrawingSet(): DrawingSet {
   };
 }
 
+/** Default wireframe check rules (see core/wireframe and docs/WIREFRAME_CHECK.md). */
+export function defaultWireframeSettings(): WireframeCheckSettings {
+  return { junctionTolerance: 10, maxExtension: 50, splitMullions: true, minLength: 20, nearMiss: 100, reclassify: false, isolated: 'construction', bracketMaxLength: 600 };
+}
+
 export function createProject(name = 'New facade project'): Project {
   return {
     version: 1,
@@ -160,6 +166,7 @@ export function createProject(name = 'New facade project'): Project {
     batches: [],
     markLocks: {},
     clashes: { clearance: 10, issues: [] },
+    wireframe: { approvals: [], settings: defaultWireframeSettings() },
   };
 }
 

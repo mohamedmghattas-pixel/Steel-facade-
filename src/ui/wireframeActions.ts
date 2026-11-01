@@ -64,6 +64,12 @@ export function applyWireframeCheck(
   let profiled = 0;
   const summary: WireframeSummary = predictSummary(plan, accepted);
   const label = confirm ? 'Wireframe check: apply and confirm' : 'Wireframe check: apply';
+  // A selection of every checked line (e.g. the lines just imported) follows them through the cuts:
+  // otherwise only the first piece of each cut line stays selected and selection-based tools
+  // (Auto-connect, Apply…) silently work on part of the model.
+  const selected = new Set(st().selection.members);
+  const checked = plan.lines.flatMap((l) => l.pieces);
+  const followSelection = checked.length > 0 && checked.every((id) => selected.has(id));
   st().apply(label, (d) => {
     res = applyWireframePlan(d, plan, accepted);
     if (opts.assignRoleProfiles !== false) {
@@ -79,6 +85,11 @@ export function applyWireframeCheck(
   if (!out) throw new Error('The wireframe check did not run.');
   // "Last import" keeps pointing at the same lines after merging and cutting.
   if (scope === 'import') st().set({ lastImport: out.members });
+  if (followSelection) {
+    const p = st().project;
+    const members = [...new Set([...st().selection.members, ...out.members])].filter((id) => p.members[id]);
+    st().set({ selection: { ...st().selection, members } });
+  }
   return { ...out, profiled };
 }
 

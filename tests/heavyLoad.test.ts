@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { DxfWriter } from '../src/core/io/dxfWriter';
 import { addLine, createProject, facadeGrid, memberDefaults, membersAtNode, membersAtNodeIndex } from '../src/core/model/ops';
-import { applyConnection, autoConnect } from '../src/core/connections/registry';
+import { applyConnection, autoConnect, AUTO_DEFAULTS } from '../src/core/connections/registry';
 import type { Project } from '../src/core/model/types';
 import { sampleFacade } from './helpers';
 import { deriveModel } from '../src/core/derive/model';
@@ -190,4 +190,35 @@ describe('export package planning', () => {
     // Drawing ~3 000 labels with QR codes took seconds; planning now only counts them.
     expect(ms).toBeLessThan(1500);
   }, 60000);
+});
+
+describe('wireframe check after an import', () => {
+  it('keeps the imported lines selected through the cuts, so Auto-connect sees every piece', async () => {
+    const { useStore } = await import('../src/state/store');
+    const { analyzeWireframe } = await import('../src/core/wireframe');
+    const { applyWireframeCheck } = await import('../src/ui/wireframeActions');
+    const { runAutoConnect } = await import('../src/ui/actions');
+    // Two storeys of mullions (one line each) and transoms ending on them: the check cuts the mullions.
+    const p = createProject('Import');
+    const ids: string[] = [];
+    for (let i = 0; i <= 3; i++) ids.push(addLine(p, { x: i * 1500, y: 0, z: 0 }, { x: i * 1500, y: 0, z: 7000 })!);
+    for (const z of [1200, 3500, 4700]) for (let i = 0; i < 3; i++) ids.push(addLine(p, { x: i * 1500 + 12, y: 0, z }, { x: i * 1500 + 1488, y: 0, z })!);
+    p.settings.roleProfiles = { mullion: { profile: 'SHS 100x100x5' }, transom: { profile: 'RHS 80x40x3' } };
+    const s = () => useStore.getState();
+    s().replaceProject(p);
+    s().select({ members: ids });
+    s().set({ lastImport: ids });
+    const plan = analyzeWireframe(s().project, {}, ids);
+    const res = applyWireframeCheck(plan, new Set(plan.items.filter((i) => i.accepted).map((i) => i.id)), undefined, 'import');
+    expect(res.splits).toBeGreaterThan(0);
+    const all = Object.keys(s().project.members);
+    expect(all.length).toBeGreaterThan(ids.length);
+    expect([...s().selection.members].sort()).toEqual([...all].sort());
+    // Auto-connect on "the selected" members now places the same joints as on the whole model.
+    runAutoConnect({ ...AUTO_DEFAULTS });
+    const viaSelection = Object.keys(s().project.connections).length;
+    const whole = structuredClone(s().past[s().past.length - 1]);
+    autoConnect(whole);
+    expect(viaSelection).toBe(Object.keys(whole.connections).length);
+  });
 });

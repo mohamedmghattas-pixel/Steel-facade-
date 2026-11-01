@@ -241,3 +241,40 @@ export function exportNestedSheets(p: Project, dm: DerivedModel, groups: PlateGr
   if (files.length) files.push({ name: 'nesting.csv', content: toCsv(rows) });
   return files;
 }
+
+/**
+ * Every unique plate's flat pattern in one DXF, laid out in rows (largest first,
+ * 50 mm apart) with a label under each plate on the SHEET layer: mark,
+ * thickness, material and quantity. For checking and quoting; cutting uses the
+ * per-part or nested files.
+ */
+export function flatPatternsDxf(p: Project, dm: DerivedModel, override: Partial<PlateDxfOptions> = {}): string | null {
+  const opts = plateDxfOptions(p, override);
+  const plates = uniqueParts(dm)
+    .filter(({ part }) => part.kind === 'plate' && part.outline?.length)
+    .map(({ part, qty }) => ({ fp: flatPlate(part), qty }))
+    .sort((a, b) => b.fp.h - a.fp.h || a.fp.mark.localeCompare(b.fp.mark));
+  if (!plates.length) return null;
+  const gap = 50;
+  const label = Math.max(5, opts.markHeight);
+  const area = plates.reduce((s, x) => s + (x.fp.w + gap) * (x.fp.h + gap + 2 * label), 0);
+  const rowWidth = Math.max(Math.sqrt(area) * 1.6, ...plates.map((x) => x.fp.w));
+  const w = new DxfWriter(LAYERS);
+  let x = 0;
+  let y = 0;
+  let rowH = 0;
+  for (const { fp, qty } of plates) {
+    if (x > 0 && x + fp.w > rowWidth) {
+      x = 0;
+      y -= rowH + gap + 2 * label;
+      rowH = 0;
+    }
+    const top = y - fp.h;
+    writePlate(w, fp, { dx: x, dy: top, rot: 0, h: fp.h }, opts);
+    w.text(x, top - label * 1.6, label, `${fp.mark}  PL${fp.t} ${fp.material}  x${qty}  ${Math.round(fp.w)}x${Math.round(fp.h)}`, { layer: CNC_LAYERS.sheet });
+    x += fp.w + gap;
+    rowH = Math.max(rowH, fp.h);
+  }
+  w.text(0, gap, label * 1.4, `${p.info.number || p.info.name} flat patterns - ${plates.length} plate marks`, { layer: CNC_LAYERS.sheet });
+  return w.toString();
+}

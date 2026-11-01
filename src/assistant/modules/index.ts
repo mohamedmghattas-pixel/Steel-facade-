@@ -12,5 +12,6 @@ import { connectionsModule } from './connections';
 import { wireframeModule } from './wireframe';
 import { profilesModule } from './profiles';
 import { modifyModule } from './modify';
+import { exportPackageModule } from './exportPackage';
 
-export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule, wireframeModule, profilesModule, modifyModule];
+export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule, wireframeModule, profilesModule, modifyModule, exportPackageModule];

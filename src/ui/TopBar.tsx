@@ -113,6 +113,8 @@ export function TopBar() {
         label="Export"
         icon="export"
         items={[
+          { label: 'Export package…', hint: 'folder tree or ZIP, all outputs', run: () => set({ dialog: 'exportPackage' }) },
+          '-',
           { label: 'IFC model', hint: 'IFC4', run: exportIfcFile },
           { label: 'Material list', hint: 'XLSX', run: () => exportBom('xlsx') },
           { label: 'Material list', hint: 'CSV (zip)', run: () => exportBom('csv') },

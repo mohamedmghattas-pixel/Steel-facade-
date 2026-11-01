@@ -4,6 +4,7 @@
  *
  * Units: millimetres and degrees. World axes: X east, Y north, Z up.
  */
+import type { ExportPackageSettings, ExportTemplate } from '../export/types';
 
 export type Id = string;
 
@@ -834,4 +835,10 @@ export interface Project {
   clashes: ClashSettings;
   /** Wireframe check settings and client confirmations (approvals). */
   wireframe: WireframeRecord;
+  /** Export package templates made by the user (the built-in default is not stored), see docs/EXPORT_PACKAGE.md. */
+  exportTemplates: ExportTemplate[];
+  /** Template used by Export package (absent: the built-in default). */
+  activeExportTemplate?: Id;
+  /** Package fields (code, sequence, revision) and the last export settings. */
+  exportPackage?: ExportPackageSettings;
 }

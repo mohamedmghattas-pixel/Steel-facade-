@@ -35,14 +35,18 @@ import { dwgConversionHelp } from '../../core/io/dwg';
 import { summarizeIfcSteel, type IfcSteelImportOptions, type IfcSteelRead } from '../../core/io/ifcImport';
 import {
   detectFacadePlane,
+  detectOutlinePlane,
   extractJoints,
   generateSubframe,
   panelLayoutFromDxf,
   panelLayoutFromIfc,
+  panelLayoutFromOutlines,
   previewSubframe,
   type IfcPanelSource,
   type PanelLayout,
+  type PanelOutline,
 } from '../../core/io/panelLayout';
+import { readRhinoPanels, useRhino } from '../rhinoActions';
 import { ifcElementsFromBytes } from '../../core/clash/ifcElements';
 import { getIfcApi as ifcApi } from '../../state/runtime';
 import { getViewer } from '../ViewportPanel';
@@ -634,18 +638,27 @@ export function IfcSteelDialog({ onClose }: { onClose: () => void }) {
 // ---------------------------------------------------------------------------
 // Panel layout → sub-frame
 
-type PanelSource = { kind: 'dxf'; name: string; text: string } | { kind: 'ifc'; name: string; elements: IfcPanelSource[] };
+type PanelSource = { kind: 'dxf'; name: string; text: string } | { kind: 'ifc'; name: string; elements: IfcPanelSource[] } | { kind: '3dm'; name: string; outlines: PanelOutline[] };
 
 const IFC_PANEL_TYPES = ['IFCPLATE', 'IFCPLATESTANDARDCASE', 'IFCCOVERING', 'IFCCURTAINWALL', 'IFCMEMBER', 'IFCMEMBERSTANDARDCASE'];
 
 export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
   const wp = useStore((s) => s.workPlane);
   const allRefs = useStore((s) => s.project.references);
-  const refs = useMemo(() => allRefs.filter((r) => r.kind === 'ifc'), [allRefs]);
+  const refs = useMemo(() => allRefs.filter((r) => r.kind === 'ifc' || r.kind === '3dm'), [allRefs]);
   const rules = useStore((s) => s.project.settings.autoRules);
-  const [src, setSrc] = useState<PanelSource | null>(null);
+  // Panel outlines from the last Rhino import (layers set to "Panels") are the first source.
+  const [src, setSrc] = useState<PanelSource | null>(() => {
+    const pp = useRhino.getState().panels;
+    return pp ? { kind: '3dm', ...pp } : null;
+  });
   const [error, setError] = useState<string | null>(null);
-  const [plane, setPlane] = useState<WorkPlane>(wp.kind === 'XZ' || wp.kind === 'YZ' ? { kind: wp.kind, offset: wp.offset } : { kind: 'XZ', offset: 0 });
+  const [plane, setPlane] = useState<WorkPlane>(() => {
+    const pp = useRhino.getState().panels;
+    const guess = pp ? detectOutlinePlane(pp.outlines) : null;
+    return guess ?? (wp.kind === 'XZ' || wp.kind === 'YZ' ? { kind: wp.kind, offset: wp.offset } : { kind: 'XZ', offset: 0 });
+  });
+  const [offLayers, setOffLayers] = useState<string[]>([]);
   const [cavity, setCavity] = useState(120);
   const [side, setSide] = useState<1 | -1>(1);
   const [tolerance, setTolerance] = useState(30);
@@ -661,13 +674,18 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
     if (!src) return { layout: null, error: null };
     try {
       return {
-        layout: src.kind === 'dxf' ? panelLayoutFromDxf(src.text, { scale, offset: shift, ...(jointLayers ? { jointLayers } : {}) }) : panelLayoutFromIfc(src.elements, { plane }),
+        layout:
+          src.kind === 'dxf'
+            ? panelLayoutFromDxf(src.text, { scale, offset: shift, ...(jointLayers ? { jointLayers } : {}) })
+            : src.kind === '3dm'
+              ? panelLayoutFromOutlines(src.outlines.filter((o) => !offLayers.includes(o.layer ?? '')), { plane })
+              : panelLayoutFromIfc(src.elements, { plane }),
         error: null,
       };
     } catch (e) {
       return { layout: null, error: (e as Error).message };
     }
-  }, [src, scale, shift, jointLayers, plane]);
+  }, [src, scale, shift, jointLayers, plane, offLayers]);
   const layout = parsed.layout;
   const joints = useMemo(() => (layout ? extractJoints(layout, { tolerance, includePerimeter: perimeter }) : null), [layout, tolerance, perimeter]);
   const preview = layout && joints ? previewSubframe(layout, joints, { mullions, transoms }) : null;
@@ -695,11 +713,28 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
     const f = await pickFile('.ifc');
     if (f) await loadIfc(f.name, new Uint8Array(await f.arrayBuffer()));
   };
+  const loadRhino3dm = async (name: string, bytes: Uint8Array) => {
+    try {
+      const pp = await readRhinoPanels(name, bytes);
+      const guess = detectOutlinePlane(pp.outlines);
+      if (guess) setPlane(guess);
+      setError(null);
+      setOffLayers([]);
+      setSrc({ kind: '3dm', ...pp });
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+  const chooseRhino = async () => {
+    const f = await pickFile('.3dm');
+    if (f) await loadRhino3dm(f.name, new Uint8Array(await f.arrayBuffer()));
+  };
   const fromReference = async (id: string) => {
     const r = refs.find((x) => x.id === id);
     const bytes = r && (await getBlob(r.id));
     if (!r || !bytes) return setError('Reference model not found in browser storage — import it again.');
-    await loadIfc(r.name, new Uint8Array(bytes));
+    if (r.kind === '3dm') await loadRhino3dm(r.name, new Uint8Array(bytes));
+    else await loadIfc(r.name, new Uint8Array(bytes));
   };
 
   const run = () => {
@@ -708,6 +743,7 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
     st().apply('Sub-frame from panel layout', (d) => {
       ids = generateSubframe(d, joints, { plane, cavity, side, split, mullions, transoms });
     });
+    if (src?.kind === '3dm') useRhino.setState({ panels: null });
     st().select({ members: ids });
     st().set({ zoomRequest: Date.now() });
     st().notify(`Created ${ids.length} members from the panel layout. Profiles from the auto-assign rules (${rules.map((r) => `${r.match}: ${r.profile}`).join(', ')}).`);
@@ -725,7 +761,7 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
           <span className="muted">
             {preview
               ? `${preview.panels} panels → ${preview.vertical} mullions, ${preview.horizontal} transom lines${preview.perimeter ? ` (${preview.perimeter} on the perimeter)` : ''} · ${mm(preview.length)}`
-              : 'Choose a DXF or IFC panel layout'}
+              : 'Choose a DXF, IFC or Rhino panel layout'}
           </span>
           <button className="primary-btn" disabled={!preview || !(preview.vertical + preview.horizontal)} onClick={run}>
             Generate
@@ -734,7 +770,7 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
       }
     >
       <p className="muted">
-        Panels are closed polylines (DXF) or IfcPlate / IfcCovering / IfcCurtainWall elements (IFC); joint lines are DXF lines on a joint layer or IFC members. Joints
+        Panels are closed polylines (DXF), IfcPlate / IfcCovering / IfcCurtainWall elements (IFC) or planar surfaces and closed planar curves (Rhino .3dm); joint lines are DXF lines on a joint layer or IFC members. Joints
         within the tolerance merge; mullions go on vertical joints and transoms on horizontal joints, behind the panel face by the cavity.
       </p>
       <div className="btn-row">
@@ -743,6 +779,9 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
         </button>
         <button className="secondary-btn" onClick={() => void chooseIfc()}>
           IFC model…
+        </button>
+        <button className="secondary-btn" onClick={() => void chooseRhino()}>
+          Rhino .3dm…
         </button>
         {refs.map((r) => (
           <button key={r.id} className="link-btn" onClick={() => void fromReference(r.id)}>
@@ -856,6 +895,20 @@ export function PanelLayoutDialog({ onClose }: { onClose: () => void }) {
           </div>
         </>
       )}
+      {src?.kind === '3dm' && (
+        <>
+          <h4>Rhino layers (planar surfaces and closed planar curves are panels)</h4>
+          <div className="layer-table">
+            {[...new Set(src.outlines.map((o) => o.layer ?? ''))].map((l) => (
+              <label className="check" key={l}>
+                <input type="checkbox" checked={!offLayers.includes(l)} onChange={(e) => setOffLayers(e.target.checked ? offLayers.filter((x) => x !== l) : [...offLayers, l])} />
+                <strong>{l || '—'}</strong>
+                <span className="muted">{src.outlines.filter((o) => (o.layer ?? '') === l).length} outlines</span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
       {layout && joints && <PanelPreview layout={layout} joints={joints} />}
     </Modal>
   );
@@ -916,7 +969,7 @@ function locationLabel(p: Project, pos: { x: number; y: number; z: number }): st
 const MAX_ROWS = 500;
 
 function refName(p: Project, key: string): string {
-  if (key.startsWith('ifc:')) return p.references.find((r) => r.id === key.split(':')[1])?.name ?? 'reference';
+  if (key.startsWith('ifc:') || key.startsWith('3dm:')) return p.references.find((r) => r.id === key.split(':')[1])?.name ?? 'reference';
   return 'steel';
 }
 
@@ -930,7 +983,7 @@ export function ClashesView() {
   const c = project.clashes;
   const sum = clashSummary(c.issues);
   const list = c.issues.filter((x) => show === 'all' || x.status === 'open');
-  const refs = project.references.filter((r) => r.kind === 'ifc');
+  const refs = project.references.filter((r) => r.kind === 'ifc' || r.kind === '3dm');
   useEffect(() => () => clearIssueMarker(), []);
   return (
     <div className="bom">

@@ -259,6 +259,7 @@ export const DEFAULT_TEMPLATE_SPEC: TemplateSpec = {
       ['project-json', '{code}-{seq} Model.{ext}'],
       ['obj', '{code}-{seq} Model.{ext}'],
       ['step', '{code}-{seq} Model.{ext}'],
+      ['rhino-3dm', '{package} Model.{ext}'],
     ],
     '08-Material List': [
       ['bom-list-csv', '{code}-{seq} Material list.{ext}'],

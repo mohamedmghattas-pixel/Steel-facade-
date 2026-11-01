@@ -273,11 +273,13 @@ export async function importUnderlay() {
 }
 
 export function removeReference(id: string) {
+  const rhino = st().project.references.some((r) => r.id === id && r.kind === '3dm');
   st().apply('Remove reference', (p) => {
     p.references = p.references.filter((r) => r.id !== id);
     p.underlays = p.underlays.filter((u) => u.id !== id);
   });
   void deleteBlob(id);
+  if (rhino) void deleteBlob(`${id}.mesh`);
 }
 
 // ---------------------------------------------------------------------------

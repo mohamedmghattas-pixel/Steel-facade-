@@ -16,11 +16,11 @@
  * drive profile / role assignment.
  */
 import type { Id, MemberRole, Project, Vec2, Vec3, WorkPlane } from '../model/types';
-import { memberDefaults, newId } from '../model/ops';
 import { planeToWorld, v3 } from '../model/geometry';
 import { readDxf } from './dxfReader';
 import { explodeDxf, type DxfReadOptions, type ParsedDxf } from './dxfGeometry';
-import { joinSegments, type JoinResult, type JoinSegment } from './wireframeJoin';
+import type { JoinResult, JoinSegment } from './wireframeJoin';
+import { importWireSegments, previewWireImport, type WireImportOptions } from './wireImport';
 
 export { readDxf } from './dxfReader';
 export { dxfUnitScale, explodeDxf, suggestedUnitScale, UNIT_NAMES } from './dxfGeometry';
@@ -72,61 +72,25 @@ export function dxfWorldSegments(parsed: ParsedDxf, o: Omit<DxfImportOptions, 's
   return out;
 }
 
+/** Shared wire-import options of a DXF import. */
+const wireOptions = (o: DxfImportOptions): WireImportOptions => ({
+  joinTolerance: o.joinTolerance ?? DXF_JOIN_TOLERANCE,
+  split: o.split ?? (o.splitIntersections ? 'all' : 'none'),
+  mergeCollinear: !!o.mergeCollinear,
+  rules: o.layerRules,
+});
+
 /** What an import would produce (lines, nodes, merges, splits) without touching a project. */
 export function previewDxfImport(parsed: ParsedDxf, o: DxfImportOptions, anchors: Vec3[] = []): JoinResult {
-  return joinSegments(dxfWorldSegments(parsed, o), {
-    tolerance: o.joinTolerance ?? DXF_JOIN_TOLERANCE,
-    split: o.split ? o.split === 'all' : o.splitIntersections,
-    mergeCollinear: !!o.mergeCollinear,
-    anchors,
-    minLength: 1,
-  });
+  return previewWireImport(dxfWorldSegments(parsed, o), wireOptions(o), anchors);
 }
 
 /**
- * Import the segments as wireframe lines. Endpoints snap to existing nodes and
- * to each other within the join tolerance; a line that already exists between
- * the same two nodes is reused. Returns the ids of the imported lines.
+ * Import the segments as wireframe lines (the shared segments → wireframe step,
+ * wireImport.ts). Endpoints snap to existing nodes and to each other within the
+ * join tolerance; a line that already exists between the same two nodes is
+ * reused. Returns the ids of the imported lines.
  */
 export function importDxfWireframe(p: Project, parsed: ParsedDxf, o: DxfImportOptions): Id[] {
-  const anchorIds = Object.keys(p.nodes);
-  const res = previewDxfImport(
-    parsed,
-    o,
-    anchorIds.map((id) => p.nodes[id].p),
-  );
-  const nodeIds: (Id | undefined)[] = anchorIds.slice();
-  const nodeId = (i: number): Id => {
-    let id = nodeIds[i];
-    if (!id) {
-      id = newId('n');
-      const q = res.points[i];
-      p.nodes[id] = { id, p: { x: q.x, y: q.y, z: q.z } };
-      nodeIds[i] = id;
-    }
-    return id;
-  };
-  const pair = (a: Id, b: Id) => (a < b ? `${a}|${b}` : `${b}|${a}`);
-  const existing = new Map<string, Id>();
-  for (const m of Object.values(p.members)) existing.set(pair(m.start, m.end), m.id);
-  const defaults = memberDefaults(p);
-  const ids: Id[] = [];
-  const seen = new Set<Id>();
-  for (const e of res.edges) {
-    const a = nodeId(e.a);
-    const b = nodeId(e.b);
-    const key = pair(a, b);
-    let id = existing.get(key);
-    if (!id) {
-      id = newId('m');
-      const rule = o.layerRules?.[e.layer];
-      p.members[id] = { ...defaults, layer: e.layer, ...(rule ? { profile: rule.profile, role: rule.role } : {}), id, start: a, end: b };
-      existing.set(key, id);
-    }
-    if (!seen.has(id)) {
-      seen.add(id);
-      ids.push(id);
-    }
-  }
-  return ids;
+  return importWireSegments(p, dxfWorldSegments(parsed, o), wireOptions(o));
 }

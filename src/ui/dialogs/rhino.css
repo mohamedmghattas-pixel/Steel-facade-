@@ -1,0 +1,72 @@
+.rhino-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 300px;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+.rhino-layer {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) 110px minmax(200px, 1.6fr);
+  gap: 6px;
+  align-items: center;
+}
+.rhino-layer.head {
+  font-size: 11px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.rhino-layer.off > :not(label) {
+  opacity: 0.55;
+}
+.rhino-layer .muted {
+  font-size: 12px;
+}
+.rhino-layer select {
+  width: 100%;
+  min-width: 0;
+}
+.rhino-layer .row-inline {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 4px;
+}
+.rhino-layer .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin: 0 6px 0 2px;
+  border: 1px solid var(--line-2);
+}
+.rhino-summary {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+}
+.rhino-summary li {
+  margin: 2px 0;
+}
+.rhino-skipped {
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.rhino-layer > label.check {
+  min-width: 0;
+  gap: 4px;
+  margin: 2px 0;
+}
+.rhino-layer > label.check > * {
+  flex-shrink: 0;
+}
+.rhino-layer > label.check > .muted {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rhino-layer > label.check > strong {
+  white-space: nowrap;
+}

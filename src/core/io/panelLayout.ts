@@ -196,6 +196,92 @@ export function panelLayoutFromIfc(elements: IfcPanelSource[], o: IfcPanelOption
   return { panels, lines, layers, warnings };
 }
 
+/** A planar panel outline in world coordinates (Rhino .3dm planar surfaces and closed curves). */
+export interface PanelOutline {
+  points: Vec3[];
+  layer?: string;
+  name?: string;
+}
+
+function outlineNormal(pts: Vec3[]): Vec3 {
+  let x = 0;
+  let y = 0;
+  let z = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % pts.length];
+    x += (a.y - b.y) * (a.z + b.z);
+    y += (a.z - b.z) * (a.x + b.x);
+    z += (a.x - b.x) * (a.y + b.y);
+  }
+  const l = Math.hypot(x, y, z) || 1;
+  return { x: x / l, y: y / l, z: z / l };
+}
+
+/**
+ * Panels (bounding rectangles in the facade plane) from planar outlines. Outlines
+ * more than 30° off the facade plane (slab tops, returns) or further than `depth`
+ * from it are left out and counted in the warnings.
+ */
+export function panelLayoutFromOutlines(outlines: PanelOutline[], o: IfcPanelOptions): PanelLayout {
+  if (o.plane.kind === 'XY') throw new Error('Choose a vertical facade plane (XZ or YZ).');
+  const ax = planeAxes(o.plane);
+  const depth = o.depth ?? 1500;
+  const panels: PanelRect[] = [];
+  const layers: PanelLayout['layers'] = {};
+  let skew = 0;
+  let far = 0;
+  for (const ol of outlines) {
+    if (ol.points.length < 3) continue;
+    const n = outlineNormal(ol.points);
+    if (Math.abs(n.x * ax.n.x + n.y * ax.n.y + n.z * ax.n.z) < Math.cos(Math.PI / 6)) {
+      skew++;
+      continue;
+    }
+    let u0 = Infinity;
+    let v0 = Infinity;
+    let u1 = -Infinity;
+    let v1 = -Infinity;
+    let nMin = Infinity;
+    for (const q of ol.points) {
+      const uv = worldToPlane(o.plane, q);
+      u0 = Math.min(u0, uv.x);
+      u1 = Math.max(u1, uv.x);
+      v0 = Math.min(v0, uv.y);
+      v1 = Math.max(v1, uv.y);
+      nMin = Math.min(nMin, Math.abs((q.x - ax.origin.x) * ax.n.x + (q.y - ax.origin.y) * ax.n.y + (q.z - ax.origin.z) * ax.n.z));
+    }
+    if (nMin > depth) {
+      far++;
+      continue;
+    }
+    const layer = ol.layer ?? '0';
+    (layers[layer] ??= { closed: 0, lines: 0 }).closed++;
+    panels.push({ u0, v0, u1, v1, layer, ...(ol.name ? { name: ol.name } : {}) });
+  }
+  const warnings: string[] = [];
+  if (skew) warnings.push(`${skew} outline${skew === 1 ? ' is' : 's are'} not parallel to the facade plane (more than 30° off) and ${skew === 1 ? 'was' : 'were'} left out.`);
+  if (far) warnings.push(`${far} outline${far === 1 ? ' is' : 's are'} further than ${depth} mm from the facade plane and ${far === 1 ? 'was' : 'were'} left out.`);
+  if (!panels.length) warnings.push('No panel outlines near this facade plane.');
+  return { panels, lines: [], layers, warnings };
+}
+
+/** Suggest the facade plane from planar outlines: the axis their normals point along, at the median outline position. */
+export function detectOutlinePlane(outlines: PanelOutline[]): WorkPlane | null {
+  const votes = { XZ: [] as number[], YZ: [] as number[] };
+  for (const ol of outlines) {
+    if (ol.points.length < 3) continue;
+    const n = outlineNormal(ol.points);
+    const mean = (k: 'x' | 'y') => ol.points.reduce((s, q) => s + q[k], 0) / ol.points.length;
+    if (Math.abs(n.y) >= Math.max(Math.abs(n.x), Math.abs(n.z))) votes.XZ.push(mean('y'));
+    else if (Math.abs(n.x) >= Math.max(Math.abs(n.y), Math.abs(n.z))) votes.YZ.push(mean('x'));
+  }
+  const kind = votes.XZ.length >= votes.YZ.length ? 'XZ' : 'YZ';
+  const vals = votes[kind].sort((a, b) => a - b);
+  if (!vals.length) return null;
+  return { kind, offset: Math.round(vals[Math.floor(vals.length / 2)]) };
+}
+
 /**
  * Suggest the facade plane from IFC panels: the axis they are thin along and
  * the median of their back faces (the side away from the viewer of the front /

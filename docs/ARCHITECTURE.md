@@ -17,7 +17,7 @@ commit `f40691b` (2026-10-31).
 | Product | Browser-based detailing for facade secondary steel: mullions, transoms, rails, brackets, bracing |
 | Runtime | Browser only: no server and no account. Delivered three ways (§3.12). |
 | Language / stack | TypeScript 5.9 (strict), React 19, Three.js 0.187, Zustand 5, Vite 8, Vitest 5 |
-| Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
+| Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), rhino3dm 8.35.0 (Rhino .3dm, MIT, loaded on demand), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
 | History | 29 commits over two days on `main` (feature branch `claude/brave-euler-eo03km`) |
 | Tests | 414 Vitest tests in 32 files; strict type-check; production build; CI on every push |
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
@@ -360,7 +360,7 @@ lists and NC files cannot disagree.
 | --- | --- | --- |
 | GitHub Pages | `.github/workflows/deploy.yml`: test, build, deploy from `main` | Needs the `github-pages` environment to allow `main` |
 | claude.ai artifact | `dist/` published as a multi-file artifact with `downloads` and `sample` capabilities | Exports by confirmation; assistant on the viewer's account |
-| Offline single file | `npm run build:offline` → `dist-offline/FacadeSteel.html` (~10 MB) | Code, CSS, web-ifc WASM and pdf.js worker inlined; runs from `file://` in Chrome/Edge; tested |
+| Offline single file | `npm run build:offline` → `dist-offline/FacadeSteel.html` (~14 MB) | Code, CSS, web-ifc and rhino3dm WASM and pdf.js worker inlined; runs from `file://` in Chrome/Edge; tested |
 | From source | `npm install && npm run dev` | Development |
 
 ## 4. Decision record
@@ -391,7 +391,7 @@ lists and NC files cannot disagree.
 | D22 | No GPL dependencies (DWG reading deferred) | Keep commercial licensing open | LibreDWG WASM (GPL-3.0) | DWG is detected and explained; a licensed converter can plug in |
 | D23 | Performance: instancing by geometry key, spatial index, cached collators, connection index validated once per pass | 100k-part models | Naive per-mesh scene | Measured by the workstream: derive of 100k members 7.7 s → 3.5 s, and a 48k-member scene loads in about 2.4 s of JavaScript (headless Chromium). At merge, a 6k-member facade derives in 0.5 s. |
 | D24 | Native `confirm` / `prompt` banned; in-app dialogs | Work inside sandboxed frames (claude.ai) | Native dialogs | One dialog component for every question |
-| D25 | Three delivery channels (Pages, artifact, offline file) | Users without hosting or Node can still run it | Hosting only | Offline build inlines WASM and the worker; ~10 MB file |
+| D25 | Three delivery channels (Pages, artifact, offline file) | Users without hosting or Node can still run it | Hosting only | Offline build inlines WASM and the worker; ~14 MB file (10.9 MB before rhino3dm) |
 | D26 | CI pinned to `ubuntu-24.04` and Node 24 action majors | Remove deprecation warnings; avoid silent runner migration | `ubuntu-latest` | Runner upgrades are deliberate |
 | D27 | Parallel development: foundation contracts, worktrees with file ownership, lead merges | About 20 features in one milestone without trampling each other | Sequential implementation | Integration fixes are expected and done by the lead at merge (§2.3) |
 | D28 | Typical values labelled as such; limits documented per area | Trust: users must know what to verify | Silent defaults | Docs carry "typical practice" and caveat lists |
@@ -402,6 +402,7 @@ lists and NC files cannot disagree.
 | D33 | A mirrored section (`Member.mirrorSection`) is derived as the plain profile in a reversed, right-handed part frame (−x, −y, z from the far end); geometry operations re-pose the section (`poseMember`) instead of copying rotation values | A real part is never mirrored: a mirrored channel is the same stock seen from the other end. Every output already reads part frames | A mirrored copy of each profile; a left-handed frame | Meshes, IFC, DSTV, drawings, clash and numbering needed no change; mirror / reverse / join keep the physical section ([MODIFY.md](MODIFY.md)) |
 | D34 | Manual assemblies as `Project.assemblyGroups` (lists of member / plate / connection ids) unioned on top of the shop-weld assemblies; joints between grouped members become shop joints (bolted ones stay bolted, their bolts flagged `shop`); manual assemblies numbered after the automatic ones of their prefix | Users group shipping units in the viewer while welds keep grouping automatically; explicit lists fail safe on copies (a partly copied group is not carried over) where a per-member group field would merge copies into the original | `Member.assemblyGroup` field; Tekla-style sub-assemblies | Delete / split / copy keep groups consistent (prune after every edit); grouping renumbers no other assembly; sub-assemblies are not modelled ([ASSEMBLIES.md](ASSEMBLIES.md)) |
 | D35 | 3D ↔ drawing navigation through data-only tags on drawing entities and a pure index (part mark → part drawing, assembly mark → assembly drawing, instance → GA / zone / erection sheets, best first) | Zoned sets need the actual sheet that shows a part; tags follow the generators, so the index never guesses from geometry | Recomputing sheet membership from view geometry; SVG `data-` attributes in the exported files | Fingerprints and exported files unchanged; the drawing set is cached per derived model and shared with the Drawings tab |
+| D36 | Rhino .3dm through rhino3dm.js (MIT), loaded on demand; read once into plain mm data; meshes (render meshes first, own tessellation, else boxes) for references and export | Architects deliver Rhino; openNURBS is the only complete 3dm reader, and the browser has no other | Asking for DXF / IFC exports; a server-side converter | +3.5 MB in the offline file, nothing in the main bundle; curved trimmed faces without render meshes are approximate; the per-layer actions share the DXF wireframe step and the reference / clash / panel / survey paths ([RHINO.md](RHINO.md)) |
 
 ## 5. Known limits and open items
 

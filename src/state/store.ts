@@ -54,6 +54,8 @@ export type DialogName =
   | 'wireframeCheck'
   | 'orientSurface'
   | 'exportPackage'
+  | 'rhinoImport'
+  | 'rhinoExport'
   | ManagementDialogName;
 
 export interface Selection {

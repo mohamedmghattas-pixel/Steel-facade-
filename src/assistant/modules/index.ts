@@ -14,5 +14,6 @@ import { profilesModule } from './profiles';
 import { modifyModule } from './modify';
 import { exportPackageModule } from './exportPackage';
 import { assembliesModule } from './assemblies';
+import { rhinoModule } from './rhino';
 
-export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule, wireframeModule, profilesModule, modifyModule, exportPackageModule, assembliesModule];
+export const TOOL_MODULES: ToolModule[] = [fabricationModule, movementModule, modellingModule, drawingsModule, managementModule, connectionsModule, wireframeModule, profilesModule, modifyModule, exportPackageModule, assembliesModule, rhinoModule];

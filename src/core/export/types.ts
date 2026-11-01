@@ -21,6 +21,7 @@ export const OUTPUT_IDS = [
   'ifc',
   'step',
   'obj',
+  'rhino-3dm',
   'project-json',
   'bom-xlsx',
   'bom-csv',

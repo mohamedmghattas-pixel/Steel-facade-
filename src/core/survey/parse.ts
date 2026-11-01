@@ -18,7 +18,7 @@ export interface SurveyParseResult {
   points: SurveyPoint[];
   /** Lines / entities that were skipped, with the reason. */
   skipped: string[];
-  format: 'csv' | 'dxf' | 'ifc';
+  format: 'csv' | 'dxf' | 'ifc' | '3dm';
 }
 
 let seq = 0;

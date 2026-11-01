@@ -27,7 +27,7 @@ items are created empty, as in the reference.
 ├───00-References
 │   │   facadesteel-input.json                   design input (info, settings, grids, levels, wireframe, connections, survey…)
 │   │   profile-used.json                        profiles in the model with section data (custom definitions included)
-│   │   <reference models and underlays>         as imported (IFC / DXF / PDF / images, from the browser's storage)
+│   │   <reference models and underlays>         as imported (IFC / DXF / Rhino .3dm / PDF / images, from the browser's storage)
 │   ├───1-Material Submital                      (empty)
 │   ├───2-Shop drawings                          (empty)
 │   ├───3-Structural Calculation                 (empty)
@@ -69,7 +69,7 @@ items are created empty, as in the reference.
 │   ├───IFC   {code}-{seq} Model.ifc
 │   ├───STP   {code}-{seq} Model.stp
 │   └───MIS   {code}-{seq} MIS.json + parts / assemblies / bolts / operations / welds / coatings .csv
-├───07-Model   {code}-{seq} Model.json (project file), .obj + .mtl, .stp
+├───07-Model   {code}-{seq} Model.json (project file), .obj + .mtl, .stp, {package} Model.3dm (Rhino, docs/RHINO.md)
 ├───08-Material List   {code}-{seq} Material list.csv (+ .xlsx)
 ├───09-Optimization    {code}-{seq} Bar cutting plan.csv / .pdf, Sheet nesting.pdf, Stock on hand.csv
 └───10-Quality Check List
@@ -148,7 +148,7 @@ failing file does not stop the package; it is listed under ERRORS.
 | Group | Outputs |
 |---|---|
 | Drawings | PDF per sheet; combined PDF (bookmarks per drawing grouped by type); DXF per sheet; several sheets in one DXF; register XLSX / CSV; revision log XLSX / CSV |
-| Models / project | IFC4; STEP AP214 (one faceted solid per part, mm, product = mark); OBJ + MTL (group per assembly, object per part, material per role); project JSON; project input JSON; profiles used JSON; reference files |
+| Models / project | IFC4; STEP AP214 (one faceted solid per part, mm, product = mark); OBJ + MTL (group per assembly, object per part, material per role); Rhino 3dm (mesh per part named by mark with user strings, wire lines, bolts; [RHINO.md](RHINO.md)); project JSON; project input JSON; profiles used JSON; reference files |
 | Fabrication | NC1 members / plates / all; plate DXF per part; plate list CSV; nested sheet DXF; nesting CSV / XLSX / PDF; flat patterns DXF; part labels PDF; bar cutting plan CSV / XLSX / PDF; purchase list; stock on hand |
 | Lists | material list XLSX, one CSV, CSV set; part schedule PDF; packing lists XLSX and PDF per batch; galvanizing; paint; MIS/ERP JSON + CSV |
 | Site | fixing schedule CSV; anchor schedule CSV; setting-out table CSV / XLSX; survey points CSV; erection notes |

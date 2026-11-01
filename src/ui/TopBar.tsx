@@ -21,6 +21,7 @@ import { marksLocked } from '../core/management/marks';
 import { WireframeStatusChip } from './dialogs/WireframeDialog';
 import { openWireframeCheck } from './wireframeActions';
 import { openOrientDialog } from './surfaceActions';
+import { openRhinoImport } from './rhinoActions';
 
 interface Item {
   label: string;
@@ -103,6 +104,7 @@ export function TopBar() {
         items={[
           { label: 'DXF / DWG → wireframe or reference…', hint: 'shop / architect drawings', run: importDxf },
           { label: 'IFC reference model…', hint: 'concrete or main steel', run: importIfcReference },
+          { label: 'Import Rhino (.3dm)…', hint: 'wireframe, reference, panels, survey', run: () => void openRhinoImport() },
           { label: 'IFC steel → editable members…', hint: 'Tekla, Revit, FacadeSteel', run: () => void openIfcSteelFile() },
           { label: 'Panel layout → sub-frame…', hint: 'DXF or IFC panels', run: () => useStore.getState().set({ dialog: 'panelLayout' }) },
           { label: 'PDF / image underlay…', hint: 'trace shop drawings', run: importUnderlay },
@@ -116,6 +118,7 @@ export function TopBar() {
           { label: 'Export package…', hint: 'folder tree or ZIP, all outputs', run: () => set({ dialog: 'exportPackage' }) },
           '-',
           { label: 'IFC model', hint: 'IFC4', run: exportIfcFile },
+          { label: 'Rhino model (.3dm)', hint: 'meshes + user strings, mm', run: () => set({ dialog: 'rhinoExport' }) },
           { label: 'Material list', hint: 'XLSX', run: () => exportBom('xlsx') },
           { label: 'Material list', hint: 'CSV (zip)', run: () => exportBom('csv') },
           { label: 'Drawings', hint: 'PDF', run: () => void exportDrawingsPdf() },

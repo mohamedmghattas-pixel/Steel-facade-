@@ -196,26 +196,37 @@ export function labelSvg(l: LabelData, w: number, h: number): string {
 
 /** Label sheets as SVG pages (mm). */
 export function labelPages(labels: LabelData[], layout: LabelLayout): SvgPage[] {
+  return lazyLabelPages(labels, layout).map((pg) => ({ w: pg.w, h: pg.h, svg: pg.svg() }));
+}
+
+/**
+ * The label sheets with each page's SVG made on demand: a label (QR code, bar code) takes
+ * about 2 ms, so a package plan only counts pages and the PDF builds them one at a time.
+ */
+export function lazyLabelPages(labels: LabelData[], layout: LabelLayout): { w: number; h: number; svg: () => string }[] {
   const L = LABEL_LAYOUTS[layout];
   const per = L.cols * L.rows;
-  const pages: SvgPage[] = [];
+  const pages: { w: number; h: number; svg: () => string }[] = [];
   for (let i = 0; i < labels.length; i += per) {
     const chunk = labels.slice(i, i + per);
-    const body = chunk
-      .map((l, j) => {
-        const col = j % L.cols;
-        const row = Math.floor(j / L.cols);
-        const x = L.left + col * (L.label.w + L.gapX);
-        const y = L.top + row * (L.label.h + L.gapY);
-        return `<g transform="translate(${n2(x)} ${n2(y)})">${labelSvg(l, L.label.w, L.label.h)}</g>`;
-      })
-      .join('\n');
     pages.push({
       w: L.page.w,
       h: L.page.h,
-      svg:
-        `<svg xmlns="http://www.w3.org/2000/svg" width="${L.page.w}mm" height="${L.page.h}mm" viewBox="0 0 ${L.page.w} ${L.page.h}" font-family="Helvetica, Arial, sans-serif">` +
-        `<rect x="0" y="0" width="${L.page.w}" height="${L.page.h}" fill="#fff"/>${body}</svg>`,
+      svg: () => {
+        const body = chunk
+          .map((l, j) => {
+            const col = j % L.cols;
+            const row = Math.floor(j / L.cols);
+            const x = L.left + col * (L.label.w + L.gapX);
+            const y = L.top + row * (L.label.h + L.gapY);
+            return `<g transform="translate(${n2(x)} ${n2(y)})">${labelSvg(l, L.label.w, L.label.h)}</g>`;
+          })
+          .join('\n');
+        return (
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${L.page.w}mm" height="${L.page.h}mm" viewBox="0 0 ${L.page.w} ${L.page.h}" font-family="Helvetica, Arial, sans-serif">` +
+          `<rect x="0" y="0" width="${L.page.w}" height="${L.page.h}" fill="#fff"/>${body}</svg>`
+        );
+      },
     });
   }
   return pages;

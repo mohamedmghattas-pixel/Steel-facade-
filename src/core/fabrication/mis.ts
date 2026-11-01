@@ -207,8 +207,15 @@ export function misExport(p: Project, dm: DerivedModel): MisExport {
   const markOf = (ref: string) => dm.partByRef.get(ref)?.mark ?? ref;
   const assemblies: MisAssembly[] = [];
   const coatings: MisCoating[] = [];
+  // Assemblies of each mark, in model order (grouped once, not filtered per mark).
+  const byMark = new Map<string, typeof dm.assemblies>();
+  for (const x of dm.assemblies) {
+    const l = byMark.get(x.mark);
+    if (l) l.push(x);
+    else byMark.set(x.mark, [x]);
+  }
   for (const { assembly: a, qty } of uniqueAssemblies(dm)) {
-    const same = dm.assemblies.filter((x) => x.mark === a.mark);
+    const same = byMark.get(a.mark) ?? [];
     const main = dm.partByRef.get(a.main)!;
     assemblies.push({
       mark: a.mark,

@@ -11,6 +11,9 @@ import { sampleFacade } from './helpers';
 import { deriveModel } from '../src/core/derive/model';
 import { allDrawings } from '../src/core/drawings';
 import { checkSheetLayout } from '../src/core/drawings/layoutCheck';
+import { MAX_MODEL_FILE_BYTES, packageContext, planPackage } from '../src/core/export/package';
+import type { ExportTemplate } from '../src/core/export/types';
+import { labelSheetPages, lazyLabelSheetPages } from '../src/core/export/outputs';
 
 describe('large outputs', () => {
   it('writes a DXF with more values than a function call takes arguments', () => {
@@ -133,4 +136,58 @@ describe('set-out sheets of a long slab edge', () => {
     // Every sheet still names itself in its key plan.
     for (const d of sheets) expect(d.entities.some((e) => e.t === 'text' && e.text === d.number)).toBe(true);
   });
+});
+
+describe('export package of a very large model', () => {
+  const modelsOnly: ExportTemplate = {
+    id: 'models',
+    name: 'Models',
+    root: {
+      id: 'root',
+      name: '{project}',
+      folders: [],
+      items: (['step', 'obj', 'ifc', 'rhino-3dm'] as const).map((output) => ({ id: output, output, pattern: `Model.{ext}` })),
+    },
+  };
+  const plan = (p: Project) => {
+    const dm = deriveModel(p);
+    return { dm, plan: planPackage(packageContext(p, dm, { shared: { drawings: [], cache: new Map() } }), modelsOnly) };
+  };
+
+  it('skips model files too large to build in the browser, with the reason, instead of failing part-way', () => {
+    const { dm, plan: big } = plan(gridFacade(80, 40)); // 6 440 parts: a ~400 MB STEP file
+    expect(dm.parts.length * 60000).toBeGreaterThan(MAX_MODEL_FILE_BYTES);
+    const step = big.items.find((i) => i.item.output === 'step')!;
+    expect(step.skip).toMatch(/STEP model of [\d,]+ parts would be about [\d.]+ MB, more than the browser can build as one file/);
+    expect(step.files).toEqual([]);
+    // The IFC model of the same parts is still made.
+    expect(big.items.find((i) => i.item.output === 'ifc')!.skip).toBeFalsy();
+    expect(big.files.some((f) => f.path.endsWith('.ifc'))).toBe(true);
+  });
+
+  it('keeps every model file of a normal project', () => {
+    const { plan: small } = plan(sampleFacade());
+    for (const i of small.items) expect(i.skip, i.item.output).toBeFalsy();
+    expect(small.files.map((f) => f.path.split('.').pop()).sort()).toEqual(['3dm', 'ifc', 'mtl', 'obj', 'stp']);
+  });
+});
+
+describe('export package planning', () => {
+  it('counts the part-label pages without drawing every label (QR codes) up front', () => {
+    const p = gridFacade(40, 20);
+    autoConnect(p);
+    const dm = deriveModel(p);
+    const labelsOnly: ExportTemplate = { id: 'l', name: 'Labels', root: { id: 'root', name: '{project}', folders: [], items: [{ id: 'l', output: 'labels-pdf', pattern: 'Labels.{ext}' }] } };
+    const t0 = performance.now();
+    const plan = planPackage(packageContext(p, dm, { shared: { drawings: [], cache: new Map() } }), labelsOnly);
+    const ms = performance.now() - t0;
+    const src = plan.files[0].source;
+    const per = lazyLabelSheetPages(p, dm);
+    expect(per.labels).toBeGreaterThan(3000);
+    expect(src.pages).toBe(per.pages.length);
+    // The pages are the same as the eager ones.
+    expect(per.pages[0].svg()).toBe(labelSheetPages(p, dm).pages[0].svg);
+    // Drawing ~3 000 labels with QR codes took seconds; planning now only counts them.
+    expect(ms).toBeLessThan(1500);
+  }, 60000);
 });

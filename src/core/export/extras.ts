@@ -74,9 +74,12 @@ export function fixingScheduleCsv(p: Project, dm: DerivedModel): string {
   const rows: Row[] = [['Kind', 'Id', 'Bracket / assembly', 'Connection', 'Grid ref', 'Level ref', 'X', 'Y', 'Z', 'Fixing', 'Type / grade', 'Size', 'Length (mm)', 'Qty']];
   for (const a of anchorRows(p, dm)) rows.push(['Anchor', a.id, a.bracket, a.connectionId, a.grid, a.level, r1(a.x), r1(a.y), r1(a.z), a.mount, a.type, a.size, a.length, a.perBracket]);
   const asmOfConn = new Map<string, string>();
+  // The (first) assembly of each part, indexed once instead of searched per connection.
+  const asmOfPart = new Map<string, { mark: string }>();
+  for (const a of dm.assemblies) for (const r of a.parts) if (!asmOfPart.has(r)) asmOfPart.set(r, a);
   for (const part of dm.parts) {
     if (!part.connectionId || asmOfConn.has(part.connectionId)) continue;
-    const a = dm.assemblies.find((x) => x.parts.includes(part.ref));
+    const a = asmOfPart.get(part.ref);
     if (a) asmOfConn.set(part.connectionId, a.mark);
   }
   let n = 0;

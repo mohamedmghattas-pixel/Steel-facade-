@@ -229,6 +229,15 @@ function pdfSource(base: string, sheets: PdfSheet[], size: number, title: string
   return { base, ext: 'pdf', tokens, size, pages: sheets.length, rev, data: (b) => sheetsToPdf(sheets, b.painter, { title, onPage: b.onPage }) };
 }
 
+/**
+ * Largest estimated model file (STEP, OBJ, IFC, Rhino) the package makes. Each is built as one
+ * JavaScript string or WebAssembly buffer, which tops out around 512 MB in browsers, and the ZIP
+ * keeps every file in memory: a bigger model would fail or crash the page part-way through.
+ */
+export const MAX_MODEL_FILE_BYTES = 350 * 1024 * 1024;
+const tooLargeForOneFile = (what: string, est: number, parts: number) =>
+  `the ${what} of ${parts.toLocaleString('en')} parts would be about ${formatBytes(est)}, more than the browser can build as one file`;
+
 /** Files of one output for this project, or why there are none. Item-specific settings (drawing groups) are applied by the caller. */
 function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan {
   const { p, dm } = ctx;
@@ -308,6 +317,7 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       if (!parts) return { skip: NO_PARTS };
       const meshes = lazy(() => partMeshes(p, dm));
       const est = dm.parts.length * (id === 'step' ? 60000 : 9000);
+      if (est > MAX_MODEL_FILE_BYTES) return { skip: tooLargeForOneFile(id === 'step' ? 'STEP model' : 'OBJ model', est, dm.parts.length) };
       if (id === 'step') return { sources: [{ base: out.fileBase(p), ext: 'stp', tokens: {}, size: est, data: () => meshesToStep(meshes(), { name: `${ctx.tokens.code}-${ctx.tokens.seq} Model`, author: p.info.designer, organization: p.drawings.settings.legalOwner }) }] };
       const both = lazy(() => (mtlName: string) => meshesToObj(meshes(), { mtlFile: mtlName, title: `${p.info.name} — FacadeSteel model` }));
       const mtl: Source = { base: out.fileBase(p), ext: 'mtl', tokens: {}, size: 600, data: () => both()('model.mtl').mtl };
@@ -326,6 +336,7 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     }
     case 'rhino-3dm':
       if (!parts) return { skip: NO_PARTS };
+      if (20000 + dm.parts.length * 6000 > MAX_MODEL_FILE_BYTES) return { skip: tooLargeForOneFile('Rhino model', 20000 + dm.parts.length * 6000, dm.parts.length) };
       return {
         sources: [
           {
@@ -379,6 +390,7 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     }
     case 'ifc':
       if (!parts) return { skip: NO_PARTS };
+      if (20000 + dm.parts.length * 2500 > MAX_MODEL_FILE_BYTES) return { skip: tooLargeForOneFile('IFC model', 20000 + dm.parts.length * 2500, dm.parts.length) };
       return { sources: [{ base: out.fileBase(p), ext: 'ifc', tokens: {}, size: 20000 + dm.parts.length * 2500, data: lazy(() => out.ifcText(p, dm)) }] };
     case 'project-json':
       return { sources: [exact(out.fileBase(p), 'json', out.projectJson(p))] };
@@ -445,9 +457,9 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     }
     case 'labels-pdf': {
       if (!parts) return { skip: NO_PARTS };
-      const l = out.labelSheetPages(p, dm);
+      const l = out.lazyLabelSheetPages(p, dm);
       if (!l.labels) return { skip: 'there are no parts to label' };
-      return { sources: [pdfSource(`Part labels ${l.layout}`, svgPdfSheets(l.pages), 5000 + l.labels * 4700, title('part labels'))] };
+      return { sources: [pdfSource(`Part labels ${l.layout}`, l.pages, 5000 + l.labels * 4700, title('part labels'))] };
     }
     case 'packing-xlsx':
     case 'packing-pdf': {

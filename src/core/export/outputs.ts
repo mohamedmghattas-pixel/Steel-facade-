@@ -16,7 +16,7 @@ import { exportNestedSheets, exportPlateDxfAll } from '../fabrication/plateDxf';
 import { nestPlates } from '../optimize/plateNesting';
 import { planBars } from '../optimize/barNesting';
 import { fabSettings } from '../fabrication/settings';
-import { labelItems, labelPages } from '../fabrication/labels';
+import { labelItems, labelPages, lazyLabelPages } from '../fabrication/labels';
 import { packingListPages, packingLists, packingListsXlsx, type PackingList } from '../fabrication/packing';
 import { galvanizingReport, galvanizingXlsx } from '../fabrication/galvanizing';
 import { paintAreas, paintXlsx } from '../fabrication/paint';
@@ -162,6 +162,13 @@ export function labelSheetPages(p: Project, dm: DerivedModel, opts: { layout?: L
   const layout = opts.layout ?? s.labelLayout;
   const items = labelItems(p, dm, opts.per ?? s.labelPer);
   return { pages: labelPages(items, layout), labels: items.length, layout };
+}
+
+/** As labelSheetPages, but each page's SVG is made when it is needed (package plans count pages only). */
+export function lazyLabelSheetPages(p: Project, dm: DerivedModel): { pages: { w: number; h: number; svg: () => string }[]; labels: number; layout: LabelLayout } {
+  const s = fabSettings(p);
+  const items = labelItems(p, dm, s.labelPer);
+  return { pages: lazyLabelPages(items, s.labelLayout), labels: items.length, layout: s.labelLayout };
 }
 
 export const packingXlsx = (p: Project, lists: PackingList[]) => packingListsXlsx(p, lists);

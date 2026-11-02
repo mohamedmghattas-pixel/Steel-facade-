@@ -572,7 +572,10 @@ export interface WireframeCheckSettings {
   junctionTolerance: number;
   /** A line end may be extended or trimmed along its own axis by up to this much to reach that junction, mm. Default 50. */
   maxExtension: number;
-  /** Split mullions where transoms meet them (default true). Off: mullions stay continuous; transom ends become through-nodes. */
+  /**
+   * Split mullions where transoms meet them. Default false (since D41): mullions stay continuous and
+   * transom ends become through-nodes; projects saved with true keep it.
+   */
   splitMullions: boolean;
   /** Lines shorter than this are flagged, mm. Default 20. */
   minLength: number;
@@ -589,6 +592,8 @@ export interface WireframeCheckSettings {
    * joints: listed as "kept", never closed and not counted as issues. Default 10–60 mm.
    */
   stackJointGap: { min: number; max: number };
+  /** Gap of new stack joints (Split at stock length), mm. Default 30; keep it inside stackJointGap so the check lists the joints as kept. */
+  stackJointSize?: number;
   /** Propose turning profiles perpendicular to the facade surface (Member.normal). Default true. */
   orient: boolean;
   /** Orientation: keep each member's rotation on top of the surface normal (default false: rotation reset to 0). */

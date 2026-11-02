@@ -7,6 +7,7 @@ import type { Id, WireframeCheckSettings, WireframeSummary } from '../core/model
 import { analyzeWireframe, applyWireframePlan, predictSummary, recordApproval, type ApplyResult, type OrientChoices, type WireframePlan } from '../core/wireframe';
 import { useStore, type WireScope } from '../state/store';
 import { assignProfilesByRole, roleProfile } from '../core/model/roleProfiles';
+import { divideAtMullions, type DivideResult } from '../core/model/junctions';
 
 const st = () => useStore.getState();
 
@@ -58,10 +59,11 @@ export function applyWireframeCheck(
   confirm?: ConfirmInput,
   scope: WireScope = 'all',
   opts: ApplyCheckOptions = {},
-): ApplyResult & { profiled: number } {
+): ApplyResult & { profiled: number; division: DivideResult | null } {
   if (confirm && !confirm.by.trim()) throw new Error('Enter who confirmed the wireframe.');
   let res: ApplyResult | null = null;
   let profiled = 0;
+  let division: DivideResult | null = null;
   const summary: WireframeSummary = predictSummary(plan, accepted);
   const label = confirm ? 'Wireframe check: apply and confirm' : 'Wireframe check: apply';
   // A selection of every checked line (e.g. the lines just imported) follows them through the cuts:
@@ -78,6 +80,11 @@ export function applyWireframeCheck(
       // A role profile's rotation was meant for the default axes: oriented members keep rotation 0 unless kept.
       if (profiled && !plan.settings.keepRotation) for (const id of (res as ApplyResult).orientedIds) if (d.members[id]) d.members[id].rotation = 0;
     }
+    // The junction rule once more on the result (the same function the profile insertions use): a transom in
+    // the scope still crossing or meeting a mullion without a node is divided there. Normally nothing is left.
+    d.wireframe.settings = { ...plan.settings };
+    division = divideAtMullions(d, { members: (res as ApplyResult).members, mode: 'divide' });
+    if (division.divided || division.snapped) (res as ApplyResult).members = [...new Set([...(res as ApplyResult).members, ...division.members])].filter((id) => d.members[id]);
     d.wireframe.settings = { ...plan.settings };
     if (confirm) recordApproval(d, { by: confirm.by, note: confirm.note, summary, changes: res.applied });
   });
@@ -90,7 +97,7 @@ export function applyWireframeCheck(
     const members = [...new Set([...st().selection.members, ...out.members])].filter((id) => p.members[id]);
     st().set({ selection: { ...st().selection, members } });
   }
-  return { ...out, profiled };
+  return { ...out, profiled, division };
 }
 
 /** Record a confirmation of the model as it is (no changes). */

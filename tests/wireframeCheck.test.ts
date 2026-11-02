@@ -141,7 +141,8 @@ describe('wireframe check: analysis', () => {
     // No member is vertical: the mullions lean 29° (61° from horizontal).
     for (const ids of f.mullions) expect(lineAngle(p, ids[0])).toBeGreaterThan(45);
     for (const ids of f.mullions) expect(lineAngle(p, ids[0])).toBeLessThan(80);
-    const plan = analyzeWireframe(p);
+    // This test checks the cut-mullion rule (the default keeps mullions continuous).
+    const plan = analyzeWireframe(p, { splitMullions: true });
     // 9 mullions (4 pieces each) + 31 transoms + 3 stubs as logical lines.
     expect(plan.stats.pieces).toBe(9 * 4 + 31 + 3);
     expect(plan.stats.lines).toBe(9 + 31 + 3);
@@ -171,6 +172,8 @@ describe('wireframe check: analysis', () => {
   it('applies: whole lines cut only at mullion–transom junctions, transom ends snapped onto the mullion axis', () => {
     const f = vFacade();
     const p = f.b.p;
+    // The cut-mullion rule, set explicitly (the default keeps mullions continuous).
+    p.wireframe.settings.splitMullions = true;
     const plan = analyzeWireframe(p);
     const res = applyWireframePlan(p, plan, accepted(plan));
     expect(Object.keys(p.members)).toHaveLength(plan.after.lines);
@@ -217,7 +220,7 @@ describe('wireframe check: analysis', () => {
     b.line(v3(15, 0, 1500), v3(1500, 0, 1500));
     const node = p.members[left].end;
     const c = addConnection(p, 'angleCleat', node, mul[1], [left]);
-    const plan = analyzeWireframe(p);
+    const plan = analyzeWireframe(p, { splitMullions: true });
     applyWireframePlan(p, plan);
     expect(p.nodes[node]).toBeDefined();
     expect(p.connections[c].node).toBe(node);
@@ -243,6 +246,59 @@ describe('wireframe check: analysis', () => {
       }
     }
     expect(Object.values(p.members).some((m) => m.role === 'mullion' && membersAtNode(p, m.start).length === 1)).toBe(true);
+  });
+
+  it('keeps mullions continuous by default: every junction found, transoms cut, mullions divided only at stack joints', () => {
+    const f = vFacade();
+    const p = f.b.p;
+    expect(p.wireframe.settings.splitMullions).toBe(false);
+    const plan = analyzeWireframe(p);
+    expect(plan.before.junctions).toBe(36);
+    expect(plan.after.connected).toBe(36);
+    // 9 mullion lines, one of them kept in two at the splice node; the crossing transom cut once.
+    expect(plan.after).toMatchObject({ mullions: 10, transoms: 32 });
+    applyWireframePlan(p, plan);
+    const mullions = Object.values(p.members).filter((m) => m.role === 'mullion');
+    expect(mullions).toHaveLength(10);
+    // Each transom end is a through-node on a mullion span (or a mullion node).
+    for (const t of Object.values(p.members).filter((m) => m.role === 'transom'))
+      for (const n of [t.start, t.end]) expect(membersAtNode(p, n).some((x) => x.member.role === 'mullion')).toBe(true);
+    const again = analyzeWireframe(p);
+    expect(again.items.filter((i) => i.actionable && i.accepted)).toEqual([]);
+    expect(again.before.connected).toBe(again.before.junctions);
+  });
+
+  it('continuous mullions: a mullion end running past its top transom is not trimmed onto the through-node', () => {
+    const b = new Builder();
+    const p = b.p;
+    const props = (role: Member['role']) => ({ role, profile: role === 'mullion' ? 'SHS 100x100x5' : 'RHS 100x50x4' });
+    b.line(v3(0, 0, 0), v3(0, 0, 3025), props('mullion'));
+    b.line(v3(1500, 0, 0), v3(1500, 0, 3025), props('mullion'));
+    b.line(v3(0, 0, 3000), v3(1500, 0, 3000), props('transom'));
+    b.line(v3(0, 0, 1500), v3(1500, 0, 1500), props('transom'));
+    const plan = analyzeWireframe(p);
+    expect(plan.items.filter((i) => i.kind === 'join' || i.kind === 'snap' || i.kind === 'split')).toEqual([]);
+    // With cut mullions the same model is left alone too (the cut blocks the trim there).
+    expect(analyzeWireframe(p, { splitMullions: true }).items.filter((i) => i.kind === 'join')).toEqual([]);
+  });
+
+  it('a stack joint at a node where transoms end (a centre joint) is kept, not closed', () => {
+    const b = new Builder();
+    const p = b.p;
+    const props = (role: Member['role']) => ({ role, profile: role === 'mullion' ? 'SHS 100x100x5' : 'RHS 100x50x4' });
+    for (const x of [0, 1500]) {
+      b.line(v3(x, 0, 0), v3(x, 0, 2985), props('mullion'));
+      b.line(v3(x, 0, 3015), v3(x, 0, 6000), props('mullion'));
+    }
+    // The transoms end at the top of the lower lengths, 30 mm below the upper lengths.
+    b.line(v3(0, 0, 2985), v3(1500, 0, 2985), props('transom'));
+    b.line(v3(0, 0, 1500), v3(1500, 0, 1500), props('transom'));
+    b.line(v3(0, 0, 4500), v3(1500, 0, 4500), props('transom'));
+    const plan = analyzeWireframe(p);
+    const joints = plan.items.filter((i) => i.kind === 'stackJoint');
+    expect(joints).toHaveLength(2);
+    expect(joints.every((j) => Math.abs((j.value ?? 0) - 30) < 1e-6)).toBe(true);
+    expect(plan.items.filter((i) => i.actionable && i.accepted && i.group !== 'orientation')).toEqual([]);
   });
 
   it('respects roles the user set, unless reclassify is on', () => {
@@ -385,7 +441,12 @@ describe('wireframe check: confirmation and undo', () => {
     delete p.wireframe;
     const m = migrateProject(p as Project)!;
     expect(m.wireframe.approvals).toEqual([]);
-    expect(m.wireframe.settings).toMatchObject({ junctionTolerance: 10, maxExtension: 50, splitMullions: true, minLength: 20 });
+    // Since D41 a project without the setting keeps mullions continuous.
+    expect(m.wireframe.settings).toMatchObject({ junctionTolerance: 10, maxExtension: 50, splitMullions: false, minLength: 20, stackJointSize: 30 });
+    // A stored rule is kept.
+    const q = structuredClone(useStore.getState().project);
+    q.wireframe.settings.splitMullions = true;
+    expect(migrateProject(q)!.wireframe.settings.splitMullions).toBe(true);
   });
 });
 
@@ -453,10 +514,15 @@ describe('DXF import: whole lines', () => {
     const p = createProject();
     const ids = importDxfWireframe(p, parsed, { ...base, split: 'junctions', mergeCollinear: true });
     expect(ids).toHaveLength(3);
-    const plan = analyzeWireframe(p, {}, ids);
+    const plan = analyzeWireframe(p, { splitMullions: true }, ids);
     expect(plan.before.junctions).toBe(1);
     applyWireframePlan(p, plan);
     expect(byRole(p)).toEqual({ mullion: 2, transom: 2 });
+    // The default keeps the mullion whole: the transom ends are a through-node on it.
+    const c = createProject();
+    const cids = importDxfWireframe(c, parsed, { ...base, split: 'junctions', mergeCollinear: true });
+    applyWireframePlan(c, analyzeWireframe(c, {}, cids));
+    expect(byRole(c)).toEqual({ mullion: 1, transom: 2 });
     // Without merging, every polyline piece is a line.
     const q = createProject();
     expect(importDxfWireframe(q, parsed, { ...base, split: 'none' })).toHaveLength(6);

@@ -162,6 +162,7 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
         res.roles ? `${res.roles} roles set` : '',
         res.oriented ? `${res.oriented} members turned perpendicular to the surface` : '',
         res.profiled ? `${res.profiled} profiles assigned by role` : '',
+        res.division?.divided ? `${res.division.divided} more transoms divided at mullions` : '',
         res.deleted ? `${res.deleted} deleted` : '',
         res.construction ? `${res.construction} construction lines` : '',
       ].filter(Boolean);
@@ -255,12 +256,12 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
             <NumberInput value={settings.maxExtension} unit="mm" min={0} onChange={(v) => set('maxExtension', v)} />
           </Field>
         </div>
-        <Field label="At mullion–transom junctions">
+        <Field label="At mullion–transom junctions" hint="Transoms are always cut at the mullion; mullions are divided only at real stack joints (and by Split at stock length)">
           <Segmented<'on' | 'off'>
             value={settings.splitMullions ? 'on' : 'off'}
             options={[
+              { value: 'off', label: 'Keep mullions continuous', title: 'Default: transom ends sit on the mullion as through-nodes; joints are still found there' },
               { value: 'on', label: 'Cut mullions at transoms', title: 'Mullions and transoms both end at every junction' },
-              { value: 'off', label: 'Keep mullions continuous', title: 'Transom ends sit on the mullion as through-nodes' },
             ]}
             onChange={(v) => set('splitMullions', v === 'on')}
           />
@@ -291,12 +292,15 @@ export function WireframeCheckDialog({ onClose }: { onClose: () => void }) {
             <input type="checkbox" checked={settings.reclassify} onChange={(e) => set('reclassify', e.target.checked)} /> Re-assign roles already set
           </label>
         </div>
-        <div className="row2">
+        <div className="row3">
           <Field label="Stack joints from" hint="Collinear gaps between lengths of one family in this range are kept joints">
             <NumberInput value={settings.stackJointGap.min} unit="mm" min={0} onChange={(v) => set('stackJointGap', { ...settings.stackJointGap, min: v })} />
           </Field>
           <Field label="to">
             <NumberInput value={settings.stackJointGap.max} unit="mm" min={0} onChange={(v) => set('stackJointGap', { ...settings.stackJointGap, max: v })} />
+          </Field>
+          <Field label="New joints" hint="Gap opened by Split at stock length (Modify)">
+            <NumberInput value={settings.stackJointSize ?? 30} unit="mm" min={0} onChange={(v) => set('stackJointSize', v)} />
           </Field>
         </div>
         <label className="check">

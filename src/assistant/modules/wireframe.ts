@@ -20,7 +20,7 @@ const settingsProps = {
   ids: { type: 'array', items: { type: 'string' }, description: 'Member ids (overrides scope)' },
   junctionTolerance: { type: 'number', description: '3D gap between axes that still counts as meeting, mm (default 10)' },
   maxExtension: { type: 'number', description: 'Ends may be extended / trimmed along their axis by up to this, mm (default 50)' },
-  splitMullions: { type: 'boolean', description: 'Cut mullions where transoms meet them (default true); false keeps mullions continuous' },
+  splitMullions: { type: 'boolean', description: 'Cut mullions where transoms meet them (default false: mullions stay continuous, transom ends are through-nodes; transoms are always cut)' },
   minLength: { type: 'number', description: 'Flag lines shorter than this, mm (default 20)' },
   nearMiss: { type: 'number', description: 'Flag ends this close to a line beyond the tolerance, mm (default 100)' },
   reclassify: { type: 'boolean', description: 'Also re-assign roles the user already set (default false)' },
@@ -28,6 +28,7 @@ const settingsProps = {
   orient: { type: 'boolean', description: 'Propose turning profiles perpendicular to the surface (default true)' },
   stackJointMin: { type: 'number', description: 'Stack joints: collinear gaps from (mm, default 10)' },
   stackJointMax: { type: 'number', description: 'to (mm, default 60)' },
+  stackJointSize: { type: 'number', description: 'Gap of new stack joints made by modify_stock_split, mm (default 30)' },
 } as const;
 
 const orientProps = {
@@ -55,6 +56,7 @@ function settingsOf(input: Json): Partial<WireframeCheckSettings> {
   if (typeof input.orient === 'boolean') o.orient = input.orient;
   if (typeof input.keepRotation === 'boolean') o.keepRotation = input.keepRotation;
   if (input.foldNormal === 'bisector' || input.foldNormal === 'a' || input.foldNormal === 'b') o.foldNormal = input.foldNormal as FoldNormal;
+  if (typeof input.stackJointSize === 'number') o.stackJointSize = Math.max(0, input.stackJointSize);
   if (typeof input.stackJointMin === 'number' || typeof input.stackJointMax === 'number') {
     const cur = st().project.wireframe.settings.stackJointGap;
     o.stackJointGap = { min: Math.max(0, Number(input.stackJointMin ?? cur.min)), max: Math.max(0, Number(input.stackJointMax ?? cur.max)) };
@@ -231,8 +233,8 @@ const run: ToolModule['run'] = {
     const res = applyWireframeCheck(plan, accepted, confirm ? { by, note: input.note as string | undefined } : undefined, Array.isArray(input.ids) ? 'all' : scope, {
       assignRoleProfiles: input.assignRoleProfiles !== false,
     });
-    const { members, orientedIds: _o, ...counts } = res;
-    return { ...counts, members: members.length, confirmed: confirm, ...statusOut(), ...(unknown.length ? { unknownIds: unknown } : {}), undo: 'One undo step (Ctrl+Z or the history tool).' };
+    const { members, orientedIds: _o, division, ...counts } = res;
+    return { ...counts, dividedAtMullions: division?.divided ?? 0, members: members.length, confirmed: confirm, ...statusOut(), ...(unknown.length ? { unknownIds: unknown } : {}), undo: 'One undo step (Ctrl+Z or the history tool).' };
   },
 
   orient_to_surface(input: Json) {

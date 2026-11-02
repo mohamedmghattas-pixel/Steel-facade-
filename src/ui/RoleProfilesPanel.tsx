@@ -48,7 +48,10 @@ export function RoleProfilesPanel() {
   return (
     <section className="role-profiles">
       <h4>Profiles by role</h4>
-      <p className="muted">Mullions, transoms and the other roles each get their own profile. New members of a role get it; Apply updates existing ones.</p>
+      <p className="muted">
+        Mullions, transoms and the other roles each get their own profile. New members of a role get it; Apply updates existing ones. Applying also divides transoms where they cross or meet a mullion without a node
+        (the mullion stays continuous), in the same undo step.
+      </p>
       {shown.map((role) => {
         const rp = rps[role];
         const c = counts[role];

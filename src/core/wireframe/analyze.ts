@@ -14,10 +14,12 @@
  *    families (2-colouring); in each connected group the family that receives
  *    the line ends is the mullion family. Roles the user set, direction from
  *    horizontal (≥ 45° = mullion) and mean length break ties.
- * 4. Splits: mullions are cut where transoms meet them (rule, default on),
- *    transoms where a mullion ends on or crosses them; ends are snapped onto
- *    the axis. Every other node inside a line is an unnecessary split and is
- *    merged away — unless a connection sits on it or the pieces differ.
+ * 4. Splits (the junction rule of core/model/junctions.ts): transoms are cut
+ *    where they cross a mullion or a mullion ends on them; mullions stay
+ *    continuous (a transom end on a mullion is a through-node) unless the rule
+ *    splitMullions is on; ends are snapped onto the axis. Every other node
+ *    inside a line is an unnecessary split and is merged away — unless a
+ *    connection sits on it or the pieces differ.
  * 5. Issues for review: isolated lines, very short lines, near-misses,
  *    dangling transom ends, property conflicts, crossings without a node.
  * 6. Stack joints: collinear gaps of the stack-joint size between lengths of
@@ -32,7 +34,10 @@ import { ORIENT_TOLERANCE, orientLines, type OrientationSummary, type OrientChoi
 import { defaultWireframeSettings, NODE_TOL } from '../model/ops';
 import { lineLineClosest, pointSegment, segmentIntersection } from '../model/geometry';
 import { capsuleCells } from '../io/wireframeJoin';
+import { cutAtCrossing, cutAtTee, isJunctionPair, isMainRole, isSecondaryRole } from '../model/junctions';
 import { wireframeFingerprint } from './record';
+
+export { isMainRole, isSecondaryRole };
 
 // ---------------------------------------------------------------------------
 // Plan types
@@ -190,9 +195,6 @@ const dist = (a: Vec3, b: Vec3) => lenv(sub(a, b));
 const at = (a: Vec3, d: Vec3, s: number): Vec3 => ({ x: a.x + d.x * s, y: a.y + d.y * s, z: a.z + d.z * s });
 const mid = (a: Vec3, b: Vec3): Vec3 => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, z: (a.z + b.z) / 2 });
 const fmt = (n: number) => (n >= 10 ? Math.round(n).toLocaleString('en-US') : n.toFixed(n >= 1 ? 1 : 2));
-
-export const isMainRole = (r: MemberRole) => r === 'mullion' || r === 'post';
-export const isSecondaryRole = (r: MemberRole) => r === 'transom' || r === 'rail';
 
 const ROLE_WORD: Record<MemberRole, string> = {
   mullion: 'mullion',
@@ -463,11 +465,49 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
   const gaps: { node: Id; a: number; b: number; d: number }[] = [];
   const R = Math.max(reach + tol, nearMiss);
   const parallel = (a: number, b: number) => Math.abs(dotv(lines[a].dir, lines[b].dir)) >= PARALLEL_COS;
-  /** Would trimming line s back by `by` from its end E pass its next node or use it up? */
+  // Line ends of other lines meeting a line's span at a clear angle (through-nodes, e.g. transom ends
+  // on a continuous mullion): stations along it. They count like the line's own nodes for trims, as
+  // the cuts of the split-mullion rule would.
+  const throughAt: number[][] = lines.map(() => []);
+  const nodeLines = new Map<Id, number[]>();
+  for (const map of [lineEndsAt, interiorOf]) for (const [n, ls] of map) nodeLines.set(n, [...(nodeLines.get(n) ?? []), ...ls]);
+  for (const [n, ls] of nodeLines) {
+    const q = pos(n);
+    stampN++;
+    for (const key of grid.around(q, NODE_TOL)) {
+      for (const m of grid.cells.get(key) ?? []) {
+        if (stamp[m] === stampN) continue;
+        stamp[m] = stampN;
+        const L = lines[m];
+        if (!live(m) || L.nodes.includes(n) || !ls.some((x) => x !== m && live(x) && Math.abs(dotv(lines[x].dir, L.dir)) <= STRONG_COS)) continue;
+        const ps = pointSegment(q, L.a, L.b);
+        if (ps.d <= NODE_TOL && ps.t > 0 && ps.t < 1) throughAt[m].push(ps.t * L.len);
+      }
+    }
+  }
+  /** Would trimming line s back by `by` from its end E pass (or reach) its next node or a through-node, or use it up? */
   const trimBlocked = (si: number, E: Id, by: number) => {
     const S = lines[si];
-    const k = S.nodes[0] === E ? 1 : S.nodes.length - 2;
-    return dist(pos(S.nodes[k]), pos(E)) <= by + Math.max(1, o.minLength) || S.len <= by + o.minLength;
+    const atStart = S.nodes[0] === E;
+    const k = atStart ? 1 : S.nodes.length - 2;
+    const lim = by + Math.max(1, o.minLength);
+    if (dist(pos(S.nodes[k]), pos(E)) <= lim || S.len <= by + o.minLength) return true;
+    return throughAt[si].some((s) => (atStart ? s : S.len - s) <= lim);
+  };
+  /**
+   * A mullion (role set) whose end reaches a transom at q where a collinear mullion continues: the far
+   * side of a stack joint at the transom (e.g. Split at stock length, centre joints), never a corner or a
+   * T. Lines without roles keep the extension (a transom stopping short of a mullion looks the same).
+   */
+  const stackAcross = (q: Vec3, si: number, m: number) => isMainRole(lines[si].role) && isSecondaryRole(lines[m].role) && collinearAt(q, si);
+  const collinearAt = (q: Vec3, si: number) => {
+    for (const key of grid.around(q, tol)) {
+      for (const x of grid.cells.get(key) ?? []) {
+        if (x === si || !live(x) || !parallel(x, si)) continue;
+        if (pointSegment(q, lines[x].a, lines[x].b).d <= tol && lineOffset(q, lines[x]) <= tol) return true;
+      }
+    }
+    return false;
   };
   for (let i = 0; i < lines.length; i++) {
     if (!live(i)) continue;
@@ -482,6 +522,8 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
       let bestJ: { into: Id; d: number; to: Vec3 | null; score: number } | null = null;
       let bestN: { m: number; d: number; along: boolean } | null = null;
       let bestG: { m: number; d: number } | null = null;
+      // A stack-joint gap at a node where other lines (transoms) also end: one of the lines ending here faces a collinear line.
+      let bestSG: { a: number; m: number; d: number } | null = null;
       const offerT = (m: number, q: Vec3, sm: number, gap: number, ext: number, score: number, out: Vec3 | null = null) => {
         if (!bestT || score < bestT.score) bestT = { m, q, s: sm, gap, ext, score, out };
       };
@@ -511,6 +553,11 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
             if (!bestG || ps.d < bestG.d) bestG = { m, d: ps.d };
             continue;
           }
+          if (!allParallel && ps.d > tol && lineOffset(P, M) <= tol && (sp <= SNAP_EPS || sp >= M.len - SNAP_EPS) && ps.d >= o.stackJointGap.min - 1e-6 && ps.d <= o.stackJointGap.max + 1e-6) {
+            const k = ending.findIndex((si) => parallel(si, m));
+            const toward = k >= 0 ? dotv(sub(sp <= SNAP_EPS ? M.a : M.b, P), outs[k]) : 0;
+            if (k >= 0 && toward > 0 && (!bestSG || ps.d < bestSG.d)) bestSG = { a: ending[k], m, d: ps.d };
+          }
           if (ps.d <= tol) {
             if (sp <= tol || M.len - sp <= tol) {
               const F = sp <= tol ? M.nodes[0] : M.nodes[M.nodes.length - 1];
@@ -534,9 +581,16 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
             if (c.t <= tol || M.len - c.t <= tol) {
               // Meets M at its end: a corner, both ends go to where the axes meet.
               const F = c.t <= tol ? M.nodes[0] : M.nodes[M.nodes.length - 1];
+              // M's end is on a line collinear with this one (the far side of a stack joint, a through-node): not a corner.
+              if (stackAcross(pos(F), si, m)) return;
               const corner = at(M.a, M.dir, c.t);
               if (F !== E && dist(pos(F), corner) <= reach + tol && (!bestJ || score < bestJ.score)) bestJ = { into: F, d: dist(P, pos(F)), to: dist(pos(F), corner) > SNAP_EPS ? corner : null, score };
-            } else offerT(m, at(M.a, M.dir, c.t), c.t, c.gap, ext, score, ending.length === 1 ? outs[k] : null);
+            } else {
+              const q = at(M.a, M.dir, c.t);
+              // Reached across a gap where a collinear line of its own continues (a stack joint at a transom): not a T.
+              if (ext > tol && stackAcross(q, si, m)) return;
+              offerT(m, q, c.t, c.gap, ext, score, ending.length === 1 ? outs[k] : null);
+            }
           });
         }
       }
@@ -564,6 +618,8 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
           nearLines.add(N.m);
         }
       }
+      const SG = bestSG as { a: number; m: number; d: number } | null;
+      if (SG && ending.length > 1) gaps.push({ node: E, a: SG.a, b: SG.m, d: SG.d });
     }
   }
   for (const n of joinedNodes) freeEnds.delete(n);
@@ -642,10 +698,9 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
   classify(lines, tees, crosses, lineEndsAt, interiorOf, joins, freeEnds, connMembers, nearLines, o, live);
 
   // 7. Junction clusters on each main line.
-  const mainL = (i: number) => isMainRole(lines[i].proposed);
-  const secL = (i: number) => isSecondaryRole(lines[i].proposed);
-  const teeSplits = (m: number, s: number) => (mainL(m) && secL(s) ? o.splitMullions : secL(m) && mainL(s));
-  const isJunction = (a: number, b: number) => (mainL(a) && secL(b)) || (secL(a) && mainL(b));
+  // The junction rule (core/model/junctions.ts): transoms are cut, mullions only with splitMullions.
+  const teeSplits = (m: number, s: number) => cutAtTee(lines[m].proposed, lines[s].proposed, o.splitMullions);
+  const isJunction = (a: number, b: number) => isJunctionPair(lines[a].proposed, lines[b].proposed);
   const movable = (n: Id) => (nodeEnds.get(n) ?? []).every((m) => inScope(m.id));
   const requiredExisting = lines.map(() => new Set<Id>());
   const reps: { node: Id; pos: Vec3 }[][] = lines.map(() => []);
@@ -790,10 +845,7 @@ export function analyzeWireframe(p: Project, opts: AnalyzeOptions = {}, scope?: 
   for (const c of crosses) {
     const L = lines[c.l];
     const M = lines[c.m];
-    let sL = false;
-    let sM = false;
-    if (mainL(c.l) && secL(c.m)) [sL, sM] = [o.splitMullions, true];
-    else if (secL(c.l) && mainL(c.m)) [sL, sM] = [true, o.splitMullions];
+    let [sL, sM] = cutAtCrossing(L.proposed, M.proposed, o.splitMullions);
     sL &&= L.inScope;
     sM &&= M.inScope;
     if (!sL && !sM) {

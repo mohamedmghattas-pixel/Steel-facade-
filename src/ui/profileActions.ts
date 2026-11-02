@@ -10,6 +10,7 @@ import { getProfile, isCustomProfile, parseProfileCsv, parseProfileJson, profile
 import { parseProfileDxf, profileToDxf } from '../core/library/profileDxf';
 import { emptySketch, sketchFromDef } from '../core/library/sketch';
 import { assignProfilesByRole, roleProfilePatch, setRoleProfile } from '../core/model/roleProfiles';
+import { divideAtMullions, type DivideResult } from '../core/model/junctions';
 import { validateShape } from '../core/library/shapes';
 import { useStore } from '../state/store';
 import { download, pickFile, safeName } from '../state/storage';
@@ -172,6 +173,19 @@ export function exportProfileJsonOne(def: ProfileDef) {
 const plural = (role: MemberRole, n: number) => `${n} ${ROLE_LABEL[role].toLowerCase()}${n === 1 ? '' : 's'}`;
 
 /**
+ * Profile insertion, then the junction division in the same draft (one undo step): transoms / rails
+ * crossing or meeting the touched mullions / posts (or touched transoms crossing any mullion) without a
+ * node are divided there; mullions stay continuous (core/model/junctions.ts).
+ */
+export function insertWithJunctions(d: Project, members: Iterable<Id>, insert: () => number): { changed: number; division: DivideResult } {
+  const changed = insert();
+  return { changed, division: divideAtMullions(d, { members }) };
+}
+
+/** " Divided 4 transoms at the mullions (4 cuts, mullions continuous)." ('' when nothing was divided.) */
+export const divisionNote = (r: DivideResult | null | undefined) => (r?.message ? ` ${r.message}` : '');
+
+/**
  * Set (or clear) the profile of a role. When members of the role use other
  * settings, ask whether to update them all.
  */
@@ -186,11 +200,14 @@ export async function setRoleProfileUi(role: MemberRole, rp: RoleProfile | null)
     if (differ.length) apply = await askConfirm(`Update all ${plural(role, members.length)} to ${what}? (${differ.length} change.) Choose Cancel to only use it for new ${ROLE_LABEL[role].toLowerCase()}s.`, { title: 'Profiles by role', ok: `Update all ${ROLE_LABEL[role].toLowerCase()}s` });
   }
   let n = 0;
+  let division: DivideResult | null = null;
   st().apply(`${ROLE_LABEL[role]} profile`, (d) => {
     setRoleProfile(d, role, rp);
-    if (apply) n = assignProfilesByRole(d, undefined, [role]);
+    if (!apply) return;
+    const ids = Object.values(d.members).filter((m) => m.role === role).map((m) => m.id);
+    ({ changed: n, division } = insertWithJunctions(d, ids, () => assignProfilesByRole(d, undefined, [role])));
   });
-  if (apply) notify(`Updated ${plural(role, n)}.`);
+  if (apply) notify(`Updated ${plural(role, n)}.${divisionNote(division)}`);
 }
 
 /** "Apply to all <role>s" / "Apply to selection". */
@@ -199,9 +216,12 @@ export function applyRoleProfile(role: MemberRole, scope: 'all' | 'selection') {
   if (scope === 'selection' && !sel.length) return notify('Select members first.', 'error');
   if (!st().project.settings.roleProfiles?.[role]) return notify(`Choose a ${ROLE_LABEL[role].toLowerCase()} profile first.`, 'error');
   let n = 0;
+  let division: DivideResult | null = null;
   st().apply(`Apply ${ROLE_LABEL[role].toLowerCase()} profile`, (d) => {
     const ids: Id[] | undefined = scope === 'selection' ? sel : undefined;
-    n = assignProfilesByRole(d, ids, [role]);
+    const touched = (ids ?? Object.keys(d.members)).filter((id) => d.members[id]?.role === role);
+    ({ changed: n, division } = insertWithJunctions(d, touched, () => assignProfilesByRole(d, ids, [role])));
   });
-  notify(n ? `Updated ${plural(role, n)}.` : scope === 'selection' ? `No selected ${ROLE_LABEL[role].toLowerCase()}s needed a change.` : `All ${ROLE_LABEL[role].toLowerCase()}s already use it.`);
+  const note = divisionNote(division);
+  notify(n ? `Updated ${plural(role, n)}.${note}` : scope === 'selection' ? `No selected ${ROLE_LABEL[role].toLowerCase()}s needed a change.${note}` : `All ${ROLE_LABEL[role].toLowerCase()}s already use it.${note}`);
 }

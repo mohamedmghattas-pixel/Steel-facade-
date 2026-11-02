@@ -154,13 +154,15 @@ export function defaultWireframeSettings(): WireframeCheckSettings {
   return {
     junctionTolerance: 10,
     maxExtension: 50,
-    splitMullions: true,
+    // Mullions stay continuous: a transom end on a mullion is a through-node (D41).
+    splitMullions: false,
     minLength: 20,
     nearMiss: 100,
     reclassify: false,
     isolated: 'construction',
     bracketMaxLength: 600,
     stackJointGap: { min: 10, max: 60 },
+    stackJointSize: 30,
     orient: true,
     keepRotation: false,
     foldNormal: 'bisector',

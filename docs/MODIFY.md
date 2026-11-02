@@ -421,3 +421,4 @@ Two single helpers in `modify.ts` are the place for stored directions (a surface
   - The joint clears the transom and the connection parts at that junction, not the splice that Auto-connect adds afterwards: give a clearance (about 100 mm with the default sleeve) where the checks report the hole spacing.
   - Run Auto-connect before the split so the joints also clear the cleats; without connections only the transom sections are cleared.
   - Lengths are measured on the wire line plus extensions, not the derived cut length (connection trims only shorten it).
+  - Brackets that Auto-connect placed with an offset from a member end node (structure brackets, level brackets on the piece across a level) stay on the piece at that node; when the split puts the bracket's position on another piece, delete them and run Auto-connect again.

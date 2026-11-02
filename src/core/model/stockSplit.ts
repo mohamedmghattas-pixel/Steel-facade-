@@ -345,9 +345,10 @@ function centreJoints(p: Project, member: Id, node: Id): Id[] {
 /** Through-nodes of each wire, with the transoms / rails ending (or passing) there, sorted by station from the lower end. */
 function throughNodes(p: Project, wires: Wire[]): { node: Id; s: number; transoms: Id[] }[][] {
   const out = wires.map(() => [] as { node: Id; s: number; transoms: Id[] }[]);
+  // Cells of a few metres: long members span many cells, each node looks at the members near it only.
   let total = 0;
   for (const w of wires) total += w.L;
-  const cs = Math.max(total / wires.length, 100);
+  const cs = Math.min(2000, Math.max(total / wires.length, 100));
   const grid = new Map<number, number[]>();
   const tmp: number[] = [];
   wires.forEach((w, i) => {

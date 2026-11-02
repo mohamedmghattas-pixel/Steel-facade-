@@ -189,10 +189,11 @@ function planDivision(p: Project, o: JunctionOptions): DivisionPlan {
   }
   const connAt = new Set(Object.values(p.connections).map((c) => c.node));
 
-  // Grid of the mullion capsules.
+  // Grid of the mullion capsules; cells about the mean member length (long mullions span many cells).
   let total = 0;
   for (const s of mains) total += s.L;
-  const cs = Math.max(total / mains.length, 4 * tol, 100);
+  for (const s of secs) total += s.L;
+  const cs = Math.min(5000, Math.max(total / (mains.length + secs.length), 4 * tol, 100));
   const grid = new Map<number, number[]>();
   const tmp: number[] = [];
   mains.forEach((s, i) => {

@@ -236,3 +236,32 @@ describe('profile insertion divides transoms at the mullions (one undo step)', (
     expect(a.dividedAtMullions).toBe(1);
   });
 });
+
+describe('performance', () => {
+  it('divides a 21,000-member facade in well under the check time (grid broad phase)', () => {
+    const p = createProject('Large');
+    const keys = new Map<string, Id>();
+    const node = (q: Vec3) => {
+      const k = `${q.x},${q.y},${q.z}`;
+      let id = keys.get(k);
+      if (!id) {
+        id = newId('n');
+        p.nodes[id] = { id, p: q };
+        keys.set(k, id);
+      }
+      return id;
+    };
+    const line = (a: Vec3, b: Vec3, role: 'mullion' | 'transom') => {
+      const id = newId('m');
+      p.members[id] = { ...memberDefaults(p), role, id, start: node(a), end: node(b) };
+    };
+    for (let k = 0; k <= 150; k++) line(v3(k * 1500, 0, 0), v3(k * 1500, 0, 168000), 'mullion');
+    for (let j = 1; j <= 140; j++) for (let k = 0; k < 150; k++) line(v3(k * 1500 + 12, 0.5, j * 1200 - 600), v3((k + 1) * 1500 - 12, 0.5, j * 1200 - 600), 'transom');
+    const t0 = performance.now();
+    const r = divideAtMullions(p);
+    const ms = performance.now() - t0;
+    expect(r.snapped).toBe(42000);
+    expect(byRole(p, 'mullion')).toHaveLength(151);
+    expect(ms).toBeLessThan(5000);
+  });
+});

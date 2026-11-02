@@ -16,9 +16,15 @@
  * face). Bend lines act as straight lines across the whole plate: bends may follow
  * each other in a chain or fold separate flanges (with corner reliefs), but must
  * not cross inside the plate.
+ *
+ * The same method develops folded (cold-formed) open sections into flat strips
+ * (`profileStrip`: lipped C and Z, cold-formed L and U, POLY thin-wall outlines with
+ * a sheet thickness) and gives the formed shape of a bent plate across its bends
+ * (`formedProfile`), for the flat patterns on part drawings and in the DXF.
  */
 import type { PlateBend, Vec2, Vec3 } from '../model/types';
 import { add, clipHalfPlane, cross, normalize, polygonArea, rotateAbout, scale, sub, v3, type Frame } from '../model/geometry';
+import { polyOutline, type PolyShape, type Shape } from '../library/shapes';
 
 export const DEFAULT_K_FACTOR = 0.33;
 const DEG = Math.PI / 180;
@@ -325,3 +331,342 @@ export function plateToWorld(world: Frame, p: Vec3): Vec3 {
   return add(world.origin, add(add(scale(world.x, p.x), scale(world.y, p.y)), scale(world.z, p.z)));
 }
 
+
+// ---------------------------------------------------------------------------
+// Folded (cold-formed) open sections: the developed strip
+
+/** A bend line of a developed strip. */
+export interface StripLine {
+  /** Position across the strip from its first edge (developed), mm. */
+  s: number;
+  /** Signed bend angle (+ = UP, towards the viewer of the strip), degrees. */
+  angle: number;
+  /** Inner radius and bend allowance, mm. */
+  radius: number;
+  ba: number;
+}
+
+/** The developed (flat) strip of a folded open section. */
+export interface FlatStrip {
+  /** Developed width across the bend lines. */
+  width: number;
+  /** Sheet thickness and K-factor. */
+  t: number;
+  k: number;
+  bends: StripLine[];
+  /** Outside leg dimensions of the formed section, first edge to last (parametric sections; empty for POLY). */
+  legs: number[];
+  source: 'C' | 'Z' | 'L' | 'U' | 'POLY';
+}
+
+/**
+ * The developed strip of a folded (cold-formed) open section, or null for other
+ * sections: lipped C and Z, L and U with an outer corner radius `ro`
+ * (cold-formed), POLY open outlines with a sheet thickness `t`. The strip runs
+ * along the member; the bend lines run along its length. Seen from the inside of
+ * the first bend (bend 1 UP). Same method as the bent plates: outside legs, bend
+ * deductions with the K-factor.
+ */
+export function profileStrip(shape: Shape | undefined, k = DEFAULT_K_FACTOR): FlatStrip | null {
+  if (!shape) return null;
+  let legs: number[];
+  let signs: number[];
+  let t: number;
+  let r: number;
+  const source = shape.type;
+  switch (shape.type) {
+    case 'C':
+    case 'Z': {
+      t = shape.t;
+      r = shape.r ?? 0;
+      const lips = shape.c > t + 1e-6;
+      legs = lips ? [shape.c, shape.b, shape.h, shape.b, shape.c] : [shape.b, shape.h, shape.b];
+      signs = shape.type === 'C' ? legs.slice(1).map(() => 1) : lips ? [1, 1, -1, -1] : [1, -1];
+      break;
+    }
+    case 'L':
+      if (!(shape.ro && shape.ro > 0)) return null;
+      t = shape.t;
+      r = shape.r;
+      legs = [shape.h, shape.b];
+      signs = [1];
+      break;
+    case 'U':
+      if (!(shape.ro && shape.ro > 0) || Math.abs(shape.tw - shape.tf) > 0.01) return null;
+      t = shape.tw;
+      r = shape.r;
+      legs = [shape.b, shape.h, shape.b];
+      signs = [1, 1];
+      break;
+    case 'POLY':
+      return polyStrip(shape, k);
+    default:
+      return null;
+  }
+  if (!(t > 0)) return null;
+  const bends: StripBend[] = signs.map((sg) => ({ angle: 90 * sg, radius: Math.max(0, r) }));
+  try {
+    const flat = stripFlatPattern(legs, bends, 1, t, k);
+    return {
+      width: flat.length,
+      t,
+      k,
+      bends: flat.bends.map((b, i) => ({ s: b.a.x, angle: bends[i].angle, radius: bends[i].radius, ba: bendAllowance(bends[i].angle, bends[i].radius, t, k) })),
+      legs,
+      source: source as FlatStrip['source'],
+    };
+  } catch {
+    return null;
+  }
+}
+
+const dist2 = (a: Vec2, b: Vec2) => Math.hypot(b.x - a.x, b.y - a.y);
+
+/** Nearest point on a polyline. */
+function nearestOn(poly: Vec2[], q: Vec2): Vec2 {
+  let best = poly[0];
+  let bd = Infinity;
+  for (let i = 0; i + 1 < poly.length; i++) {
+    const a = poly[i];
+    const b = poly[i + 1];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const l2 = dx * dx + dy * dy;
+    const u = l2 > 1e-12 ? Math.max(0, Math.min(1, ((q.x - a.x) * dx + (q.y - a.y) * dy) / l2)) : 0;
+    const c = { x: a.x + dx * u, y: a.y + dy * u };
+    const d = dist2(c, q);
+    if (d < bd) {
+      bd = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+/**
+ * The developed strip of a POLY open thin-wall outline with sheet thickness t:
+ * the two end caps (edges about t long that split the outline into two sides of
+ * nearly equal length), the mid-line between the sides, its bends (turning of the
+ * mid-line, arcs grouped) and the developed width (mid-line length less the shift
+ * of the neutral fibre from mid-thickness to K·t at each bend).
+ */
+function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
+  const t = shape.t ?? 0;
+  if (!(t > 0) || shape.holes?.length) return null;
+  const pts = polyOutline(shape, 1).outer;
+  const n = pts.length;
+  if (n < 4) return null;
+  const len = (i: number) => dist2(pts[i], pts[(i + 1) % n]);
+  const cum: number[] = [];
+  let P = 0;
+  for (let i = 0; i < n; i++) {
+    cum.push(P);
+    P += len(i);
+  }
+  const caps: number[] = [];
+  for (let i = 0; i < n; i++) if (Math.abs(len(i) - t) <= 0.2 * t) caps.push(i);
+  if (caps.length < 2 || caps.length > 80) return null;
+  let pick: { i: number; j: number; ratio: number; min: number } | null = null;
+  for (let a = 0; a < caps.length; a++)
+    for (let b = a + 1; b < caps.length; b++) {
+      const i = caps[a];
+      const j = caps[b];
+      const la = cum[j] - cum[i] - len(i);
+      const lb = P - la - len(i) - len(j);
+      const min = Math.min(la, lb);
+      const ratio = min / Math.max(la, lb, 1e-9);
+      if (min < 2 * t || ratio < 0.7) continue;
+      if (!pick || ratio > pick.ratio + 1e-9 || (Math.abs(ratio - pick.ratio) <= 1e-9 && min > pick.min)) pick = { i, j, ratio, min };
+    }
+  if (!pick) return null;
+  const { i, j } = pick;
+  const A: Vec2[] = [];
+  for (let q = i + 1; q <= j; q++) A.push(pts[q % n]);
+  const B: Vec2[] = [];
+  for (let q = j + 1; q <= i + n; q++) B.push(pts[q % n]);
+  B.reverse();
+  const mid = (a: Vec2, b: Vec2) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const M: Vec2[] = [mid(pts[i], pts[(i + 1) % n])];
+  for (const a of A) {
+    const m = mid(a, nearestOn(B, a));
+    if (dist2(M[M.length - 1], m) > 0.01) M.push(m);
+  }
+  const end = mid(pts[j], pts[(j + 1) % n]);
+  if (dist2(M[M.length - 1], end) > 0.01) M.push(end);
+  if (M.length < 2) return null;
+  const s: number[] = [0];
+  for (let q = 1; q < M.length; q++) s.push(s[q - 1] + dist2(M[q - 1], M[q]));
+  const Lmid = s[s.length - 1];
+  const area = Math.abs(polygonArea(pts));
+  if (Math.abs(area / t - Lmid) > 0.15 * Lmid) return null;
+  // Bends: turning of the mid-line, consecutive turning vertices (an arc) grouped.
+  type G = { theta: number; s0: number; s1: number; n: number };
+  const groups: G[] = [];
+  let cur: G | null = null;
+  for (let q = 1; q + 1 < M.length; q++) {
+    const ax = M[q].x - M[q - 1].x;
+    const ay = M[q].y - M[q - 1].y;
+    const bx = M[q + 1].x - M[q].x;
+    const by = M[q + 1].y - M[q].y;
+    const tau = Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
+    if (Math.abs(tau) < 0.3 * DEG) continue;
+    if (cur && s[q] - cur.s1 <= Math.max(1.5 * t, 2) && Math.sign(tau) === Math.sign(cur.theta)) {
+      cur.theta += tau;
+      cur.s1 = s[q];
+      cur.n++;
+    } else {
+      if (cur) groups.push(cur);
+      cur = { theta: tau, s0: s[q], s1: s[q], n: 1 };
+    }
+  }
+  if (cur) groups.push(cur);
+  const bendsG = groups.filter((g) => Math.abs(g.theta) >= 2 * DEG);
+  if (!bendsG.length) return null;
+  const shift = (g: G) => Math.abs(g.theta) * (0.5 - k) * t;
+  // Seen from the inside of the first bend: bend 1 UP.
+  const sign = Math.sign(bendsG[0].theta) || 1;
+  let before = 0;
+  const bends: StripLine[] = bendsG.map((g) => {
+    const rMid = g.n > 1 ? ((g.s1 - g.s0) * g.n) / ((g.n - 1) * Math.abs(g.theta)) : 0;
+    const radius = Math.max(0, rMid - t / 2);
+    const sc = (g.s0 + g.s1) / 2 - before - shift(g) / 2;
+    before += shift(g);
+    return { s: sc, angle: (g.theta / DEG) * sign, radius, ba: bendAllowance(g.theta / DEG, radius, t, k) };
+  });
+  return { width: Lmid - before, t, k, bends, legs: [], source: 'POLY' };
+}
+
+// ---------------------------------------------------------------------------
+// Bent plates: the formed shape across the bends
+
+/** Direction of a bend line and its in-plane normal, unit vectors (outline coordinates). */
+export function bendAxes(b: PlateBend): { e: Vec2; nu: Vec2; l: number } {
+  const dx = b.b.x - b.a.x;
+  const dy = b.b.y - b.a.y;
+  const l = Math.hypot(dx, dy) || 1;
+  return { e: { x: dx / l, y: dy / l }, nu: { x: -dy / l, y: dx / l }, l };
+}
+
+/** The formed shape of a bent plate seen along its (parallel) bend lines. */
+export interface FormedProfile {
+  /** The plate's section (both faces with their bend arcs), closed; x across the bends, y = plate z (UP = +y). */
+  outline: Vec2[];
+  /** Tangent lines at the ends of every bend arc, across the thickness. */
+  tangents: [Vec2, Vec2][];
+  /** Outside leg dimensions: between the virtual sharps of the outer mould lines (the free ends at the edges). */
+  legs: { a: Vec2; b: Vec2; length: number; dir: Vec2 }[];
+  /** Virtual sharp, signed angle and inner radius of every bend shown. */
+  bends: { at: Vec2; angle: number; radius: number }[];
+  /** Bends not parallel to the first (not in this view). */
+  skipped: number;
+  /** Direction across the bends in the flat pattern (the view's x). */
+  nu: Vec2;
+}
+
+/** Intersection of two 2D lines p + s·d and q + t·e. */
+function meet2(p: Vec2, d: Vec2, q: Vec2, e: Vec2): Vec2 | null {
+  const den = d.x * e.y - d.y * e.x;
+  if (Math.abs(den) < 1e-9) return null;
+  const s = ((q.x - p.x) * e.y - (q.y - p.y) * e.x) / den;
+  return { x: p.x + d.x * s, y: p.y + d.y * s };
+}
+
+/**
+ * The formed shape of a bent plate across its bends: the pieces between the bend
+ * zones keep their flat widths, each bend zone (width BA) is wrapped on its inner
+ * radius (the +z face is inside for UP bends), as `foldPlate` folds it. The legs
+ * are the outside dimensions to the outer mould lines (what `stripFlatPattern`
+ * takes). Null when the plate has no bends or its bend zones overlap.
+ */
+export function formedProfile(outline: Vec2[], bends: PlateBend[], t: number, k = DEFAULT_K_FACTOR): FormedProfile | null {
+  const valid = bends.filter((b) => Math.hypot(b.b.x - b.a.x, b.b.y - b.a.y) > 1e-6 && Math.abs(b.angle) > 1e-6);
+  if (!valid.length || !outline.length) return null;
+  const e = bendAxes(valid[0]).e;
+  let nu = bendAxes(valid[0]).nu;
+  // Across the bends from left to right (+x, else +y) in the flat pattern.
+  if (nu.x < -1e-9 || (Math.abs(nu.x) <= 1e-9 && nu.y < 0)) nu = { x: -nu.x, y: -nu.y };
+  const par = valid.filter((b) => {
+    const eb = bendAxes(b).e;
+    return Math.abs(eb.x * e.y - eb.y * e.x) < 1e-3;
+  });
+  const sOf = (q: Vec2) => q.x * nu.x + q.y * nu.y;
+  const sMin = Math.min(...outline.map(sOf));
+  const sMax = Math.max(...outline.map(sOf));
+  const list = par.map((b) => ({ s: sOf(b.a), angle: b.angle, r: Math.max(0, b.radius), ba: bendAllowance(b.angle, b.radius, t, k) })).sort((a, b) => a.s - b.s);
+  // Flat widths of the pieces between the bend zones.
+  const flats: number[] = [];
+  let prev = sMin;
+  for (const b of list) {
+    flats.push(b.s - b.ba / 2 - prev);
+    prev = b.s + b.ba / 2;
+  }
+  flats.push(sMax - prev);
+  if (flats.some((f) => f < -0.5)) return null;
+  // Turtle along the bottom (z = 0) face: heading h, m towards +z (the UP side).
+  let P = { x: 0, y: 0 };
+  let h = { x: 1, y: 0 };
+  let m = { x: 0, y: 1 };
+  const bottom: Vec2[] = [{ ...P }];
+  const top: Vec2[] = [{ x: P.x + m.x * t, y: P.y + m.y * t }];
+  const tangents: [Vec2, Vec2][] = [];
+  const pieces: { p0: Vec2; p1: Vec2; h: Vec2; m: Vec2 }[] = [];
+  const push = (q: Vec2, mm: Vec2) => {
+    bottom.push({ ...q });
+    top.push({ x: q.x + mm.x * t, y: q.y + mm.y * t });
+  };
+  for (let i = 0; i < flats.length; i++) {
+    const p0 = { ...P };
+    P = { x: P.x + h.x * Math.max(0, flats[i]), y: P.y + h.y * Math.max(0, flats[i]) };
+    push(P, m);
+    pieces.push({ p0, p1: { ...P }, h: { ...h }, m: { ...m } });
+    const b = list[i];
+    if (!b) break;
+    const th = b.angle * DEG;
+    const sg = th >= 0 ? 1 : -1;
+    // Bottom-face radius: outside (Ri + t) for UP, inside (Ri) for DOWN; the arc centre on the inside.
+    const R0 = th >= 0 ? b.r + t : b.r;
+    const C = { x: P.x + sg * m.x * R0, y: P.y + sg * m.y * R0 };
+    tangents.push([{ ...P }, { x: P.x + m.x * t, y: P.y + m.y * t }]);
+    const N = Math.max(4, Math.ceil(Math.abs(b.angle) / 7.5));
+    const h0 = h;
+    const m0 = m;
+    for (let j = 1; j <= N; j++) {
+      const f = (th * j) / N;
+      const mf = { x: -h0.x * Math.sin(f) + m0.x * Math.cos(f), y: -h0.y * Math.sin(f) + m0.y * Math.cos(f) };
+      const q = { x: C.x - sg * mf.x * R0, y: C.y - sg * mf.y * R0 };
+      push(q, mf);
+      if (j === N) {
+        P = q;
+        m = mf;
+      }
+    }
+    h = { x: h0.x * Math.cos(th) + m0.x * Math.sin(th), y: h0.y * Math.cos(th) + m0.y * Math.sin(th) };
+    tangents.push([{ ...P }, { x: P.x + m.x * t, y: P.y + m.y * t }]);
+  }
+  // Outer mould lines: at an UP bend the bottom face is outside, at a DOWN bend the top face.
+  const face = (pc: (typeof pieces)[number], onTop: boolean) => ({ p: onTop ? { x: pc.p0.x + pc.m.x * t, y: pc.p0.y + pc.m.y * t } : pc.p0, d: pc.h });
+  const sharps: Vec2[] = list.map((b, i) => {
+    const up = b.angle >= 0;
+    const a = face(pieces[i], !up);
+    const c = face(pieces[i + 1], !up);
+    return meet2(a.p, a.d, c.p, c.d) ?? pieces[i].p1;
+  });
+  const legs = pieces.map((pc, i) => {
+    const startTop = i > 0 ? list[i - 1].angle < 0 : list[0] ? list[0].angle < 0 : false;
+    const endTop = i < list.length ? list[i].angle < 0 : startTop;
+    const off = (q: Vec2, onTop: boolean) => (onTop ? { x: q.x + pc.m.x * t, y: q.y + pc.m.y * t } : q);
+    const a = i > 0 ? sharps[i - 1] : off(pc.p0, endTop);
+    const b = i < list.length ? sharps[i] : off(pc.p1, startTop);
+    // Along the leg (the virtual sharps of a leg between an UP and a DOWN bend lie on opposite faces).
+    const length = (b.x - a.x) * pc.h.x + (b.y - a.y) * pc.h.y;
+    return { a, b, length, dir: pc.h };
+  });
+  return {
+    outline: [...bottom, ...top.reverse()],
+    tangents,
+    legs,
+    bends: list.map((b, i) => ({ at: sharps[i], angle: b.angle, radius: b.r })),
+    skipped: valid.length - par.length,
+    nu,
+  };
+}

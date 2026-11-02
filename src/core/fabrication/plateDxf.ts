@@ -20,6 +20,7 @@ import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
 import type { PlateGroup, PlateSheetResult } from '../optimize/plateNesting';
 import { toCsv, type Row } from '../reports/bom';
 import { fabSettings } from './settings';
+import { profileStrip } from '../geometry/bentPlate';
 
 export const CNC_LAYERS = {
   outline: 'OUTLINE',
@@ -242,39 +243,112 @@ export function exportNestedSheets(p: Project, dm: DerivedModel, groups: PlateGr
   return files;
 }
 
+/** Layer of bend lines in the flat-patterns DXF (long-dash dotted; never cut). */
+export const BEND_LAYER = { name: 'BEND', color: 2, linetype: 'CENTER' } as const;
+
+/** A flat pattern in the flat-patterns DXF: the blank, its bend lines and its label. */
+interface FlatItem {
+  fp: FlatPlate;
+  bends: { a: Vec2; b: Vec2; note: string }[];
+  label: string;
+}
+
+const bendNote = (angle: number, r: number) => `${angle >= 0 ? 'UP' : 'DOWN'} ${Math.round(Math.abs(angle) * 10) / 10} R${Math.round(r * 10) / 10}`;
+
+/** Bend lines of a bent plate in its flat-pattern coordinates (bounding box at 0, 0). */
+function plateBendLines(part: Part): FlatItem['bends'] {
+  const src = part.outline ?? [];
+  if (!part.bends?.length || !src.length) return [];
+  const bb = bbox2(src);
+  return part.bends.map((b) => ({ a: { x: b.a.x - bb.minX, y: b.a.y - bb.minY }, b: { x: b.b.x - bb.minX, y: b.b.y - bb.minY }, note: bendNote(b.angle, b.radius) }));
+}
+
+/**
+ * The developed strip of a folded (cold-formed) linear part: the blank W × L (x along
+ * the part, y across the developed width) with its bend lines along the length.
+ */
+function stripItem(part: Part, qty: number): FlatItem | null {
+  const st = part.shape ? profileStrip(part.shape) : null;
+  if (!st) return null;
+  const L = part.length;
+  const W = st.width;
+  const fp: FlatPlate = {
+    mark: part.mark,
+    outline: [
+      { x: 0, y: 0 },
+      { x: L, y: 0 },
+      { x: L, y: W },
+      { x: 0, y: W },
+    ],
+    holes: [],
+    w: L,
+    h: W,
+    t: st.t,
+    material: part.material,
+  };
+  return {
+    fp,
+    bends: st.bends.map((b) => ({ a: { x: 0, y: b.s }, b: { x: L, y: b.s }, note: bendNote(b.angle, b.radius) })),
+    label: `${part.mark}  ${part.profile} t${st.t} ${part.material}  x${qty}  ${Math.round(W)}x${Math.round(L)} developed`,
+  };
+}
+
 /**
  * Every unique plate's flat pattern in one DXF, laid out in rows (largest first,
  * 50 mm apart) with a label under each plate on the SHEET layer: mark,
- * thickness, material and quantity. For checking and quoting; cutting uses the
- * per-part or nested files.
+ * thickness, material and quantity. Bent plates carry their bend lines (layer
+ * BEND, with "UP 90 R5" notes on SHEET); folded (cold-formed) profile parts follow
+ * as developed strips (width × length) with their bend lines along the length.
+ * For checking and quoting; cutting uses the per-part or nested files.
  */
 export function flatPatternsDxf(p: Project, dm: DerivedModel, override: Partial<PlateDxfOptions> = {}): string | null {
   const opts = plateDxfOptions(p, override);
-  const plates = uniqueParts(dm)
+  const uniq = uniqueParts(dm);
+  const plates: (FlatItem & { qty: number })[] = uniq
     .filter(({ part }) => part.kind === 'plate' && part.outline?.length)
-    .map(({ part, qty }) => ({ fp: flatPlate(part), qty }))
+    .map(({ part, qty }) => {
+      const fp = flatPlate(part);
+      return { fp, qty, bends: plateBendLines(part), label: `${fp.mark}  PL${fp.t} ${fp.material}  x${qty}  ${Math.round(fp.w)}x${Math.round(fp.h)}` };
+    })
     .sort((a, b) => b.fp.h - a.fp.h || a.fp.mark.localeCompare(b.fp.mark));
-  if (!plates.length) return null;
+  const strips = uniq
+    .map(({ part, qty }) => (part.kind !== 'plate' ? stripItem(part, qty) : null))
+    .filter((x): x is FlatItem => !!x)
+    .sort((a, b) => b.fp.h - a.fp.h || a.fp.mark.localeCompare(b.fp.mark));
+  const items: FlatItem[] = [...plates, ...strips];
+  if (!items.length) return null;
   const gap = 50;
   const label = Math.max(5, opts.markHeight);
-  const area = plates.reduce((s, x) => s + (x.fp.w + gap) * (x.fp.h + gap + 2 * label), 0);
-  const rowWidth = Math.max(Math.sqrt(area) * 1.6, ...plates.map((x) => x.fp.w));
+  const area = items.reduce((s, x) => s + (x.fp.w + gap) * (x.fp.h + gap + 2 * label), 0);
+  const rowWidth = Math.max(Math.sqrt(area) * 1.6, ...items.map((x) => x.fp.w));
   const w = new DxfWriter(LAYERS);
+  // Bend lines only when there are any (files without bends keep their layer table).
+  if (items.some((it) => it.bends.length)) w.addLayer({ ...BEND_LAYER });
   let x = 0;
   let y = 0;
   let rowH = 0;
-  for (const { fp, qty } of plates) {
+  for (const it of items) {
+    const { fp } = it;
     if (x > 0 && x + fp.w > rowWidth) {
       x = 0;
       y -= rowH + gap + 2 * label;
       rowH = 0;
     }
     const top = y - fp.h;
-    writePlate(w, fp, { dx: x, dy: top, rot: 0, h: fp.h }, opts);
-    w.text(x, top - label * 1.6, label, `${fp.mark}  PL${fp.t} ${fp.material}  x${qty}  ${Math.round(fp.w)}x${Math.round(fp.h)}`, { layer: CNC_LAYERS.sheet });
+    const place: Place = { dx: x, dy: top, rot: 0, h: fp.h };
+    writePlate(w, fp, place, opts);
+    for (const b of it.bends) {
+      const a = tf(place, b.a);
+      const c = tf(place, b.b);
+      w.line(a.x, a.y, c.x, c.y, BEND_LAYER.name);
+      const along = Math.abs(c.x - a.x) >= Math.abs(c.y - a.y);
+      const nh = Math.max(2.5, label * 0.5);
+      w.text(along ? Math.min(a.x, c.x) + nh : a.x + nh * 0.4, along ? a.y + nh * 0.4 : Math.min(a.y, c.y) + nh, nh, b.note, { layer: CNC_LAYERS.sheet, rot: along ? undefined : 90 });
+    }
+    w.text(x, top - label * 1.6, label, it.label, { layer: CNC_LAYERS.sheet });
     x += fp.w + gap;
     rowH = Math.max(rowH, fp.h);
   }
-  w.text(0, gap, label * 1.4, `${p.info.number || p.info.name} flat patterns - ${plates.length} plate marks`, { layer: CNC_LAYERS.sheet });
+  w.text(0, gap, label * 1.4, `${p.info.number || p.info.name} flat patterns - ${plates.length} plate marks${strips.length ? `, ${strips.length} folded profile marks` : ''}`, { layer: CNC_LAYERS.sheet });
   return w.toString();
 }

@@ -67,7 +67,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
      - **Apply** puts a connection type, preset or custom template on every relevant end of the selected members.
      - **Presets** save a parameter set.
      - Editing a parameter changes every selected connection of that type.
-     - **Auto-connect** places connections by rule.
+     - **Auto-connect** places connections by member role and joint topology, on vertical, sloped and folded facades alike: transom-to-mullion cleats in the facade plane, fin plates at folds, sleeve splices at stack joints, brackets where a structure (IFC / .3dm) is loaded. A preview lists and marks in 3D what each rule places before anything changes. See [docs/CONNECTIONS.md](docs/CONNECTIONS.md#auto-connect).
 5. **Assemblies.** Parts shop-welded together form an assembly automatically. You can also group members, plates and connections into a shipping assembly by hand (a mullion with its transoms, a pre-assembled bracket): *Create assembly / Add to / Remove from / Explode / Set main part* in the right-click menu, Properties and Outputs → *Assemblies*. Grouped members joined by a bolted joint stay bolted; the joint is made in the shop.
    - **Part / Assembly selection** (toolbar or `A`; Alt+click in Part mode) selects whole assemblies, highlighted in pink; **Isolate** (`I`) shows only them.
    - **3D ↔ drawings:** right-click a part → *Open part drawing*, *Open assembly drawing*, *Show on GA / erection sheet* (the zone sheet that shows it, mark highlighted). In the Drawings tab, *Show in 3D* selects and zooms to the sheet's parts (*1 of N* steps through instances); clicking a mark, balloon, list row or part outline selects it in 3D, double-clicking a mark opens its drawing. See [docs/ASSEMBLIES.md](docs/ASSEMBLIES.md).
@@ -77,6 +77,7 @@ You can also download the repository as a ZIP (GitHub → Code → Download ZIP)
    - Cut optimisation for bars (1D) and plates (2D nesting)
    - A numbered drawing set (PDF / DXF) to ISO drawing standards: drawing register, GA, assembly and part drawings with revision tables, cross-references, hole tables and machining steps. See [docs/DRAWING_STANDARDS.md](docs/DRAWING_STANDARDS.md).
      - **Sheet layout:** one layout engine places every view, table, legend and note clear of each other and of the title block; long tables continue on sheet 2/N of the same drawing, and a layout check (overlaps, frame, lettering heights, overlapping marks) runs on every sheet, with warnings in the Drawings tab.
+     - **Drawings on demand:** the drawing index (register) is measured without drawing, and each sheet is made when it is viewed or exported, then cached; an edit makes again only the sheets it touched. The Drawings tab opens in seconds on 24,000-member models.
      - **Large facades:** GA elevations and plans and erection sequences that are not legible on one sheet are divided into zones at a legible ISO scale — at grid lines, else member lines — one sheet per zone with a key plan, match lines (*SEE DRAWING …*) and only that zone's assemblies. Inclined or folded (V-shaped) facades are drawn normal to each facade plane in true shape. Marks are placed without overlapping (leaders where needed). Settings under *Drawing settings → Large facades — zones*; A1 is suggested for big facades.
    - DSTV NC1 files for CNC
    - Checks (warnings, clashing bolt holes, unassigned lines)
@@ -90,7 +91,7 @@ Keys:
 - `O` ortho, `F` fit
 - `A` Part / Assembly selection mode, `I` isolate the selected assemblies
 - `1`–`4` views
-- `Del` delete, `Esc` cancel
+- `Del` delete, `Esc` cancel (also closes open menus)
 - `Ctrl+Z` / `Ctrl+Y` undo / redo
 
 ## DXF import

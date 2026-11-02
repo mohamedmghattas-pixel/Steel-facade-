@@ -596,3 +596,29 @@ describe('composite members in the drawings on demand', () => {
     expect(lazy.scale).toBe(asmSheet!.scale);
   });
 });
+
+describe('assembly drawing balloons', () => {
+  it('space balloons by their size: long marks never overlap, short marks keep the 11 mm pitch', async () => {
+    const { balloonPlacement } = await import('../src/core/drawings/assemblyDrawing');
+    const overlap = (bs: { x: number; y: number; r: number }[]) => {
+      for (let i = 0; i < bs.length; i++)
+        for (let j = i + 1; j < bs.length; j++) if (Math.hypot(bs[i].x - bs[j].x, bs[i].y - bs[j].y) < bs[i].r + bs[j].r) return [i, j];
+      return null;
+    };
+    // The composite mullion case: long marks on parts close together.
+    const marks = ['m232', 'm614', 'm41', 'm805', 'm423', 'm1000'];
+    const items = marks.map((mark, i) => ({ mark, at: { x: 150 + i * 3, y: 0 } }));
+    const row = balloonPlacement(items, 30, 100, 260);
+    expect(overlap(row)).toBeNull();
+    expect(new Set(row.map((b) => b.y)).size).toBe(1);
+    // Pushed back from the right end, still clear.
+    const end = balloonPlacement(Array.from({ length: 12 }, (_, i) => ({ mark: `m${1000 + i}`, at: { x: 250 + i, y: 0 } })), 30, 100, 260);
+    expect(overlap(end)).toBeNull();
+    expect(Math.max(...end.map((b) => b.x))).toBeLessThanOrEqual(260);
+    // Short marks: the usual 11 mm pitch (drawings issued before keep their fingerprint).
+    const short = balloonPlacement(['p1', 'p2', 'p3'].map((mark) => ({ mark, at: { x: 120, y: 0 } })), 30, 100, 260);
+    expect(short.map((b) => b.x)).toEqual([120, 131, 142]);
+    // Duplicate marks get one balloon.
+    expect(balloonPlacement([...items, ...items], 30, 100, 260)).toHaveLength(marks.length);
+  });
+});

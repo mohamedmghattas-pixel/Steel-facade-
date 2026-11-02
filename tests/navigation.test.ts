@@ -27,6 +27,7 @@ import { createAssembly } from '../src/core/model/assemblies';
 import type { Project } from '../src/core/model/types';
 import { sampleProject } from '../src/core/sample';
 import baseline from './fixtures/sample-drawing-fingerprints.json';
+import { fingerprint } from '../src/core/drawings/register';
 
 /** 60 m × 14 m facade with grids every 6 m: divided into zones on A3. */
 function zonedFacade(): Project {
@@ -123,8 +124,14 @@ describe('navigation tags', () => {
   const by = (id: string) => ds.find((d) => d.id === id)!;
 
   it('are data only: the sample keeps its fingerprints', () => {
-    const ref = (baseline as unknown as Record<string, Record<string, { fp: string }>>).sampleProject;
-    for (const d of ds) if (d.id !== 'ga-plan') expect(d.fingerprint, d.number).toBe(ref[d.number].fp);
+    const ref = (baseline as unknown as Record<string, Record<string, { fp: string; noBalloons?: string }>>).sampleProject;
+    for (const d of ds) {
+      if (d.id === 'ga-plan') continue;
+      const r = ref[d.number];
+      // Sheets whose balloons were respaced (drawingsLayout.test.ts) compare without them.
+      if (r.noBalloons) expect(fingerprint(d.entities.filter((e) => !e.id?.startsWith('balloon:'))), d.number).toBe(r.noBalloons);
+      else expect(d.fingerprint, d.number).toBe(r.fp);
+    }
   });
 
   it('mark every assembly on the GA with its instance', () => {

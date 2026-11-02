@@ -78,3 +78,50 @@ describe('drawing sets', () => {
     expect(drawingSet(q, derived(q))).toBe(b);
   });
 });
+
+describe('3D outline of polygon profiles', async () => {
+  const { simplifyRing, viewOutline, VIEW_TOL, COARSE_TOL } = await import('../src/viewer/meshes');
+  // A gasket-like ring: a 40 x 6 mm rounded slot traced with 2,000 points.
+  const ring = Array.from({ length: 2000 }, (_, i) => {
+    const t = (i / 2000) * Math.PI * 2;
+    return { x: 20 * Math.cos(t) + 0.002 * Math.sin(37 * t), y: 3 * Math.sin(t) };
+  });
+  const dist = (p: { x: number; y: number }, r: { x: number; y: number }[]) => {
+    let best = Infinity;
+    for (let i = 0; i < r.length; i++) {
+      const a = r[i];
+      const b = r[(i + 1) % r.length];
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+      best = Math.min(best, Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy));
+    }
+    return best;
+  };
+
+  it('keeps every point within the tolerance with far fewer points', () => {
+    for (const tol of [VIEW_TOL, COARSE_TOL]) {
+      const s = simplifyRing(ring, tol);
+      expect(s.length).toBeLessThan(ring.length / 5);
+      expect(s.length).toBeGreaterThan(8);
+      for (let i = 0; i < ring.length; i += 7) expect(dist(ring[i], s)).toBeLessThanOrEqual(tol + 1e-9);
+    }
+  });
+
+  it('leaves short rings and standard profiles alone', () => {
+    const square = [
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+      { x: 0, y: 1 },
+    ];
+    expect(simplifyRing(square, 1)).toBe(square);
+    const rhs = viewOutline({ type: 'RHS', h: 100, b: 50, t: 4 } as never);
+    expect(rhs.outer.length).toBeGreaterThan(4);
+  });
+
+  it('simplifies the rings of a POLY profile', () => {
+    const o = viewOutline({ type: 'POLY', outer: ring.map((p) => ({ ...p })) } as never);
+    expect(o.outer.length).toBeLessThan(400);
+  });
+});

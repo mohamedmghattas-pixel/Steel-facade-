@@ -303,9 +303,12 @@ export function dimRunning(s: Sheet, pts: Vec2[], values: number[], dir: 'h' | '
   });
 }
 
+/** Radius of an item balloon: the mark fits inside with 1 mm on each side. */
+export const balloonRadius = (label: string, h: number = TEXT.normal) => Math.max(h * 1.15, (textWidth(label, h) + 2) / 2);
+
 /** ISO 6433 item reference: balloon with the mark, leader ending in a dot on the part. */
 export function balloon(s: Sheet, on: Vec2, at: Vec2, label: string, h: number = TEXT.normal, id?: string) {
-  const r = Math.max(h * 1.15, (textWidth(label, h) + 2) / 2);
+  const r = balloonRadius(label, h);
   const d = Math.hypot(on.x - at.x, on.y - at.y) || 1;
   const edge = { x: at.x + ((on.x - at.x) / d) * r, y: at.y + ((on.y - at.y) / d) * r };
   s.withTag({ id: id ?? `balloon:${s.name}:${label}` }, () => {

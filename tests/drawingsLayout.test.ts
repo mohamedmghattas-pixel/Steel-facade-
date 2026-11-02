@@ -190,7 +190,7 @@ describe('sample drawings keep their content', () => {
         },
       ],
     ];
-    const base = baseline as unknown as Record<string, Record<string, { fp: string; noMarks: string; title: string; scale: string; size: string }>>;
+    const base = baseline as unknown as Record<string, Record<string, { fp: string; noMarks: string; noBalloons?: string; title: string; scale: string; size: string }>>;
     for (const [name, mk] of variants) {
       const p = mk();
       const ds = allDrawings(p, deriveModel(p));
@@ -202,6 +202,9 @@ describe('sample drawings keep their content', () => {
         if (d.kind === 'ga' && d.id === 'ga-plan') {
           // The plan's marks overlapped each other before; only they moved.
           expect(fingerprint(d.entities.filter((e) => !e.id?.startsWith('mark:')))).toBe(r.noMarks);
+        } else if (r.noBalloons) {
+          // Balloons of long marks overlapped before and are spaced by their size now; only they moved.
+          expect(fingerprint(d.entities.filter((e) => !e.id?.startsWith('balloon:'))), `${name} ${d.number}`).toBe(r.noBalloons);
         } else expect(d.fingerprint, `${name} ${d.number}`).toBe(r.fp);
       }
     }

@@ -32,6 +32,86 @@ function toShape(outer: Vec2[], holes: Vec2[][]): THREE.Shape {
   return s;
 }
 
+// ---------------------------------------------------------------------------
+// Outline simplification for the 3D view
+
+/** Tolerances of the 3D outline, mm: full detail, and the coarse level of very large models. */
+export const VIEW_TOL = 0.05;
+export const COARSE_TOL = 0.5;
+/** Rings with fewer points are drawn as they are. */
+const SIMPLIFY_MIN = 48;
+
+const ringArea = (r: Vec2[]) => {
+  let a = 0;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) a += (r[j].x - r[i].x) * (r[j].y + r[i].y);
+  return a / 2;
+};
+
+/** Douglas–Peucker on an open chain (end points kept). */
+function simplifyChain(pts: Vec2[], tol: number): Vec2[] {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack: [number, number][] = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop()!;
+    const A = pts[a];
+    const dx = pts[b].x - A.x;
+    const dy = pts[b].y - A.y;
+    const len = Math.hypot(dx, dy);
+    let far = -1;
+    let best = tol;
+    for (let i = a + 1; i < b; i++) {
+      const d = len > 1e-9 ? Math.abs((pts[i].x - A.x) * dy - (pts[i].y - A.y) * dx) / len : Math.hypot(pts[i].x - A.x, pts[i].y - A.y);
+      if (d > best) {
+        best = d;
+        far = i;
+      }
+    }
+    if (far >= 0) {
+      keep[far] = 1;
+      stack.push([a, far], [far, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+/**
+ * A closed ring with points closer than `tol` to the simplified outline left out
+ * (Douglas–Peucker, split at the point farthest from the first). Outlines read
+ * from DXF curves can have thousands of points (a gasket: about 2,000); the 3D
+ * view needs far fewer. The ring is kept as it is when it is short, or when the
+ * simplified ring turns the other way or changes its area by more than moving
+ * the whole boundary by `tol` could.
+ */
+export function simplifyRing(r: Vec2[], tol: number): Vec2[] {
+  if (r.length < SIMPLIFY_MIN || tol <= 0) return r;
+  let far = 0;
+  let fd = -1;
+  for (let i = 1; i < r.length; i++) {
+    const d = Math.hypot(r[i].x - r[0].x, r[i].y - r[0].y);
+    if (d > fd) {
+      fd = d;
+      far = i;
+    }
+  }
+  const out = [...simplifyChain(r.slice(0, far + 1), tol), ...simplifyChain([...r.slice(far), r[0]], tol).slice(1, -1)];
+  // Sanity check: same winding, and an area change no larger than moving the whole boundary by `tol`.
+  let perimeter = 0;
+  for (let i = 0, j = r.length - 1; i < r.length; j = i++) perimeter += Math.hypot(r[i].x - r[j].x, r[i].y - r[j].y);
+  const a0 = ringArea(r);
+  const a1 = out.length >= 3 ? ringArea(out) : 0;
+  if (out.length < 3 || Math.sign(a1) !== Math.sign(a0) || Math.abs(a1 - a0) > perimeter * tol) return r;
+  return out;
+}
+
+/** The profile outline drawn in 3D: polygon profiles (custom, DXF) simplified to `tol`. */
+export function viewOutline(shape: Shape, tol = VIEW_TOL): { outer: Vec2[]; holes: Vec2[][] } {
+  const o = shapeOutline(shape);
+  if (shape.type !== 'POLY') return o;
+  return { outer: simplifyRing(o.outer, tol), holes: o.holes.map((h) => simplifyRing(h, tol)) };
+}
+
 const profileGeoCache = new Map<string, { mesh: THREE.BufferGeometry; edges: THREE.BufferGeometry }>();
 
 /** Unit-length extrusion of a profile along +Z (scaled per member by its matrix). */
@@ -40,7 +120,7 @@ export function profileGeometry(name: string, shape: Shape) {
   const key = `${name}~${shapeSignature(shape)}`;
   let g = profileGeoCache.get(key);
   if (!g) {
-    const o = shapeOutline(shape);
+    const o = viewOutline(shape);
     const mesh = new THREE.ExtrudeGeometry(toShape(o.outer, o.holes), { depth: 1, bevelEnabled: false, curveSegments: 8 });
     const edges = new THREE.EdgesGeometry(mesh, 35);
     g = { mesh, edges };
@@ -187,7 +267,7 @@ export function preparedMemberGeometry(part: Part) {
   if (hit) return hit;
   const shape = part.shape!;
   const e = part.ends!;
-  const o = shapeOutline(shape);
+  const o = viewOutline(shape);
   const H = shapeBox(shape).h / 2;
   const xs: XFn = (sx, sy) => cutXAt(e.start, sx, sy);
   const xe: XFn = (sx, sy) => cutXAt(e.end, sx, sy);
@@ -286,7 +366,7 @@ function clipSectionSide(sp: SecPoly, a: number, b: number, c: number): SecPoly 
  * `linearMatrix(frame, 1)`. Slots on prepared (cut / coped) ends are not drawn.
  */
 export function slottedMemberGeometry(part: Part) {
-  const o = shapeOutline(part.shape!);
+  const o = viewOutline(part.shape!);
   const L = part.length;
   const slots = part.slots ?? [];
   const xs = [...new Set([0, L, ...slots.flatMap((k) => [k.x0, k.x1])].map((x) => Math.min(L, Math.max(0, x))))].sort((a, b) => a - b);
@@ -469,7 +549,7 @@ export function coarseProfileGeometry(name: string, shape: Shape) {
   let g = coarseGeoCache.get(key);
   if (!g) {
     const s = sharpShape(shape);
-    const o = s.type === 'CHS' ? { outer: ngon(s.d / 2, 8), holes: [ngon(s.d / 2 - s.t, 8).reverse()] } : s.type === 'RD' ? { outer: ngon(s.d / 2, 8), holes: [] } : shapeOutline(s);
+    const o = s.type === 'CHS' ? { outer: ngon(s.d / 2, 8), holes: [ngon(s.d / 2 - s.t, 8).reverse()] } : s.type === 'RD' ? { outer: ngon(s.d / 2, 8), holes: [] } : viewOutline(s, COARSE_TOL);
     const mesh = new THREE.ExtrudeGeometry(toShape(o.outer, o.holes), { depth: 1, bevelEnabled: false, curveSegments: 1 });
     g = { mesh, edges: new THREE.EdgesGeometry(mesh, 35) };
     coarseGeoCache.set(key, g);

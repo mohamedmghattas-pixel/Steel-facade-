@@ -15,7 +15,7 @@ import { shapeBox } from '../library/shapes';
 import { getProfile } from '../library/profiles';
 import { componentInsertion, findProfileAssembly, KIND_LABEL, lengthRuleLabel, materialClass, type MaterialClass } from '../library/profileAssembly';
 import type { Drawing } from './types';
-import { Sheet, balloon, dimChain, dimLinear, dimRunning, weldSymbol } from './dims';
+import { Sheet, balloon, balloonRadius, dimChain, dimLinear, dimRunning, weldSymbol } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Rect } from './layout';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
 import { brokenAxis, drawBand, endOutline, frontInnerLines, keptMid, symmetricSection, topInnerLines, uniqSorted } from './views';
@@ -167,18 +167,36 @@ function shopBoltsBlock(dm: DerivedModel, asm: Assembly) {
 const V = (x: number, y: number, z: number): Vec3 => ({ x, y, z });
 const dot3 = (a: Vec3, b: Vec3) => a.x * b.x + a.y * b.y + a.z * b.z;
 
-function itemLabels(s: Sheet, items: { mark: string; at: Vec2 }[], yRow: number, xMin: number, xMax: number) {
+/** Pitch of balloons in a row, mm; larger balloons (long marks) are spaced by their radii plus a gap. */
+const BALLOON_PITCH = 11;
+const BALLOON_GAP = 1.5;
+
+/**
+ * Where the ISO 6433 balloons above a view go: one per mark, in a row, in the
+ * order of their parts along the view, each as near its part as it can be.
+ * Neighbours are 11 mm apart, or further when their balloons are larger (long
+ * marks such as "m1000" make larger balloons), so balloons never overlap; the
+ * row is kept within [xMin, xMax] where it fits.
+ */
+export function balloonPlacement(items: { mark: string; at: Vec2 }[], yRow: number, xMin: number, xMax: number): { mark: string; at: Vec2; x: number; y: number; r: number }[] {
   const seen = new Set<string>();
-  const uniq = items.filter((i) => (seen.has(i.mark) ? false : (seen.add(i.mark), true))).sort((a, b) => a.at.x - b.at.x);
-  const gap = 11;
+  const uniq = items
+    .filter((i) => (seen.has(i.mark) ? false : (seen.add(i.mark), true)))
+    .sort((a, b) => a.at.x - b.at.x)
+    .map((u) => ({ ...u, r: balloonRadius(u.mark) }));
+  const pitch = (i: number) => Math.max(BALLOON_PITCH, uniq[i].r + uniq[i + 1].r + BALLOON_GAP);
   const xs: number[] = [];
-  uniq.forEach((u, i) => xs.push(Math.max(u.at.x, i ? xs[i - 1] + gap : xMin)));
+  uniq.forEach((u, i) => xs.push(Math.max(u.at.x, i ? xs[i - 1] + pitch(i - 1) : xMin)));
   if (xs.length && xs[xs.length - 1] > xMax) {
     xs[xs.length - 1] = xMax;
-    for (let i = xs.length - 2; i >= 0; i--) xs[i] = Math.min(xs[i], xs[i + 1] - gap);
+    for (let i = xs.length - 2; i >= 0; i--) xs[i] = Math.min(xs[i], xs[i + 1] - pitch(i));
   }
+  return uniq.map((u, i) => ({ ...u, x: xs[i], y: yRow }));
+}
+
+function itemLabels(s: Sheet, items: { mark: string; at: Vec2 }[], yRow: number, xMin: number, xMax: number) {
   // Navigation tag: the balloon names a part of this assembly (data only).
-  uniq.forEach((u, i) => s.withTag({ nav: { part: u.mark } }, () => balloon(s, u.at, { x: xs[i], y: yRow }, u.mark)));
+  for (const b of balloonPlacement(items, yRow, xMin, xMax)) s.withTag({ nav: { part: b.mark } }, () => balloon(s, b.at, { x: b.x, y: b.y }, b.mark));
 }
 
 /** Point on the polygon boundary nearest to `q`, and its distance. */

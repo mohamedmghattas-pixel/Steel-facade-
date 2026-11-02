@@ -7,7 +7,9 @@
  *
  * Sections read: HEADER ($INSUNITS, $MEASUREMENT, $ACADVER), TABLES (layer
  * states), BLOCKS (name, flags, base point, entities) and ENTITIES. VERTEX
- * records are attached to their POLYLINE; ATTRIB / SEQEND are dropped.
+ * records are attached to their POLYLINE; ATTRIB / SEQEND are dropped, unless
+ * read with `{ attributes: true }`: the ATTRIB records of a block insert are then
+ * kept on its INSERT (`attribs`), e.g. for title blocks (drawings/titleBlockDxf.ts).
  */
 import type { Vec3 } from '../model/types';
 
@@ -17,6 +19,13 @@ export interface DxfEntity {
   values: string[];
   /** POLYLINE: its VERTEX records in file order. */
   vertices?: DxfEntity[];
+  /** INSERT: its ATTRIB records in file order (only when read with `{ attributes: true }`). */
+  attribs?: DxfEntity[];
+}
+
+export interface DxfReaderOptions {
+  /** Keep the ATTRIB records that follow a block insert, on the INSERT's `attribs` (default off: dropped). */
+  attributes?: boolean;
 }
 
 export interface DxfBlock {
@@ -147,7 +156,7 @@ class Scanner {
 // ---------------------------------------------------------------------------
 // Reader
 
-export function readDxf(text: string): DxfDocument {
+export function readDxf(text: string, opts: DxfReaderOptions = {}): DxfDocument {
   let src = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
   if (src.indexOf('\n') < 0 && src.indexOf('\r') >= 0) src = src.replace(/\r/g, '\n');
   const sc = new Scanner(src);
@@ -161,8 +170,8 @@ export function readDxf(text: string): DxfDocument {
     const name = sc.code === 2 ? sc.value.toUpperCase() : '';
     if (name === 'HEADER') readHeader(sc, doc);
     else if (name === 'TABLES') readTables(sc, doc);
-    else if (name === 'BLOCKS') readBlocks(sc, doc);
-    else if (name === 'ENTITIES') readEntities(sc, doc.entities);
+    else if (name === 'BLOCKS') readBlocks(sc, doc, opts);
+    else if (name === 'ENTITIES') readEntities(sc, doc.entities, opts);
     else skipSection(sc);
   }
   if (!sawSection) throw new Error('Not a DXF file (no SECTION found).');
@@ -217,7 +226,7 @@ function readTables(sc: Scanner, doc: DxfDocument) {
   }
 }
 
-function readBlocks(sc: Scanner, doc: DxfDocument) {
+function readBlocks(sc: Scanner, doc: DxfDocument, opts: DxfReaderOptions) {
   while (sc.next()) {
     if (sc.code !== 0) continue;
     if (sc.value === 'ENDSEC' || sc.value === 'EOF') return;
@@ -227,15 +236,17 @@ function readBlocks(sc: Scanner, doc: DxfDocument) {
     }
     const head = readRecord(sc, 'BLOCK');
     const block: DxfBlock = { name: gStr(head, 2) || gStr(head, 3), flags: gNum(head, 70), base: gPoint(head, 10), entities: [] };
-    readEntities(sc, block.entities);
+    readEntities(sc, block.entities, opts);
     // ENDBLK record (if present) is consumed by the loop above.
     if (block.name && !doc.blocks.has(block.name.toUpperCase())) doc.blocks.set(block.name.toUpperCase(), block);
   }
 }
 
 /** Entities up to ENDSEC / ENDBLK / EOF (the terminator is consumed, except EOF). */
-function readEntities(sc: Scanner, out: DxfEntity[]) {
+function readEntities(sc: Scanner, out: DxfEntity[], opts: DxfReaderOptions = {}) {
   let poly: DxfEntity | null = null;
+  // The INSERT whose ATTRIB records may follow (up to SEQEND).
+  let insert: DxfEntity | null = null;
   while (sc.next()) {
     if (sc.code !== 0) continue;
     const type = sc.value.toUpperCase();
@@ -255,11 +266,16 @@ function readEntities(sc: Scanner, out: DxfEntity[]) {
     }
     if (type === 'SEQEND') {
       poly = null;
+      insert = null;
       continue;
     }
     // Block attributes are text; they follow an INSERT up to SEQEND.
-    if (type === 'ATTRIB') continue;
+    if (type === 'ATTRIB') {
+      if (opts.attributes && insert) (insert.attribs ??= []).push(e);
+      continue;
+    }
     poly = null;
+    insert = type === 'INSERT' ? e : null;
     if (type === 'POLYLINE') {
       e.vertices = [];
       poly = e;

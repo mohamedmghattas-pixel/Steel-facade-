@@ -68,7 +68,29 @@ export {
   type NavHighlight,
   type NavSelection,
 } from './navigation';
-export { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, activeTemplate, drawTemplateTitleBlock, newTemplate, parseTemplates, sampleTitleData, sanitizeTemplate } from './template';
+export {
+  DEFAULT_TEMPLATE,
+  DEFAULT_TEMPLATE_ID,
+  FIELD_SOURCES,
+  FREE_TEMPLATE_MAX,
+  TEMPLATE_TEXT_HEIGHTS,
+  activeTemplate,
+  drawTemplateTitleBlock,
+  drawTitleBlockAt,
+  hasFreeContent,
+  migrateSheetTemplates,
+  newTemplate,
+  parseTemplates,
+  placeholderSource,
+  sampleTitleData,
+  sanitizeTemplate,
+  templateBox,
+  templateTextValue,
+  textPlaceholders,
+  titleBlockSvg,
+  type TitleData,
+} from './template';
+export { TITLE_BLOCK_UNITS, importScale, readTitleBlockDxf, titleBlockSummary, titleBlockTemplate, type TbText, type TitleBlockChoice, type TitleBlockDxf } from './titleBlockDxf';
 
 export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: number, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
   return partDrawingCtx(ctx, part, qty);

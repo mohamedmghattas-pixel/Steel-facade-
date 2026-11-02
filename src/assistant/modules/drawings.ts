@@ -2,7 +2,8 @@
  * Assistant tools for the drawing set: manual sheet edits (notes, leaders,
  * revision clouds, moved views and dimensions, hidden items), section cuts and
  * detail callouts on the GA, erection drawings (setting-out plans, anchor
- * schedules, erection sequences) and company sheet templates.
+ * schedules, erection sequences) and company sheet templates (including the
+ * client's title block imported from DXF).
  */
 import type { DrawingZoning, GaCut, SheetSize, SheetTemplate, Vec3 } from '../../core/model/types';
 import { newId } from '../../core/model/ops';
@@ -23,8 +24,11 @@ import {
   offsetDim,
   rectPts,
   resetEdits,
+  readTitleBlockDxf,
   sanitizeTemplate,
   sheetLabel,
+  titleBlockSummary,
+  titleBlockTemplate,
   unhideItem,
   zonePlanFor,
   zoningSettings,
@@ -165,11 +169,11 @@ export const drawingsModule: ToolModule = {
     {
       name: 'sheet_templates',
       description:
-        'Company sheet templates (title block layout, logo, fixed notes). Actions: list (templates, the active one and the field sources), create (copy of the default ISO 7200 block or of "from"), update (name, width, height, grid, fields, notes of a template), set_active (id, or "iso7200" for the default), delete. A field is {label, source, col, row, w, h, textH?, bold?} in grid cells (row 0 = bottom); source is one of the listed sources or "text:<fixed text>".',
+        'Company sheet templates (title block layout, logo, fixed notes). Actions: list (templates, the active one and the field sources), create (copy of the default ISO 7200 block or of "from"), update (name, width, height, grid, fields, notes of a template), set_active (id, or "iso7200" for the default), delete, import_dxf (the client\'s title block from DXF text "dxf": linework, texts, blocks with attributes; placeholders like {PROJECT} {DRAWING_NO} and attribute tags become fields; optional units mm per drawing unit, name, map, activate), map_texts (id, map: change what free texts show). A field is {label, source, col, row, w, h, textH?, bold?} in grid cells (row 0 = bottom); source is one of the listed sources, "text:<fixed text>", "fmt:<text with {PLACEHOLDERS}>", or "" (leave out, import only). map items: {i (text index from import_dxf / list), source}.',
       input_schema: {
         type: 'object',
         properties: {
-          action: { type: 'string', enum: ['list', 'create', 'update', 'set_active', 'delete'] },
+          action: { type: 'string', enum: ['list', 'create', 'update', 'set_active', 'delete', 'import_dxf', 'map_texts'] },
           id: str,
           from: str,
           name: str,
@@ -186,6 +190,9 @@ export const drawingsModule: ToolModule = {
           },
           notes: { type: 'array', items: str },
           activate: { type: 'boolean' },
+          dxf: { type: 'string', description: 'DXF file content (import_dxf)' },
+          units: { type: 'number', description: 'mm per drawing unit (import_dxf; default from the file)' },
+          map: { type: 'array', items: { type: 'object', properties: { i: num, source: str }, required: ['i', 'source'] } },
         },
         required: ['action'],
       },
@@ -377,7 +384,22 @@ export const drawingsModule: ToolModule = {
       const action = String(input.action);
       const p = st().project;
       const list = p.drawings.templates ?? [];
-      const brief = (t: SheetTemplate) => ({ id: t.id, name: t.name, width: t.width, height: t.height, grid: t.grid ?? 1, fields: t.fields, notes: t.notes, logo: !!t.logo });
+      const brief = (t: SheetTemplate) => ({
+        id: t.id,
+        name: t.name,
+        width: t.width,
+        height: t.height,
+        grid: t.grid ?? 1,
+        fields: t.fields,
+        notes: t.notes,
+        logo: !!t.logo,
+        ...(t.texts?.length ? { texts: t.texts.map((x, i) => ({ i, source: x.source, ...(x.origin ? { origin: x.origin } : {}) })) } : {}),
+        ...(t.graphics?.length ? { graphics: t.graphics.length } : {}),
+        ...(t.imported ? { imported: t.imported } : {}),
+      });
+      const checkSource = (src: string) => {
+        if (src && !src.startsWith('text:') && !src.startsWith('fmt:') && !FIELD_SOURCES.some((f) => f.value === src)) throw new Error(`Unknown source "${src}". Sources: ${FIELD_SOURCES.map((f) => f.value).join(', ')}, fmt:<text>.`);
+      };
       if (action === 'list')
         return { active: p.drawings.activeTemplate ?? DEFAULT_TEMPLATE_ID, templates: [brief(DEFAULT_TEMPLATE), ...list.map(brief)], sources: FIELD_SOURCES.map((s) => s.value) };
       const apply = (t: SheetTemplate) => {
@@ -389,6 +411,30 @@ export const drawingsModule: ToolModule = {
         if (Array.isArray(input.notes)) t.notes = input.notes.map(String);
         Object.assign(t, sanitizeTemplate(t));
       };
+      if (action === 'import_dxf') {
+        if (typeof input.dxf !== 'string' || !input.dxf.trim()) throw new Error('Give the DXF file content as "dxf".');
+        const imp = readTitleBlockDxf(input.dxf, input.units !== undefined ? { unitScale: n(input.units, 'units') } : {});
+        const map = imp.texts.map((x) => x.suggested);
+        for (const m of Array.isArray(input.map) ? (input.map as Json[]) : []) {
+          const i = Math.round(n(m.i, 'map.i'));
+          if (!(i >= 0 && i < map.length)) throw new Error(`No text ${i}: the DXF has ${map.length} texts.`);
+          checkSource(String(m.source ?? ''));
+          map[i] = String(m.source ?? '');
+        }
+        const t = titleBlockTemplate(imp, newId('tpl'), { name: String(input.name ?? 'Imported title block'), map, file: 'assistant.dxf' });
+        st().apply('Assistant: import title block', (q) => {
+          (q.drawings.templates ??= []).push(t);
+          if (input.activate) q.drawings.activeTemplate = t.id;
+        });
+        return {
+          ...brief(t),
+          units: imp.units,
+          unitSource: imp.unitSource,
+          summary: titleBlockSummary(imp),
+          notes: imp.notes,
+          dxfTexts: imp.texts.map((x, i) => ({ i, kind: x.kind, ...(x.tag ? { tag: x.tag } : {}), text: x.lines.map((l) => l.text).join(' / '), source: map[i] })),
+        };
+      }
       if (action === 'create') {
         const from = input.from ? list.find((t) => t.id === input.from) : undefined;
         if (input.from && !from && input.from !== DEFAULT_TEMPLATE_ID) throw new Error(`No template "${input.from}".`);
@@ -408,6 +454,31 @@ export const drawingsModule: ToolModule = {
       }
       const t = list.find((x) => x.id === input.id);
       if (!t) throw new Error(input.id === DEFAULT_TEMPLATE_ID ? 'The default ISO 7200 template cannot be changed; create a copy.' : `No template "${input.id}".`);
+      if (action === 'map_texts') {
+        const items = Array.isArray(input.map) ? (input.map as Json[]) : [];
+        if (!items.length) throw new Error('Give "map": [{ i, source }] (text indices from list).');
+        const count = t.texts?.length ?? 0;
+        for (const m of items) {
+          const i = Math.round(n(m.i, 'map.i'));
+          if (!(i >= 0 && i < count)) throw new Error(`No text ${i}: the template has ${count} free texts.`);
+          checkSource(String(m.source ?? ''));
+        }
+        st().apply('Assistant: map title block texts', (q) => {
+          const x = (q.drawings.templates ?? []).find((y) => y.id === t.id);
+          if (!x?.texts) return;
+          const drop = new Set<number>();
+          for (const m of items) {
+            const i = Math.round(Number(m.i));
+            const tx = x.texts[i];
+            const src = String(m.source ?? '');
+            if (!src) drop.add(i);
+            // "text:" alone keeps the text as it reads now (its fixed text or the original DXF text).
+            else tx.source = src === 'text:' ? `text:${tx.source.startsWith('text:') ? tx.source.slice(5) : tx.source.startsWith('fmt:') ? tx.source.slice(4) : (tx.origin ?? '')}` : src;
+          }
+          x.texts = x.texts.filter((_, i) => !drop.has(i));
+        });
+        return brief(st().project.drawings.templates.find((x) => x.id === t.id)!);
+      }
       if (action === 'update') {
         st().apply('Assistant: edit sheet template', (q) => {
           const x = (q.drawings.templates ?? []).find((y) => y.id === t.id);

@@ -4,7 +4,7 @@ import { Sheet } from './dims';
 import { drawFrame, drawRevisionTable, frameRect, packColumns, REV_H } from './layout';
 import { drawingNumber, fingerprint, partUsage, revisionState, type UsedIn } from './register';
 import { SHEETS, STANDARDS, type StdProfile } from './standards';
-import { activeTemplate, drawTemplateTitleBlock } from './template';
+import { activeTemplate, drawTemplateTitleBlock, templateBox } from './template';
 import { applyEdits, hasEdits } from './edits';
 import type { Drawing, DrawingKind, DrawingZone, Viewport } from './types';
 import type { ZonePlan } from './zoning';
@@ -104,7 +104,10 @@ export const measuring = (ctx: DrawCtx): DrawCtx => (ctx.measure ? ctx : { ...ct
 export function newSheet(size: SheetSize, ctx?: DrawCtx): Sheet {
   const s = SHEETS[size];
   const sh = new Sheet(s.w, s.h);
-  if (ctx) sh.tb = { w: ctx.template.width, h: ctx.template.height };
+  if (ctx) {
+    const box = templateBox(ctx.template, size);
+    sh.tb = { w: box.w, h: box.h };
+  }
   if (ctx?.measure) sh.dry = true;
   return sh;
 }

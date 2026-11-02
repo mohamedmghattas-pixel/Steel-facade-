@@ -57,13 +57,13 @@ export function setPackagePainter(p: SvgPainter | null) {
   painter = p ?? svgPainter;
 }
 
-// Drawing index and generated files per project object (reused while the dialog is open).
-const caches = new WeakMap<Project, PlanCache>();
+// Drawing index and generated files of the latest project state (reused while the dialog is open). One
+// state only: the cache holds the drawing set and so the derived model, and past states live on in the undo history.
+let shared: { p: Project; dm: DerivedModel; cache: PlanCache } | null = null;
 function sharedCache(p: Project, dm: DerivedModel): PlanCache {
-  let c = caches.get(p);
   // The drawing index is shared with the Drawings tab (one per model state); sheets are made while the package is built.
-  if (!c) caches.set(p, (c = planCache(p, dm)));
-  return c;
+  if (shared?.p !== p || shared.dm !== dm) shared = { p, dm, cache: planCache(p, dm) };
+  return shared.cache;
 }
 
 export interface PackageRequest {

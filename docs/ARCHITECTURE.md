@@ -177,7 +177,7 @@ Numbers and claims in docs come from running code, not from memory.
                          │                                    │
                          ▼                                    ▼
               store.apply(label, fn) ◄───────────────── runTool(name, input)
-                         │   structuredClone → fn(draft) → snapshot (80-step undo)
+                         │   structuredClone → fn(draft) → snapshot (80-step undo, memory budget)
                          ▼
                  Project (plain JSON) ──► autosave (localStorage) / .json file
                          │
@@ -211,7 +211,7 @@ lists and NC files cannot disagree.
 ### 3.3 State and undo
 
 - `store.apply(label, fn)` clones the project with `structuredClone`, runs `fn`
-  on the draft, and pushes the previous project onto `past` (80 steps).
+  on the draft, and pushes the previous project onto `past` (80 steps, fewer on very large models: see D40).
 - Undo and redo swap snapshots.
 - Custom profiles are re-registered after every replace, undo and redo, so the
   catalogue always matches the project.
@@ -413,6 +413,7 @@ lists and NC files cannot disagree.
 | D37 | Auto-connect by member role and joint topology (the wireframe check's roles and surface normals), with direction only for unclassified lines; a plan (`planAutoConnect`: items per rule, counts, notes, marker points) separate from placing it; mullion brackets from reference-model triangles, bracket stubs or levels; world-up defaults of seven bracket / seat / sleeve types pinned to member-local parameters (`ConnectionDef.pin`) at placement and before every transform | Sloped and V-shaped facades got 2 joints from the direction rules, and cut mullions on vertical facades got a slab bracket at every transom junction; the user reviews counts before anything changes; member-local parameters are the only way the transform rules can give the image under any mirror | Smarter direction thresholds; a world-up exception list in the transform tests | Vertical facades derive bit for bit as before (fixture of 164 joints and facades recorded before the change, with the parameters on auto and pinned); connections on `auto` (older files) unchanged until a transform pins them; the slab bracket's movement heights follow the pinned axis ([CONNECTIONS.md](CONNECTIONS.md) "Auto-connect", [CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)) |
 | D38 | Composite sections as profile assemblies: components are custom POLY profiles drawn about one base point (their insertion point), a member carries the assembly by id with `profile` = the main component; derivation adds one part per fabricated component (joined to the member's part as one assembly) and accessories for listed-only ones; connections use the main component | A curtain-wall detail is several profiles positioned from one point; keeping `profile` single keeps connections, end preparations, lists and every existing consumer unchanged, and the per-component parts reuse NC, drawings, numbering and IFC | A new multi-loop shape (one part, no per-component NC or lists); the union bounding box for connections (moves plates to the aluminium cover) | Members given another profile drop the composite; accessories are derived data outside `parts`, drawn and exported where it matters (3D, IFC, section A–A, lists) ([PROFILE_ASSEMBLIES.md](PROFILE_ASSEMBLIES.md)) |
 | D39 | Drawings on demand: a drawing index (register) measured without drawing — generators pack their tables on a dry sheet and skip the views — built in slices that yield to the page; sheets made one drawing at a time into an LRU cache keyed by what each drawing shows; PDF pages painted once per export and reused by every book (`onDemand.ts`, `export/pdfPages.ts`) | Making every sheet up front froze the Drawings tab and the export on large facades (the client package took 391 s). The index answers the register, counts and navigation; an edit makes again only the drawings it touched, when viewed or exported (35 s for the same package). `allDrawings` stays as the eager path with the same sheets, checked by tests |
+| D40 | Memory budgets for large models: the undo history keeps 80 steps up to about 1.6 million model elements in total (at least 5 steps); derived models are cached for the latest states only (LRU, up to 6 states and 200,000 parts, the current one always); drawing sets likewise (4 states, 200,000 parts); the export plan cache holds one state | Every past state lives on in the undo history, and the derived-model cache was a WeakMap on the project, so each edit kept a derived model alive (about 256 MB at 88,000 parts, plus 35 MB for the snapshot). A long session on a 24,000-member facade would have run out of memory. Small and client-size models keep 80 instant undo steps; at 24,000 members about 17 steps remain, and undo beyond the last 1–2 derives again (about 5 s) |
 
 ## 5. Known limits and open items
 

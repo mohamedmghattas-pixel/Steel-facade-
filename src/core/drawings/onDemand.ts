@@ -684,6 +684,7 @@ export function yieldMacrotask(): Promise<void> {
 /** Drawing sets of the last few project states (undo / redo find theirs). */
 const sets: DrawingSet[] = [];
 const SETS_MAX = 4;
+const SETS_PARTS = 200_000;
 
 /** The drawing set of a project state (cached per project and derived model). */
 export function drawingSet(p: Project, dm: DerivedModel): DrawingSet {
@@ -698,7 +699,9 @@ export function drawingSet(p: Project, dm: DerivedModel): DrawingSet {
   }
   const s = new DrawingSet(p, dm);
   sets.push(s);
-  if (sets.length > SETS_MAX) sets.shift();
+  // A set keeps its project state and derived model alive: few on large models (the newest is always kept).
+  let parts = sets.reduce((n, x) => n + x.dm.parts.length, 0);
+  while (sets.length > 1 && (sets.length > SETS_MAX || parts > SETS_PARTS)) parts -= sets.shift()!.dm.parts.length;
   return s;
 }
 

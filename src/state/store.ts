@@ -171,6 +171,33 @@ interface State {
 }
 
 const HISTORY = 80;
+/**
+ * Memory budget of the undo history, in model elements (nodes, members,
+ * connections, plates; about 400 bytes each as a snapshot). 80 steps fit up to
+ * about 20,000 elements; larger models keep fewer steps (a 24,000-member facade
+ * with its connections keeps about 16), at least 5.
+ */
+const HISTORY_ELEMENTS = 1_600_000;
+const HISTORY_MIN = 5;
+const sizeCache = new WeakMap<Project, number>();
+/** Elements of a project state (cached per state object). */
+export function projectElements(p: Project): number {
+  let n = sizeCache.get(p);
+  if (n === undefined) {
+    n = Object.keys(p.nodes).length + Object.keys(p.members).length + Object.keys(p.connections).length + Object.keys(p.plates ?? {}).length;
+    sizeCache.set(p, n);
+  }
+  return n;
+}
+/** The undo list with `project` pushed, trimmed to HISTORY steps and the element budget (oldest out first). */
+export function pushHistory(past: Project[], project: Project, budget = HISTORY_ELEMENTS): Project[] {
+  const out = [...past.slice(-HISTORY + 1), project];
+  let total = 0;
+  for (const x of out) total += projectElements(x);
+  let drop = 0;
+  while (out.length - drop > HISTORY_MIN && total > budget) total -= projectElements(out[drop++]);
+  return drop ? out.slice(drop) : out;
+}
 
 export const useStore = create<State>((set, get) => ({
   project: initialProject,
@@ -218,7 +245,7 @@ export const useStore = create<State>((set, get) => ({
     const sel = get().selection;
     set({
       project: draft,
-      past: [...past.slice(-HISTORY + 1), project],
+      past: pushHistory(past, project),
       future: [],
       revision: revision + 1,
       selection: pruneSelection(sel, draft),
@@ -311,15 +338,37 @@ export function refOwnerExists(p: Project, ref: string): boolean {
 // ---------------------------------------------------------------------------
 // Derived model, cached per project object.
 
-const cache = new WeakMap<Project, DerivedModel>();
+/**
+ * Derived models of the latest project states (least recently used out). Not a
+ * WeakMap on the project: the undo history keeps every past state alive, and a
+ * derived model is large (about 250 MB at 88,000 parts). Up to DERIVED_MAX
+ * states while their parts stay within DERIVED_PARTS; the current state is
+ * always kept, so the last step undoes without deriving again on any model.
+ */
+const DERIVED_MAX = 6;
+const DERIVED_PARTS = 200_000;
+const cache = new Map<Project, DerivedModel>();
 export function derived(p: Project): DerivedModel {
   let dm = cache.get(p);
-  if (!dm) {
-    dm = deriveModel(p);
+  if (dm) {
+    cache.delete(p);
     cache.set(p, dm);
+    return dm;
+  }
+  dm = deriveModel(p);
+  cache.set(p, dm);
+  let parts = 0;
+  for (const x of cache.values()) parts += x.parts.length;
+  for (const [k, v] of cache) {
+    if (cache.size <= 1 || (cache.size <= DERIVED_MAX && parts <= DERIVED_PARTS)) break;
+    cache.delete(k);
+    parts -= v.parts.length;
   }
   return dm;
 }
+
+/** Project states with a derived model in the cache (tests). */
+export const derivedCacheSize = () => cache.size;
 
 export function useDerived(): DerivedModel {
   const p = useStore((s) => s.project);

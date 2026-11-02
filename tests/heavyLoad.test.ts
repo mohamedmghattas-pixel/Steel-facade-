@@ -208,7 +208,8 @@ describe('wireframe check after an import', () => {
     s().replaceProject(p);
     s().select({ members: ids });
     s().set({ lastImport: ids });
-    const plan = analyzeWireframe(s().project, {}, ids);
+    // The cut-mullion rule, set explicitly (the default keeps mullions continuous).
+    const plan = analyzeWireframe(s().project, { splitMullions: true }, ids);
     const res = applyWireframeCheck(plan, new Set(plan.items.filter((i) => i.accepted).map((i) => i.id)), undefined, 'import');
     expect(res.splits).toBeGreaterThan(0);
     const all = Object.keys(s().project.members);

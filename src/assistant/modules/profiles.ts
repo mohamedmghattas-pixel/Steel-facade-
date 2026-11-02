@@ -13,6 +13,7 @@ import { findMaterial } from '../../core/library/materials';
 import { INSERTION_PRESETS, insertionPreset, loopId, sketchToDef, type InsertionPreset, type Sketch, type SketchVertex } from '../../core/library/sketch';
 import { parseProfileDxf } from '../../core/library/profileDxf';
 import { assignProfilesByRole, roleCounts, setRoleProfile } from '../../core/model/roleProfiles';
+import { divideAtMullions, type DivideResult } from '../../core/model/junctions';
 
 const num = { type: 'number' } as const;
 const str = { type: 'string' } as const;
@@ -210,14 +211,26 @@ export const profilesModule: ToolModule = {
       const sel = st().selection.members;
       if (mode === 'selection' && !sel.length) throw new Error('apply: selection, but nothing is selected.');
       let changed = 0;
+      let division: DivideResult | null = null;
       st().apply('Assistant: profiles by role', (d) => {
         for (const r of roles) setRoleProfile(d, r.role, r.profile ? { profile: r.profile, rotation: r.rotation, alignMode: r.alignMode, material: r.material } : null);
         const which = roles.filter((r) => r.profile).map((r) => r.role);
-        if (mode !== 'none' && which.length) changed = assignProfilesByRole(d, mode === 'selection' ? (sel as Id[]) : undefined, which);
+        if (mode !== 'none' && which.length) {
+          changed = assignProfilesByRole(d, mode === 'selection' ? (sel as Id[]) : undefined, which);
+          // Transoms crossing / meeting the mullions without a node are divided there (mullions stay continuous).
+          const touched = (mode === 'selection' ? (sel as Id[]) : Object.keys(d.members)).filter((id) => d.members[id] && which.includes(d.members[id].role));
+          division = divideAtMullions(d, { members: touched });
+        }
       });
       const p = st().project;
       const counts = roleCounts(p);
-      return { roleProfiles: p.settings.roleProfiles, changed, counts: Object.fromEntries(roles.map((r) => [r.role, counts[r.role]])) };
+      const div = division as DivideResult | null;
+      return {
+        roleProfiles: p.settings.roleProfiles,
+        changed,
+        counts: Object.fromEntries(roles.map((r) => [r.role, counts[r.role]])),
+        ...(div ? { dividedAtMullions: { transoms: div.divided, cuts: div.cuts, endsSnapped: div.snapped, skipped: div.skipped.length, message: div.message } } : {}),
+      };
     },
   },
 };

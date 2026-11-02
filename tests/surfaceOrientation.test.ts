@@ -217,6 +217,8 @@ describe('surface orientation: V-shaped sloped facade', () => {
     expect(items.length).toBe(10);
     expect(items.every((i) => i.accepted && i.actionable && (i.value ?? 0) > 2)).toBe(true);
     for (const id of f.wing[0]) p.members[id].rotation = 90;
+    // Counts the pieces of cut mullions: the cut-mullion rule, set explicitly (the default keeps them continuous).
+    p.wireframe.settings.splitMullions = true;
     const res = applyWireframePlan(p, analyzeWireframe(p));
     expect(res.oriented).toBeGreaterThanOrEqual(30 + 12);
     // Rotation reset to 0 by default.

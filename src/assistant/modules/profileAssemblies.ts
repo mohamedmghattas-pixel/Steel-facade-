@@ -21,6 +21,7 @@ import {
 } from '../../core/library/profileAssembly';
 import { buildDetailAssembly, defaultDetailChoice, parseAssemblyDxf, relativeOrientation } from '../../core/library/profileAssemblyDxf';
 import { assignProfilesByRole, setRoleProfile } from '../../core/model/roleProfiles';
+import { divideAtMullions } from '../../core/model/junctions';
 
 const str = { type: 'string' } as const;
 const num = { type: 'number' } as const;
@@ -183,6 +184,7 @@ export const profileAssembliesModule: ToolModule = {
       if (!roles.length && !ids.length) throw new Error('Give roles and / or members (or selection: true).');
       const rotation = typeof input.rotation === 'number' ? input.rotation : undefined;
       let changed = 0;
+      let divided = 0;
       st().apply(a ? `Profile assembly ${a.name}` : 'Single profile', (d) => {
         for (const r of roles) {
           const cur = d.settings.roleProfiles?.[r];
@@ -194,8 +196,11 @@ export const profileAssembliesModule: ToolModule = {
         }
         if (roles.length && input.apply !== false) changed += assignProfilesByRole(d, undefined, roles);
         if (ids.length) changed += assignProfileAssembly(d, ids, a?.id ?? null, rotation === undefined ? {} : { rotation });
+        // A profile insertion: transoms crossing the mullions without a node are divided there (core/model/junctions.ts).
+        const touched = [...ids, ...(roles.length && input.apply !== false ? Object.values(d.members).filter((m) => roles.includes(m.role)).map((m) => m.id) : [])];
+        if (touched.length) divided = divideAtMullions(d, { members: touched }).divided;
       });
-      return { assembly: a ? summary(find(a.id)) : null, roles, changed };
+      return { assembly: a ? summary(find(a.id)) : null, roles, changed, ...(divided ? { dividedAtMullions: divided } : {}) };
     },
 
     profile_assembly_set: (input: Json) => {

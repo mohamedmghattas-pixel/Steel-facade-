@@ -5,7 +5,10 @@ A 3D DXF typically has every member drawn as a polyline with extra vertices,
 so it imports as many short pieces. Transoms stop a few millimetres short of
 the mullion or sit slightly off its plane, and lines cross without a node.
 The wireframe check turns that into **whole lines that are cut only where
-mullions and transoms meet**. It sets the member roles, turns every profile
+mullions and transoms meet**: transoms are cut at the mullion, and mullions
+stay **continuous** (a transom end on a mullion is a through-node; mullions are
+divided only at real stack joints and by *Split at stock length*,
+[MODIFY.md §5a](MODIFY.md)). It sets the member roles, turns every profile
 **perpendicular to the facade surface**, keeps the **stack joints**, lists
 everything else for review, and records the **client's confirmation** against
 a fingerprint of the result.
@@ -13,6 +16,7 @@ a fingerprint of the result.
 | Part | File |
 | --- | --- |
 | Analysis (pure, no DOM) | `src/core/wireframe/analyze.ts` |
+| Junction rule and the division on profile insertion (pure, §5b) | `src/core/model/junctions.ts` |
 | Apply (inside `store.apply`, one undo step) | `src/core/wireframe/apply.ts` |
 | Fingerprint, status, approvals | `src/core/wireframe/record.ts` |
 | Surfaces: patches, signs, exterior side, folds (pure) | `src/core/wireframe/surfaces.ts` |
@@ -96,7 +100,10 @@ cut it goes midway between the axes.
 
 **Collinear gaps.** A line end that faces the end of a collinear line beyond
 the tolerance (up to the near-miss distance) is a gap, for example a stack or
-movement joint between mullion lengths. Gaps are never closed. A gap of the
+movement joint between mullion lengths. Gaps are never closed — also where
+transoms end at the joint node (a joint on a transom's centre line): a
+mullion end reaching a transom where a collinear mullion of its own continues
+is the far side of a stack joint, not a corner or a T (roles set). A gap of the
 **stack-joint size** (setting, default 10–60 mm) between two lines of one
 family (mullion / post with mullion / post, transom / rail with transom / rail)
 is a **stack joint**: it is listed once per pair in the informational group
@@ -149,15 +156,24 @@ and the check never needs it when junctions exist.
 
 | Junction | Main line (receives / continuous) | Other line |
 | --- | --- | --- |
-| Transom ends on a mullion | cut if *Cut mullions at transoms* (default); otherwise continuous, the transom end becomes a through-node | end snapped onto the mullion axis |
+| Transom ends on a mullion | continuous (default): the transom end becomes a through-node on the mullion's span; cut only with *Cut mullions at transoms* | end snapped onto the mullion axis |
 | Mullion ends on a transom (edge member) | transom cut | end snapped |
-| Mullion × transom crossing mid-span | transom cut; mullion cut if the rule is on | — |
+| Mullion × transom crossing mid-span | transom cut; the mullion stays continuous (cut only with the rule on) | — |
 | Any other pair (transom on transom, bracket on mullion …) | not cut; the end is snapped (through-node) | — |
 | Two lines of one family crossing | not cut; listed for review | — |
+
+The rule is one function pair in `core/model/junctions.ts` (`cutAtTee`,
+`cutAtCrossing`), shared with the division on profile insertion (§5b).
 
 A cut is skipped and listed for review when it would leave a piece shorter
 than the minimum length (default 20 mm) at the line end or next to the
 previous cut.
+
+**Through-nodes count like nodes.** A trim of a line end never passes or
+reaches a node of the line — nor a through-node where another line meets its
+span at more than 35° (a transom end on a continuous mullion). So a mullion
+running 25 mm past its top transom keeps its overshoot with continuous
+mullions, exactly as the cut at the transom keeps it with cut mullions.
 
 **Unnecessary splits.** Every other node inside a line is merged away
 (*Remove unnecessary splits*), except where:
@@ -247,6 +263,51 @@ re-run only the orientation, not the analysis.
 model as it is (nothing but the normals changes), shows the same panel and
 preview, and applies the members to turn as one undo step. Scope: whole model
 or the selection; the rest of the model still defines the surfaces.
+
+## 5b. Transoms cut at mullions when profiles are inserted
+
+Whenever profiles are inserted, transoms / rails that cross or meet a mullion /
+post without a shared node there are divided at that mullion, in the **same
+undo step**, and the status bar says how many (*Divided 4 transoms at the
+mullions (4 cuts, mullions continuous); 477 transom ends moved onto a mullion
+axis.*). `divideAtMullions(p, { members, mode })`:
+
+- **Where:** a transom's axis meets a mullion's axis within the junction
+  tolerance (10 mm, 3D gap), inside the mullion, and inside the transom
+  (*crossing*: the transom is divided) or within *Extend / trim ends up to*
+  (50 mm) beyond or before one of its ends (*end*: the end is extended or
+  trimmed along its own axis onto the mullion axis). Ends already on a mullion
+  (a through-node or a mullion node) and corners at a mullion's free end are
+  left to the check.
+- **One node per junction:** the node lies on the mullion axis — a node
+  already there (a through-node of another transom, the node between two
+  mullion pieces), else a transom end moved there, else a new node. Junction
+  points within the tolerance along one mullion share it (left and right
+  transoms). The mullion is never cut.
+- **Follow:** the piece at the transom's start keeps its id and start details,
+  the last piece its end details; connections, end-preparation targets and
+  welded plates go to the piece at their node; manual assemblies keep every
+  piece.
+- **Left as they are, reported:** an end other members (not transoms) also end
+  at, an end carrying its own connection that would be merged into another
+  node, a cut that would leave a piece under the minimum length, a mullion
+  ending beside a transom (the check snaps the mullion end).
+- **Scope:** the members the insertion touched. A touched mullion divides the
+  transoms crossing it; a touched transom is divided at any mullion. The
+  wireframe check runs it on its result (mode `divide`: only lines in its
+  scope change) — normally nothing is left.
+
+Callers: Library → *Profiles by role* (*Apply to all* / *Apply to selection*,
+*Update all* after choosing a profile or a profile assembly), *Assign* and
+*Auto-assign* in the tool rail, the assistant's `set_role_profiles`,
+`profile_assembly_assign` on roles, `auto_assign_profiles` and
+`set_member_properties` (profile or role), and the wireframe check's apply.
+
+On the client facade with roles set but no junction fixes (459 lines): 481
+junctions in 17 ms — 4 crossing transoms divided, 477 transom ends moved
+onto the mullion axes (they stopped 15–25 mm short, inside the mullion);
+auto-connect then finds 488 of the check's 504 transom joints (the other 16 are
+edge-member and corner cases the check snaps).
 
 ## 6. Issues for review
 
@@ -348,8 +409,9 @@ electronic signature.
 | `surface_info` | Patches (key, normal, size, curvature), folds, exterior rule, lines / members off their normal and by how much, members left as is, brackets. Changes nothing. |
 
 The first three accept the scope (`all`, `selection`, `last_import`, or member
-`ids`) and the settings below; `wireframe_check` also returns `stackJoints`
-(count, gap range) and `surfaces`.
+`ids`) and the settings below (`splitMullions` default false,
+`stackJointSize`); `wireframe_check` also returns `stackJoints` (count, gap
+range) and `surfaces`; `wireframe_apply` also `dividedAtMullions` (§5b).
 
 ## 10. Settings (stored with the project)
 
@@ -357,13 +419,14 @@ The first three accept the scope (`all`, `selection`, `last_import`, or member
 | --- | --- | --- |
 | Junction tolerance | 10 mm | 3D gap between axes that still counts as meeting; also the cluster size of junction points along a line |
 | Extend / trim ends up to | 50 mm | how far a line end may be extended or trimmed along its own axis to reach a junction |
-| At mullion–transom junctions | Cut mullions at transoms | or *Keep mullions continuous* (transom ends become through-nodes) |
+| At mullion–transom junctions | Keep mullions continuous | transom ends become through-nodes; or *Cut mullions at transoms*. Projects saved with the cut rule keep it; a project without the setting migrates to continuous |
 | Flag lines shorter than | 20 mm | very short lines; also the shortest piece a cut may leave |
 | Near-miss up to | 100 mm | ends this close (beyond the tolerance) are flagged |
 | Brackets up to | 600 mm | longest line classified as a bracket |
 | Isolated lines | Make construction lines | or delete |
 | Re-assign roles already set | off | roles other than *other* are kept |
 | Stack joints from / to | 10 / 60 mm | collinear gaps of this size between lengths of one family are kept stack joints (§3) |
+| New joints | 30 mm | gap that *Split at stock length* opens ([MODIFY.md §5a](MODIFY.md)); keep it inside the range above |
 | Turn profiles perpendicular to the surface | on | the orientation group (§5a) |
 | Fold members | Bisector | or follow the larger / smaller patch |
 | Keep each member's rotation on top | off | off: oriented members get rotation 0 |
@@ -401,6 +464,15 @@ patches, 14 folds): analysis with surfaces 1.5 s, of which the surface
 detection 0.2 s; setting the normals 0.1 s. The 459-line client facade (2
 patches, 5 folds, 266 members turned): 0.1 s.
 
+**Continuous mullions on the client facade** (459 lines, profiles by role
+SHS 100x100x5 / RHS 100x50x4, auto-connect): 467 members (119 mullions, 258
+transoms) instead of 714 with cut mullions (366 mullion pieces); the same
+253 / 253 junctions connected, 504 transom joints (478 angle cleats + 26 fin
+plates at folds) and 68 sleeve splices; 692 cleat holes on the mullions either
+way, the same 18.2 t and 1,280 bolts; 949 parts instead of 1,196. The longest
+mullion is 12 m: 29 of them no longer fit a 12 m bar after the end trims and
+kerf (Split at stock length, [MODIFY.md §5a](MODIFY.md)).
+
 ## 13. Limits
 
 - Lines are straight. Arcs imported as chords stay as chords. Each chord meets
@@ -416,6 +488,15 @@ patches, 5 folds, 266 members turned): 0.1 s.
   and are not proposed again.
 - **Partial overlaps, near-misses and crossings of one family are flagged,
   never fixed.** Collinear gaps (stack joints) are never closed.
+- **Continuous mullions and auto-connect brackets.** Transom joints go to the
+  through-nodes (cleats, fin plates at folds) and stack joints get their
+  splices, but auto-connect's mullion brackets are placed from member end
+  nodes, one per node: a continuous mullion that passes an intermediate level
+  (vertical facades, no structure loaded) gets the fallback level brackets at
+  its chain ends only, and a structure bracket's 150 mm clearance from transom
+  joints is kept from piece end nodes, not from through-nodes. Check the
+  brackets on long continuous mullions, or use *Cut mullions at transoms*
+  (the fix belongs in `core/connections/autoConnect.ts`).
 - **With *Cut mullions at transoms*,** every transom node is a mullion end,
   and a floor split with no transom is merged away. Auto-connect reads the
   result by role and topology ([CONNECTIONS.md "Auto-connect"](CONNECTIONS.md)):
@@ -425,6 +506,10 @@ patches, 5 folds, 266 members turned): 0.1 s.
   transom junction where a mullion was cut (earlier versions placed a slab
   bracket at every one of them). Sloped mullions get their brackets from the
   structure or from stubs.
+- **Switching a cut model to continuous mullions** merges the mullion pieces
+  at a transom junction only where no connection sits on the node; after
+  Auto-connect every one carries a cleat, so the pieces stay (delete those
+  joints first, or keep the cut rule for that project).
 - **The fingerprint does not cover connections, materials or finishes.** Moves
   below about 0.05 mm may not change it (0.1 mm rounding).
 - **The analysis runs synchronously** when a rule changes: about 2 s on 20k

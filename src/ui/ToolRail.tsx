@@ -7,6 +7,7 @@ import { ConnectionLibraryHost, openConnectionLibrary } from './ConnectionLibrar
 import { addConnectionFromSelection, assignActiveProfile, autoAssignSelection, deleteSelection, setTool } from './actions';
 import { fitSelection, mitreSelection } from './dialogs/modellingActions';
 import { openOrientDialog } from './surfaceActions';
+import { openStockSplit } from './stockSplitActions';
 import { MODIFY_KEYS } from './modifyTools';
 
 function ToolBtn({ tool, icon, label, shortcut, title }: { tool: Tool; icon: string; label: string; shortcut?: string; title?: string }) {
@@ -77,6 +78,7 @@ export function ToolRail() {
         <ToolBtn tool="extend" icon="extend" label="Extend" shortcut={MODIFY_KEYS.extend} title="Extend or trim an end: by a distance, to a length, a member (axis / face) or a plane" />
         <ToolBtn tool="trim" icon="trim" label="Trim" shortcut={MODIFY_KEYS.trim} title="Trim at a boundary member, or delete the segment between two crossings" />
         <ToolBtn tool="break" icon="break" label="Break" shortcut={MODIFY_KEYS.break} title="Split with a gap (stack / movement joint)" />
+        <ActionBtn icon="break" label="Stock split" onClick={() => openStockSplit()} title="Split at stock length: divide members longer than their stock bar at the nearest transom, with a stack joint (selection, or every mullion)" />
         <ToolBtn tool="stretch" icon="stretch" label="Stretch" shortcut={MODIFY_KEYS.stretch} title="Move a member end: drag the grip, or pick / type the target" />
         <ToolBtn tool="rotate" icon="rotate" label="Rotate" shortcut={MODIFY_KEYS.rotate} title="Rotate members about an axis (copy option)" />
         <ToolBtn tool="mirror" icon="mirror" label="Mirror" shortcut={MODIFY_KEYS.mirror} title="Mirror members about a plane — sections are mirrored too" />

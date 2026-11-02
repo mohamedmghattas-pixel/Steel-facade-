@@ -37,6 +37,8 @@ import { currentDrawingSet, exportSheetsDxf, exportSheetsPdf, requestIndex } fro
 import { sampleProject } from '../core/sample';
 import { parseProfileCsv, profileDefsToCsv, type ProfileDef } from '../core/library/profiles';
 import { importDrawingFile } from './managementActions';
+import { divisionNote, insertWithJunctions } from './profileActions';
+import type { DivideResult } from '../core/model/junctions';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -99,17 +101,24 @@ export function splitSelection() {
 export function assignActiveProfile() {
   const { selection, activeProfile, activeRole } = st();
   if (!selection.members.length) return notify('Select wireframe lines first.', 'error');
-  st().apply('Assign profile', (p) => updateMembers(p, selection.members, { profile: activeProfile, role: activeRole }));
+  // Transoms crossing the mullions are divided there in the same step (mullions stay continuous).
+  let division: DivideResult | null = null;
+  st().apply('Assign profile', (p) => {
+    ({ division } = insertWithJunctions(p, selection.members, () => (updateMembers(p, selection.members, { profile: activeProfile, role: activeRole }), selection.members.length)));
+  });
+  const note = divisionNote(division);
+  if (note) notify(note.trim());
 }
 
 export function autoAssignSelection() {
   const { selection, project } = st();
   const ids = selection.members.length ? selection.members : Object.keys(project.members);
   let n = 0;
+  let division: DivideResult | null = null;
   st().apply('Auto-assign profiles', (p) => {
-    n = autoAssign(p, ids);
+    ({ changed: n, division } = insertWithJunctions(p, ids, () => autoAssign(p, ids)));
   });
-  notify(`Assigned profiles to ${n} line${n === 1 ? '' : 's'} using the rules in Project settings.`);
+  notify(`Assigned profiles to ${n} line${n === 1 ? '' : 's'} using the rules in Project settings.${divisionNote(division)}`);
 }
 
 export function addConnectionFromSelection(type: ConnectionType) {

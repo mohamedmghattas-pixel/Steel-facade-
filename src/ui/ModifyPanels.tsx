@@ -46,6 +46,8 @@ import {
 import { setTool } from './actions';
 import './modify.css';
 import { NavMenuSection } from './AssemblyPanels';
+import { openStockSplit } from './stockSplitActions';
+import { StockSplitDialog } from './dialogs/StockSplitDialog';
 
 // ---------------------------------------------------------------------------
 // Options bar of the active modify tool
@@ -113,6 +115,9 @@ function toolOptions(tool: ModifyTool, o: ModifyOptions): ReactNode {
             </span>
           )}
           {o.split.mode === 'crossings' && <Check label="Mullion–transom only" value={o.split.mtOnly} onChange={(mtOnly) => setOption('split', { mtOnly })} />}
+          <button className="chip" title="Divide mullions longer than their stock bar at the nearest transom, with a stack joint (selection, or every mullion)" onClick={() => openStockSplit()}>
+            At stock length (transoms)…
+          </button>
         </>
       );
     case 'extend':
@@ -337,6 +342,7 @@ function menuItems(ids: Id[], at: { member: Id | null; point: Vec3 | null }): It
       { label: 'Split in N…', run: () => void splitSelectionInto() },
       { label: 'Split at a distance…', run: () => void splitSelectionAtDistance() },
       { label: 'Split at stock lengths…', run: () => void splitSelectionAtLengths() },
+      { label: 'Split at stock length, at transoms (stack joint)…', run: () => openStockSplit(ids), title: 'Divide at the transom nearest below the stock length, with a stack joint above / below the transom or on its centre line' },
       { label: 'Split at a level / grid / plane…', run: () => void splitSelectionAtPlane() },
       { label: 'Split at mullion–transom crossings', run: () => splitSelectionAtCrossings(true) },
     ]);
@@ -371,6 +377,7 @@ function menuItems(ids: Id[], at: { member: Id | null; point: Vec3 | null }): It
       { label: 'Split at mullion–transom crossings', run: () => splitSelectionAtCrossings(true) },
       { label: 'Split at all crossings', run: () => splitSelectionAtCrossings(false) },
       { label: 'Split each in N…', run: () => void splitSelectionInto() },
+      { label: 'Split at stock length, at transoms (stack joints)…', run: () => openStockSplit(ids) },
       { label: 'Extend / shorten ends by…', run: () => void extendSelection('end') },
     ]);
   }
@@ -405,8 +412,17 @@ function gapBetween(a: Id, b: Id): number {
   return Math.max(b0 - a1, a0 - b1, 0);
 }
 
-/** Right-click menu of modify operations for the selection. */
+/** Right-click menu of modify operations for the selection (and the Split at stock length dialog it opens). */
 export function ModifyContextMenu() {
+  return (
+    <>
+      <StockSplitDialog />
+      <ModifyMenu />
+    </>
+  );
+}
+
+function ModifyMenu() {
   const menu = useModifyMenu((s) => s.menu);
   const sel = useStore((s) => s.selection.members);
   const selConns = useStore((s) => s.selection.connections);
@@ -482,6 +498,9 @@ export function ModifyOpsSection({ ids }: { ids: Id[] }) {
         </button>
         <button className="secondary-btn" title="Split only these members where mullions and transoms cross them" onClick={() => splitSelectionAtCrossings(true)}>
           at crossings
+        </button>
+        <button className="secondary-btn" title="Divide members longer than their stock bar at the nearest transom, with a stack joint" onClick={() => openStockSplit(ms)}>
+          stock length…
         </button>
       </div>
       <div className="ops-row">

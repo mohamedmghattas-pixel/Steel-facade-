@@ -70,8 +70,8 @@ describe('bug fix: a wireframe-checked vertical facade gets slab brackets only a
     });
     return p;
   };
-  const check = (p: Project) => {
-    const plan = analyzeWireframe(p);
+  const check = (p: Project, splitMullions?: boolean) => {
+    const plan = analyzeWireframe(p, splitMullions === undefined ? {} : { splitMullions });
     applyWireframePlan(p, plan);
   };
   const transomNodes = (p: Project) =>
@@ -89,7 +89,8 @@ describe('bug fix: a wireframe-checked vertical facade gets slab brackets only a
 
   it('mullions cut at every transom: brackets at the three levels only, at the same places as on the uncut facade', () => {
     const p = grid(false);
-    check(p);
+    // The cut-mullion rule, set explicitly (the default keeps mullions continuous, below).
+    check(p, true);
     // The check cut the mullions at the four transom rows and merged the floor split (no junction there).
     expect(Object.values(p.members).filter((m) => m.role === 'mullion')).toHaveLength(25);
     const plan = planAutoConnect(p);
@@ -109,6 +110,24 @@ describe('bug fix: a wireframe-checked vertical facade gets slab brackets only a
     expect(heights(p)).toEqual(heights(q));
     // Every transom end still gets its cleat, and nothing has a detailing error.
     expect(byType(p, 'angleCleat')).toHaveLength(byType(q, 'angleCleat').length);
+    expect(errorsOf(p)).toEqual([]);
+  });
+
+  it('continuous mullions (the default): every transom joint at a through-node, level brackets at the chain ends', () => {
+    const p = grid(false);
+    check(p);
+    // The floor split had no junction: merged; the transom rows are through-nodes on one mullion per line.
+    expect(Object.values(p.members).filter((m) => m.role === 'mullion')).toHaveLength(5);
+    autoConnect(p);
+    const q = grid(false);
+    autoConnect(q);
+    expect(byType(p, 'angleCleat')).toHaveLength(byType(q, 'angleCleat').length);
+    for (const c of byType(p, 'angleCleat')) expect(membersAtNode(p, c.node).some((x) => x.member.id === c.main && x.at === 'through')).toBe(true);
+    // Level brackets at both chain ends of every mullion, at the same places as on the uncut facade. Known limit
+    // (auto-connect, docs/WIREFRAME_CHECK.md §13): the intermediate floor a continuous mullion passes gets no
+    // fallback level bracket (it is placed from a free end node of the piece across the level).
+    const ends = heights(q).filter((h) => !/ 3400 /.test(h));
+    expect(heights(p)).toEqual(ends);
     expect(errorsOf(p)).toEqual([]);
   });
 

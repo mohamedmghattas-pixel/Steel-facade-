@@ -21,6 +21,7 @@ import {
 } from '../core/model/ops';
 import { dist } from '../core/model/geometry';
 import { mirrorMembers as mirrorModify } from '../core/model/modify';
+import { divideAtMullions } from '../core/model/junctions';
 import { connectionSummaryText, type ConnectionSummary } from '../core/model/connectionFollow';
 import { AUTO_DEFAULTS, CONNECTIONS, applyAutoPlan, applyConnection, paramSpecs, planAutoConnect, type AutoConnectOptions } from '../core/connections/registry';
 import { loadAutoStructure } from '../ui/autoConnectActions';
@@ -544,17 +545,24 @@ export async function runTool(name: string, input: Json): Promise<string> {
         if (input[k] !== undefined) (patch as Json)[k] = input[k];
       }
       if (patch.finish) patch.finish = patch.finish as Finish;
-      s.apply('Assistant: member properties', (d) => updateMembers(d, ids, patch));
-      return out({ updated: ids.length, patch });
+      let divided = 0;
+      s.apply('Assistant: member properties', (d) => {
+        updateMembers(d, ids, patch);
+        // A profile or role insertion: transoms crossing the mullions without a node are divided there.
+        if (patch.profile !== undefined || patch.role !== undefined) divided = divideAtMullions(d, { members: ids }).divided;
+      });
+      return out({ updated: ids.length, patch, ...(divided ? { dividedAtMullions: divided } : {}) });
     }
 
     case 'auto_assign_profiles': {
       const ids = resolveMembers(p, input.filter as Filter);
       let n = 0;
+      let divided = 0;
       s.apply('Assistant: auto-assign', (d) => {
         n = autoAssign(d, ids);
+        divided = divideAtMullions(d, { members: ids }).divided;
       });
-      return out({ assigned: n, rules: p.settings.autoRules });
+      return out({ assigned: n, rules: p.settings.autoRules, ...(divided ? { dividedAtMullions: divided } : {}) });
     }
 
     case 'edit_geometry': {

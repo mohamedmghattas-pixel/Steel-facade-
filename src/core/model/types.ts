@@ -117,6 +117,14 @@ export interface Member {
   batch?: Id;
   /** Manual assembly mark; overrides automatic numbering for this member's assembly. */
   markOverride?: string;
+  /**
+   * Composite section (ProjectLibrary.profileAssemblies id): the member carries
+   * every component of the profile assembly, placed from its base point on the
+   * wire line. `profile` stays the main component's profile, so everything that
+   * needs one section (connections, end preparations, lists) keeps working; the
+   * composite applies only while `profile` is that main profile.
+   */
+  profileAssembly?: Id;
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +289,69 @@ export interface ProjectLibrary {
   templates: CustomTemplate[];
   /** User or catalogue-imported profile definitions (see core/library). */
   profiles: Record<string, unknown>[];
+  /** Composite sections: several profiles sharing one assembly base point (docs/PROFILE_ASSEMBLIES.md). */
+  profileAssemblies: ProfileAssembly[];
+}
+
+/** What a component of a profile assembly is (drives defaults, colours, lists and hatching). */
+export type ProfileComponentKind = 'structural' | 'cladding' | 'gasket' | 'shim' | 'accessory';
+
+/**
+ * How long a component is on a member whose physical (cut) length is L:
+ * - 'full': L + start + end (allowances per end, mm; negative = shorter, e.g. a cover cap −2);
+ * - 'percent': L × (1 + percent / 100) (gaskets: +2 % for shrinkage and fitting);
+ * - 'pieces': discrete pieces of `length` mm, every `spacing` mm (centred, at least
+ *   `edge` from the ends) or one at each connection node of the member (`at: 'nodes'`).
+ */
+export type ComponentLengthRule =
+  | { kind: 'full'; start?: number; end?: number }
+  | { kind: 'percent'; percent: number }
+  | { kind: 'pieces'; length: number; spacing?: number; edge?: number; at?: 'spacing' | 'nodes' };
+
+/** One profile of a profile assembly. */
+export interface ProfileAssemblyComponent {
+  /** Unique within the assembly ("c1", "steel" …). */
+  key: string;
+  name: string;
+  /**
+   * Profile name: a custom POLY profile drawn in the assembly's base-point
+   * coordinates with its insertion point at the base point (DXF upload), or any
+   * catalogue profile placed by `offset`.
+   */
+  profile: string;
+  /** Where the profile's insertion point (its box centre when it has none) sits from the base point, section drawing coordinates, mm. Default (0, 0). */
+  offset?: Vec2;
+  /** Catalogue material (S355, 6063 T6 …) or a non-metal (EPDM, HDPE …; listed only). */
+  material: string;
+  kind: ProfileComponentKind;
+  /** true: a part with NC data and drawings; false: listed only (gaskets in metres, shims in pieces). */
+  fabricate: boolean;
+  lengthRule: ComponentLengthRule;
+  /** Finish of the fabricated part (absent: the member's finish for steel, none otherwise). */
+  finish?: Finish;
+  /** Source layer / block of the DXF upload. */
+  layer?: string;
+}
+
+/**
+ * A composite section: several profiles linked to one assembly insertion point
+ * (the base point), modelled together on a wire line and fabricated as one
+ * assembly with the `main` component as its main part.
+ */
+export interface ProfileAssembly {
+  id: Id;
+  name: string;
+  /** Assembly mark prefix of members carrying it (absent: the role prefix). */
+  prefix?: string;
+  /** Where the base point is (e.g. "glazing line, front face of the back profile"). */
+  basePoint?: string;
+  components: ProfileAssemblyComponent[];
+  /** Key of the main component (the main part of the assembly). */
+  main: string;
+  /** Other drawn orientations of the same detail (e.g. the transom copy turned −90°): the member rotation that reproduces each. */
+  orientations?: { name: string; rotation: number; mirror?: boolean }[];
+  /** File it was uploaded from. */
+  source?: string;
 }
 
 export interface GridLine {
@@ -612,6 +683,8 @@ export interface AutoAssignRule {
 /** The profile (and how it is set) that members of one role get (ProjectSettings.roleProfiles). */
 export interface RoleProfile {
   profile: string;
+  /** Profile assembly (composite section) the role's members carry; `profile` is then its main component's profile. */
+  assembly?: Id;
   /** Section rotation about the member axis, degrees (absent: members keep theirs). */
   rotation?: number;
   /** Alignment mode (absent: members keep theirs). */
@@ -690,6 +763,12 @@ export interface FabricationSettings {
    * ('both': v + h for holes drilled along local y, o + u along local z).
    */
   dstvHollowThrough: 'one' | 'both';
+  /**
+   * DSTV NC1 also for aluminium / non-steel components of composite members
+   * (profile assemblies). Off (absent): they get the extrusion cutting list and
+   * DXF sections only.
+   */
+  dstvAluminium?: boolean;
 }
 
 // ---------------------------------------------------------------------------

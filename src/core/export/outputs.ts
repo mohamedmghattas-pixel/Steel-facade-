@@ -12,6 +12,7 @@ import { anchorScheduleCsv, drawingToDxf } from '../drawings';
 import { exportIfc } from '../io/ifcExport';
 import { exportBcf } from '../io/bcf';
 import { exportDstvAll, exportDstvPlates } from '../fabrication/dstv';
+import { extrusionFiles } from '../fabrication/extrusions';
 import { exportNestedSheets, exportPlateDxfAll } from '../fabrication/plateDxf';
 import { nestPlates } from '../optimize/plateNesting';
 import { planBars } from '../optimize/barNesting';
@@ -65,6 +66,13 @@ export function bomCsvFiles(p: Project, dm: DerivedModel): OutFile[] {
     { name: 'assemblies.csv', data: toCsv(bom.assemblies) },
     { name: 'profiles.csv', data: toCsv(bom.profiles) },
     { name: 'bolts.csv', data: toCsv(bom.bolts) },
+    // Composite members (profile assemblies): gaskets / packers per assembly and the gasket list.
+    ...(bom.accessories.length > 1
+      ? [
+          { name: 'accessories.csv', data: toCsv(bom.accessories) },
+          { name: 'gasket-list.csv', data: toCsv(bom.accessoryTotals) },
+        ]
+      : []),
   ];
 }
 
@@ -77,9 +85,11 @@ const asOut = (files: { name: string; content: string }[]): OutFile[] => files.m
 export function dstvFiles(p: Project, dm: DerivedModel, which: 'all' | 'members' | 'plates' = 'all'): OutFile[] {
   if (which === 'plates') return asOut(exportDstvPlates(p, dm));
   const all = exportDstvAll(p, dm);
-  if (which === 'all') return asOut(all);
+  // Aluminium components of composite members: cutting list and DXF sections next to the NC files.
+  const ext = asOut(extrusionFiles(p, dm));
+  if (which === 'all') return [...asOut(all), ...ext];
   const plates = new Set(dm.parts.filter((x) => x.kind === 'plate').map((x) => `${x.mark}.nc1`));
-  return asOut(all.filter((f) => !plates.has(f.name)));
+  return [...asOut(all.filter((f) => !plates.has(f.name))), ...ext];
 }
 
 /** Plate CNC DXF per unique plate ("PL10-S355/pl3.dxf") plus plates.csv; empty without plates. */

@@ -5,6 +5,7 @@ import { Field, NumberInput, ProfilePicker, Segmented, Select, TextInput, kg, mm
 import { MEMBER_ROLES, type Align, type AlignMode, type Finish, type Member, type MemberRole } from '../core/model/types';
 import { ROLE_LABEL, updateMembers, newId } from '../core/model/ops';
 import { setMemberRole } from '../core/model/roleProfiles';
+import { assignProfileAssembly } from '../core/library/profileAssembly';
 import { alignModeOf } from '../core/model/geometry';
 import { MATERIALS } from '../core/library/materials';
 import { BOLT_SIZES } from '../core/library/bolts';
@@ -15,6 +16,7 @@ import { dist } from '../core/model/geometry';
 import { assignActiveProfile, removeReference } from './actions';
 import { SectionPreview } from './SectionPreview';
 import { RoleProfilesPanel } from './RoleProfilesPanel';
+import { ProfileAssembliesPanel } from './ProfileAssembliesPanel';
 import { deleteCustomProfile, exportProfileDxf, exportProfilesCsv, exportProfilesJson, openProfileImport, openSketcher } from './profileActions';
 import { AssistantPanel } from './AssistantPanel';
 import { ConnectionPreviewView, openConnectionLibrary } from './ConnectionLibrary';
@@ -101,7 +103,11 @@ function MemberProps({ ids }: { ids: string[] }) {
   const profile = c((m) => m.profile);
   const length = ms.reduce((s, m) => s + dist(project.nodes[m.start].p, project.nodes[m.end].p), 0);
   const parts = ms.map((m) => dm.partByRef.get(`m:${m.id}`)).filter(Boolean);
-  const mass = parts.reduce((s, pt) => s + (pt?.mass ?? 0), 0);
+  // Composite members (profile assemblies) have a part per fabricated component.
+  const idSet = new Set(ids);
+  const mass = dm.parts.reduce((s, pt) => s + (pt.memberId && idSet.has(pt.memberId) ? pt.mass : 0), 0);
+  const assemblies = project.library.profileAssemblies ?? [];
+  const pa = c((m) => m.profileAssembly ?? '');
   const marks = [...new Set(parts.map((pt) => pt!.assembly))];
 
   return (
@@ -129,6 +135,22 @@ function MemberProps({ ids }: { ids: string[] }) {
           }}
         />
       </Field>
+      {assemblies.length > 0 && (
+        <Field label="Profile assembly (composite section)">
+          <Select<string>
+            value={pa.value as string}
+            mixed={pa.mixed}
+            options={[{ value: '', label: 'None — single profile' }, ...assemblies.map((a) => ({ value: a.id, label: a.name }))]}
+            onChange={(v) => {
+              try {
+                apply(v ? 'Profile assembly' : 'Single profile', (d) => void assignProfileAssembly(d, ids, v || null));
+              } catch (e) {
+                useStore.getState().notify((e as Error).message, 'error');
+              }
+            }}
+          />
+        </Field>
+      )}
       <div className="row2">
         <Field label="Role">
           <Select<MemberRole>
@@ -662,6 +684,7 @@ function LibraryPanel() {
         Assign {active ?? ''} to {selCount} selected line{selCount === 1 ? '' : 's'}
       </button>
       <RoleProfilesPanel />
+      <ProfileAssembliesPanel />
       <h4>Custom and imported profiles</h4>
       <p className="muted">
         {customCount} custom profile{customCount === 1 ? '' : 's'} in this project. Draw one with its insertion point, or upload DXF outlines (closed polylines, holes inside), JSON or a

@@ -10,6 +10,7 @@ import { Field, Modal, Select } from './widgets';
 import { SectionPreview } from './SectionPreview';
 import { addReviewed, openSketcherWith, reviewFromText } from './profileActions';
 import { useProfileUi, type ImportReview, type ReviewItem } from './profileUiState';
+import { openAssemblyReview } from './profileAssemblyActions';
 import './profiles.css';
 
 const UNITS: { value: string; label: string }[] = [
@@ -85,6 +86,14 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
           <Select value={review.items[0]?.def.material ?? ''} options={[{ value: '', label: 'Steel (member material)' }, ...MATERIALS.map((m) => ({ value: m.name, label: m.name }))]} onChange={(v) => setAll({ material: v || undefined })} />
         </Field>
       </div>
+      {review.kind === 'dxf' && (
+        <p className="muted">
+          An assembly detail — several profiles linked to one base point (steel, aluminium, gaskets, packers)?{' '}
+          <button className="link-btn" onClick={() => openAssemblyReview(review.fileName, review.text)}>
+            Import as profile assembly…
+          </button>
+        </p>
+      )}
       {review.notes.map((n, i) => (
         <p key={i} className="muted">
           {n}

@@ -3,7 +3,7 @@
  * marks. Every output (3D, IFC, drawings, reports, NC, nesting) reads from the
  * `DerivedModel` so they always agree with each other.
  */
-import type { AssemblyGroup, Connection, Finish, Id, Member, MemberRole, PlateBend, Project, Vec2, Vec3 } from '../model/types';
+import type { AssemblyGroup, ComponentLengthRule, Connection, Finish, Id, Member, MemberRole, PlateBend, ProfileComponentKind, Project, Vec2, Vec3 } from '../model/types';
 import { cross, dot, len, madd, normalize, pointSegment, scale, toLocal, type Frame } from '../model/geometry';
 import { anglesFromNormal, cutAngle, massLength, type EndCut } from '../geometry/endPrep';
 import { getProfile } from '../library/profiles';
@@ -14,6 +14,7 @@ import { beginConnIndexPass } from '../movement/provisions';
 import { memberGeom, type GovernedEnds, type MemberGeom, type Trims } from './memberGeom';
 import type { Shape } from '../library/shapes';
 import { polygonArea, bbox2 } from '../model/geometry';
+import { componentDensity, componentFinish, componentShift, memberComposite, ruleAllowances, rulePieces, ruleRunLength } from '../library/profileAssembly';
 
 /** A hole in a linear part, in its local frame. `face` is the axis the hole is drilled along. */
 export interface PartHole {
@@ -105,6 +106,46 @@ export interface Part {
   phase?: Id;
   zone?: string;
   batch?: Id;
+  /**
+   * Part of a composite member (Member.profileAssembly): the profile assembly,
+   * the component key and kind; `main` on the member's own part (the main
+   * component). Other components have refs `mc:<memberId>:<key>` (pieces:
+   * `mc:<memberId>:<key>:<n>`), kind 'member' and the member's id.
+   */
+  component?: { assembly: Id; key: string; kind: ProfileComponentKind; main?: true };
+}
+
+/**
+ * A listed-only component of a composite member (gasket, packer …, not
+ * fabricated): metres or pieces per member, with its geometry for the 3D view,
+ * IFC and the assembly drawing.
+ */
+export interface AccessoryItem {
+  /** `a:<memberId>:<key>`. */
+  ref: string;
+  memberId: Id;
+  /** Main part of the composite (its assembly). */
+  main: PartRef;
+  /** ProfileAssembly id and component key. */
+  profileAssembly: Id;
+  key: string;
+  name: string;
+  profile: string;
+  material: string;
+  kind: ProfileComponentKind;
+  /** 'm': a run cut to length on site (qty = metres); 'pcs': discrete pieces (qty = count). */
+  unit: 'm' | 'pcs';
+  qty: number;
+  /** Length of one piece, mm (unit 'm': the run length with its allowance). */
+  length: number;
+  rule: ComponentLengthRule;
+  /** kg per member. */
+  mass: number;
+  shape?: Shape;
+  /** One frame per piece (part frame: x along the member, section in y / z), with its drawn length. */
+  pieces: { frame: Frame; length: number }[];
+  /** Assembly mark (filled by numbering). */
+  assembly: string;
 }
 
 /** How an assembly got its mark when marks are locked (see Project.markLocks). */
@@ -160,6 +201,8 @@ export interface DerivedModel {
   geoms: Map<Id, MemberGeom>;
   connectionOut: Map<Id, ConnectionOut>;
   warnings: { connectionId?: Id; memberId?: Id; text: string }[];
+  /** Listed-only components of composite members (gaskets, packers …); absent or empty without profile assemblies. */
+  accessories?: AccessoryItem[];
 }
 
 /**
@@ -322,6 +365,10 @@ export function deriveModel(p: Project): DerivedModel {
 
   // Parts.
   const parts: Part[] = [];
+  /** Composite members (profile assemblies): listed-only components, and component parts joined to their member's part. */
+  const accessories: AccessoryItem[] = [];
+  const links: [PartRef, PartRef][] = [];
+  const connNodes = lazyConnNodes(p);
   for (const m of members) {
     const g = geoms.get(m.id)!;
     const prof = g.profile!;
@@ -361,6 +408,7 @@ export function deriveModel(p: Project): DerivedModel {
       mark: '',
       assembly: '',
     });
+    if (m.profileAssembly) compositeParts(p, m, parts[parts.length - 1], parts, accessories, links, warnings, { trims, governed, connNodes });
   }
   const welds: [PartRef, PartRef][] = [];
   for (const [cid, out] of connectionOut) {
@@ -447,6 +495,8 @@ export function deriveModel(p: Project): DerivedModel {
   for (const pt of parts) parent.set(pt.ref, pt.ref);
   for (const pt of parts) if (pt.weldedTo) union(pt.ref, pt.weldedTo);
   for (const [a, b] of welds) union(a, b);
+  // Components of a composite member are one assembly with the member's (main) part.
+  for (const [a, b] of links) union(a, b);
   // Manual assemblies (Project.assemblyGroups): their parts join one assembly with everything welded to them.
   const manual = manualGroups(p, parts, connectionOut);
   for (const refs of manual.refs.values()) for (let i = 1; i < refs.length; i++) union(refs[0], refs[i]);
@@ -474,6 +524,7 @@ export function deriveModel(p: Project): DerivedModel {
     const main = g ? (gm && ps.includes(gm) ? gm : auto()) : (ps.find((x) => x.assemblyMain) ?? auto());
     const prefix =
       g?.prefix?.trim() ||
+      (main.component && p.library?.profileAssemblies?.find((x) => x.id === main.component!.assembly)?.prefix?.trim()) ||
       (main.kind === 'member'
         ? p.settings.assemblyPrefix[main.role as MemberRole] ?? 'A'
         : main.kind === 'profile'
@@ -502,6 +553,7 @@ export function deriveModel(p: Project): DerivedModel {
   for (const [cid, out] of connectionOut) for (const b of out.bolts) bolts.push(manual.internal.has(cid) ? { ...b, connectionId: cid, shop: true } : { ...b, connectionId: cid });
 
   const dm: DerivedModel = { parts, partByRef, assemblies, bolts, geoms, connectionOut, warnings };
+  if (accessories.length) dm.accessories = accessories;
   number(dm, p);
   for (const a of assemblies) {
     if (!a.pieces) continue;
@@ -631,6 +683,48 @@ export function groupPieces(p: Project, memberIds: Id[], plateIds: Id[] = [], co
   return new Set(items.map(root)).size;
 }
 
+const accSolidCache = new WeakMap<DerivedModel, Part[]>();
+
+/**
+ * Accessories of composite members (gaskets, packers …) as part-shaped solids,
+ * one per piece (`<accessory ref>:<n>`), for the 3D view, IFC and drawings.
+ * They are not fabricated parts: lists, NC and numbering never see them.
+ */
+export function accessorySolids(dm: DerivedModel): Part[] {
+  let out = accSolidCache.get(dm);
+  if (!out) {
+    out = [];
+    for (const a of dm.accessories ?? []) {
+      const main = dm.partByRef.get(a.main);
+      a.pieces.forEach((pc, i) =>
+        out!.push({
+          ref: `${a.ref}:${i + 1}`,
+          kind: 'member',
+          memberId: a.memberId,
+          name: a.name,
+          profile: a.profile,
+          material: a.material,
+          finish: 'none',
+          role: main?.role ?? 'other',
+          frame: pc.frame,
+          length: pc.length,
+          width: 0,
+          thickness: 0,
+          shape: a.shape,
+          holes: [],
+          mass: a.pieces.length ? a.mass / a.pieces.length : 0,
+          surface: 0,
+          component: { assembly: a.profileAssembly, key: a.key, kind: a.kind },
+          mark: '',
+          assembly: a.assembly,
+        }),
+      );
+    }
+    accSolidCache.set(dm, out);
+  }
+  return out;
+}
+
 const asmByPartCache = new WeakMap<DerivedModel, Map<PartRef, Assembly>>();
 
 /** The assembly of every part (cached per derived model). */
@@ -699,6 +793,148 @@ export function mirroredPartFrame(
     return { ...c, n, x: length - c.x, ...anglesFromNormal(end, n), copes: c.copes.map((k) => ({ ...k })) };
   };
   return { frame: f, cuts: { start: flip(cuts.end, 'start'), end: flip(cuts.start, 'end'), xMin: length - cuts.xMax, xMax: length - cuts.xMin } };
+}
+
+// ---------------------------------------------------------------------------
+// Composite members (profile assemblies, docs/PROFILE_ASSEMBLIES.md)
+
+/** Connection nodes on each member (as main or secondary), built on first use. */
+function lazyConnNodes(p: Project): (memberId: Id) => Vec3[] {
+  let map: Map<Id, Vec3[]> | null = null;
+  return (id) => {
+    if (!map) {
+      map = new Map();
+      for (const c of Object.values(p.connections)) {
+        const at = p.nodes[c.node]?.p;
+        if (!at) continue;
+        for (const mid of [c.main, ...c.secondary]) {
+          if (!mid) continue;
+          const arr = map.get(mid);
+          if (arr) arr.push(at);
+          else map.set(mid, [at]);
+        }
+      }
+    }
+    return map.get(id) ?? [];
+  };
+}
+
+/**
+ * The other components of a composite member: each on the member's wire line
+ * with the assembly base point as insertion point and the member's frame
+ * (surface normal, rotation, mirror), cut to its length rule. Fabricated ones
+ * are parts joined to the member's part (one assembly, the member's part its
+ * main part); the others are accessories.
+ */
+function compositeParts(
+  p: Project,
+  m: Member,
+  mainPart: Part,
+  parts: Part[],
+  accessories: AccessoryItem[],
+  links: [PartRef, PartRef][],
+  warnings: DerivedModel['warnings'],
+  o: { trims: Trims; governed: GovernedEnds; connNodes: (id: Id) => Vec3[] },
+) {
+  const comp = memberComposite(p, m);
+  if (!comp) {
+    const asm = p.library?.profileAssemblies?.find((a) => a.id === m.profileAssembly);
+    warnings.push({ memberId: m.id, text: asm ? `Profile assembly ${asm.name}: the member's profile ${m.profile} is not its main profile — only ${m.profile} is modelled.` : `Profile assembly ${m.profileAssembly} is not in the library — only ${m.profile} is modelled.` });
+    return;
+  }
+  const { asm, main } = comp;
+  const mainProf = getProfile(m.profile)!;
+  mainPart.component = { assembly: asm.id, key: main.key, kind: main.kind, main: true };
+  mainPart.assemblyMain = true;
+  for (const c of asm.components) {
+    if (c.key === main.key) continue;
+    const prof = getProfile(c.profile);
+    if (!prof) {
+      warnings.push({ memberId: m.id, text: `Profile assembly ${asm.name}: component ${c.name} has no profile "${c.profile}" — left out.` });
+      continue;
+    }
+    const shift = componentShift(m, mainProf, main, c, prof);
+    const g = memberGeom(p, m, o.trims, o.governed, { profile: prof, shift });
+    if (g.length <= 1) continue;
+    const rule = c.lengthRule;
+    const density = componentDensity(c.material);
+    // Pieces in the component's member frame: [x0, length] along the physical centre line.
+    let pieces: { x: number; length: number }[];
+    let cuts = g.cuts;
+    let frame = g.frame;
+    let length = g.length;
+    if (rule.kind === 'pieces') {
+      const nodeXs = o.connNodes(m.id).map((q) => toLocal(g.frame, q).x);
+      pieces = rulePieces(rule, g.length, nodeXs);
+      cuts = undefined;
+    } else {
+      const a = ruleAllowances(rule);
+      if (a.start || a.end) {
+        frame = { ...g.frame, origin: madd(g.frame.origin, g.frame.x, -a.start) };
+        length = Math.max(1, g.length + a.start + a.end);
+        if (cuts) cuts = { start: { ...cuts.start }, end: { ...cuts.end, x: cuts.end.x + a.start + a.end }, xMin: cuts.xMin, xMax: cuts.xMax + a.start + a.end };
+      }
+      pieces = [{ x: 0, length }];
+    }
+    if (!c.fabricate) {
+      const runs = pieces.map((pc) => {
+        const f = { ...frame, origin: madd(frame.origin, frame.x, pc.x) };
+        return m.mirrorSection ? { frame: mirroredPartFrame(f, pc.length, undefined).frame, length: pc.length } : { frame: f, length: pc.length };
+      });
+      const unit = rule.kind === 'pieces' ? 'pcs' : 'm';
+      const run = rule.kind === 'pieces' ? pieces.reduce((s2, x) => s2 + x.length, 0) : ruleRunLength(rule, g.length);
+      accessories.push({
+        ref: `a:${m.id}:${c.key}`,
+        memberId: m.id,
+        main: mainPart.ref,
+        profileAssembly: asm.id,
+        key: c.key,
+        name: c.name,
+        profile: prof.name,
+        material: c.material,
+        kind: c.kind,
+        unit,
+        qty: unit === 'pcs' ? pieces.length : run / 1000,
+        length: unit === 'pcs' ? (pieces[0]?.length ?? 0) : run,
+        rule,
+        mass: (prof.area * run * density) / 1e9,
+        shape: prof.shape,
+        pieces: runs,
+        assembly: '',
+      });
+      continue;
+    }
+    pieces.forEach((pc, i) => {
+      const f = rule.kind === 'pieces' ? { ...frame, origin: madd(frame.origin, frame.x, pc.x) } : frame;
+      const pf = m.mirrorSection ? mirroredPartFrame(f, pc.length, cuts) : { frame: f, cuts };
+      const lp = linearPart(pf.frame, pc.length, pf.cuts, prof.shape, prof.area, { y: prof.cy ?? 0, z: prof.cz ?? 0 });
+      const ref = rule.kind === 'pieces' ? `mc:${m.id}:${c.key}:${i + 1}` : `mc:${m.id}:${c.key}`;
+      parts.push({
+        ref,
+        kind: 'member',
+        memberId: m.id,
+        name: c.name,
+        profile: prof.name,
+        material: c.material,
+        finish: componentFinish(c, m.finish),
+        role: m.role,
+        frame: lp.frame,
+        length: lp.length,
+        width: prof.b,
+        thickness: 0,
+        shape: prof.shape,
+        holes: [],
+        mass: (prof.area * lp.massLength * density) / 1e9,
+        surface: (prof.surface * lp.massLength) / 1000,
+        ends: lp.ends,
+        sigExtra: lp.sig,
+        component: { assembly: asm.id, key: c.key, kind: c.kind },
+        mark: '',
+        assembly: '',
+      });
+      links.push([mainPart.ref, ref]);
+    });
+  }
 }
 
 /** Free plates, bent plates and stiffeners (Project.plates) as plate parts. */
@@ -797,7 +1033,9 @@ export function partSignature(pt: Part): string {
 function partPrefix(pt: Part, p: Project): string {
   if (pt.kind === 'plate') return 'pl';
   if (pt.kind === 'profile') return 'cl';
-  return (p.settings.assemblyPrefix[pt.role as MemberRole] ?? 'a').toLowerCase();
+  // Components of a composite: the profile assembly's prefix when it has one.
+  const own = pt.component ? p.library?.profileAssemblies?.find((a) => a.id === pt.component!.assembly)?.prefix?.trim() : undefined;
+  return (own || p.settings.assemblyPrefix[pt.role as MemberRole] || 'a').toLowerCase();
 }
 
 /** Same order as `a.localeCompare(b)` / `a.localeCompare(b, undefined, { numeric: true })`, without building a collator per call. */
@@ -854,8 +1092,8 @@ function assignGrouping(dm: DerivedModel, p: Project) {
   }
 }
 
-/** Main part mark + secondary marks with their placement relative to the main part. */
-function assemblySignature(dm: DerivedModel, a: Assembly): string {
+/** Main part mark + secondary marks with their placement relative to the main part (+ accessories of a composite). */
+function assemblySignature(dm: DerivedModel, a: Assembly, acc?: Map<PartRef, string>): string {
   const main = dm.partByRef.get(a.main)!;
   const ax = (v: Vec3) => `${Math.round(dot(v, main.frame.x) * 100)},${Math.round(dot(v, main.frame.y) * 100)},${Math.round(dot(v, main.frame.z) * 100)}`;
   const rel = a.parts
@@ -867,7 +1105,8 @@ function assemblySignature(dm: DerivedModel, a: Assembly): string {
     })
     .sort()
     .join('|');
-  return `${a.prefix}#${main.mark}#${rel}`;
+  const extra = acc?.get(a.main);
+  return `${a.prefix}#${main.mark}#${rel}${extra ? `#${extra}` : ''}`;
 }
 
 /** Manual mark of an assembly: the main member's markOverride, else the first one found on its other members. */
@@ -909,8 +1148,11 @@ function number(dm: DerivedModel, p: Project) {
   // Assemblies
   assignGrouping(dm, p);
   const manual = new Map<Assembly, string>();
+  // Accessories of composite members (gaskets, packers) are part of their assembly's identity.
+  const acc = new Map<PartRef, string>();
+  for (const x of dm.accessories ?? []) acc.set(x.main, `${acc.get(x.main) ?? ''}${x.key}:${x.profile}:${x.unit}${r1(x.unit === 'm' ? x.qty * 1000 : x.qty)}x${r1(x.length)};`);
   for (const a of dm.assemblies) {
-    a.signature = assemblySignature(dm, a);
+    a.signature = assemblySignature(dm, a, acc);
     const m = manualMark(p, dm, a);
     if (m) {
       manual.set(a, m);
@@ -952,6 +1194,7 @@ function number(dm: DerivedModel, p: Project) {
   for (const [mark, sigs] of sigsByMark) {
     if (sigs.size > 1) dm.warnings.push({ text: `Mark ${mark} is used for ${sigs.size} assemblies that are not identical (manual or locked marks).` });
   }
+  for (const x of dm.accessories ?? []) x.assembly = dm.partByRef.get(x.main)?.assembly ?? '';
 }
 
 /** Unique parts with quantities, ordered by mark. */

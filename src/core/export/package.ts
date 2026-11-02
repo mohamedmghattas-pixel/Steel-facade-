@@ -10,6 +10,7 @@ import { uniqueParts, type DerivedModel } from '../derive/model';
 import { allDrawings, drawingToSvg, sheetFileStem } from '../drawings';
 import type { Drawing } from '../drawings/types';
 import { exportPlateDxfAll, flatPatternsDxf } from '../fabrication/plateDxf';
+import { hasDstv } from '../fabrication/dstv';
 import { buildBom, toCsv } from '../reports/bom';
 import { drawingToDxf } from '../drawings';
 import { fillXlsxTemplate } from '../io/xlsxTemplate';
@@ -416,7 +417,7 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       if (!parts) return { skip: NO_PARTS };
       const which = id === 'nc1-all' ? 'all' : id === 'nc1-plates' ? 'plates' : 'members';
       const keep = (kind: string, hasOutline: boolean) => (which === 'all' ? true : which === 'plates' ? kind === 'plate' && hasOutline : kind !== 'plate');
-      const list = uniqueParts(dm).filter(({ part }) => keep(part.kind, !!part.outline?.length));
+      const list = uniqueParts(dm).filter(({ part }) => keep(part.kind, !!part.outline?.length) && hasDstv(p, part));
       if (!list.length) return { skip: which === 'plates' ? 'there are no plates' : 'there are no linear parts' };
       const files = lazy(() => new Map(out.dstvFiles(p, dm, which).map((f) => [f.name, f.data])));
       const ctxs = partContext(ctx);

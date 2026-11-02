@@ -10,26 +10,32 @@
  * that references each part drawing.
  */
 import type { Project, Vec2, Vec3 } from '../model/types';
-import type { Assembly, DerivedModel, Part } from '../derive/model';
+import { accessorySolids, type AccessoryItem, type Assembly, type DerivedModel, type Part } from '../derive/model';
 import { shapeBox } from '../library/shapes';
+import { getProfile } from '../library/profiles';
+import { componentInsertion, findProfileAssembly, KIND_LABEL, lengthRuleLabel, materialClass, type MaterialClass } from '../library/profileAssembly';
 import type { Drawing } from './types';
-import { Sheet, balloon, dimChain, dimLinear, weldSymbol } from './dims';
+import { Sheet, balloon, dimChain, dimLinear, dimRunning, weldSymbol } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Rect } from './layout';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
 import { brokenAxis, drawBand, endOutline, frontInnerLines, keptMid, symmetricSection, topInnerLines, uniqSorted } from './views';
 import { bounds } from './project';
+import { clipHalfPlane } from '../model/geometry';
 import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
 import {
   HATCH_STYLES,
+  NARROW_SECTION,
   SECTION_LABEL,
   cutPrism,
   cuttingPlane,
   drawCut,
+  hatch,
   partPrism,
   polyCenter,
   projectPrism,
   viewLabel,
+  type Cut,
   type Poly,
   type Prism,
   type Projection,
@@ -45,6 +51,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
   const welded = parts.filter((pt) => pt !== main && pt.weldedTo);
   const first = ctx.std.projection === 'first';
   const set = p.drawings.settings;
+  const composite = compositeOf(p, dm, main);
 
   // Parts list (ISO 7573), main part first.
   const byMark = new Map<string, { part: Part; n: number }>();
@@ -81,7 +88,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
         { head: 'Part drawing', w: 34 },
       ],
       rows: [
-        ...ordered.map(({ part, n }) => [part.mark, n, designation(part), part.material, part.mass.toFixed(2), drawingNumber(p, `part-${part.mark}`)]),
+        ...ordered.map(({ part, n }) => [part.mark, n, composite && part.component ? designation(part).replace(`${composite.name} / `, '') : designation(part), part.material, part.mass.toFixed(2), drawingNumber(p, `part-${part.mark}`)]),
         ['', '', `Assembly mass (each)`, '', asm.mass.toFixed(1), ''],
       ],
       nav: { col: 0, kind: 'part', asm: asm.mark },
@@ -99,6 +106,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
       nav: { col: 0, kind: 'asm' },
     }),
     ...shopBoltsBlock(dm, asm),
+    ...(composite ? compositeBlocks(composite, asm) : []),
   ];
   const areas = packBlocks(s, size, blocks);
   // A heading line at the top of the free area, the views below it.
@@ -106,7 +114,7 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
   s.text({ x: areas.full.x0 + 4, y: areas.full.y1 - 4 }, `Assembly ${asm.mark} – main part ${main.mark} ${designation(main)}`, TEXT.small, 'start');
 
   const scale =
-    main.kind === 'plate' || !main.shape ? drawPlateAssembly(ctx, s, main, parts, welded, free, first) : drawLinearAssembly(ctx, s, main, parts, welded, free, first);
+    main.kind === 'plate' || !main.shape ? drawPlateAssembly(ctx, s, main, parts, welded, free, first) : drawLinearAssembly(ctx, s, main, parts, welded, free, first, composite);
   // Balloons name parts of this assembly.
   for (const e of s.ents) if (e.nav?.part && !e.nav.asm) e.nav = { ...e.nav, asm: asm.mark };
 
@@ -347,24 +355,284 @@ interface SectionPart {
  * outlines, cut parts hatched (adjacent parts with different hatching).
  * Returns the extent of what was drawn (view coordinates, model mm).
  */
-function drawSection(s: Sheet, items: SectionPart[], main: Part, view: ViewAxes, at: number, M: (v: Vec2) => Vec2, ext: number): Poly[] {
+function drawSection(s: Sheet, items: SectionPart[], main: Part, view: ViewAxes, at: number, M: (v: Vec2) => Vec2, ext: number, composite?: CompositeInfo): Poly[] {
   const drawn: Poly[] = [];
   let k = 1;
   const order = [...items.filter((i) => i.pt !== main), ...items.filter((i) => i.pt === main)];
+  const seen = new Map<MaterialClass, number>();
   for (const it of order) {
     if (it.proj.dmax <= at + 0.5) continue; // between the viewer and the cutting plane: removed
     const cut = cutPrism(it.prism, view, at, ext);
     if (it.proj.dmin < at - 0.5 && !cut) continue;
-    // Looking along the prism axis the cut is the outline itself.
-    const endOn = Math.abs(dot3(it.prism.w, view.D)) > 0.999;
-    if (!(cut && endOn)) for (const poly of it.proj.polys) s.poly(poly.map(M), true, 'visible');
-    drawn.push(it.proj.polys[0]);
-    if (cut) {
-      drawCut(s, cut, M, it.pt === main ? HATCH_STYLES[0] : HATCH_STYLES[k++ % HATCH_STYLES.length]);
+    const draw = () => {
+      // Looking along the prism axis the cut is the outline itself.
+      const endOn = Math.abs(dot3(it.prism.w, view.D)) > 0.999;
+      if (!(cut && endOn)) for (const poly of it.proj.polys) s.poly(poly.map(M), true, 'visible');
+      drawn.push(it.proj.polys[0]);
+      if (!cut) return;
+      if (composite && it.pt.component) {
+        // Composite section: hatching by material (adjacent parts of one material vary the spacing).
+        const cls = materialClass(it.pt.material);
+        const n = seen.get(cls) ?? 0;
+        seen.set(cls, n + 1);
+        drawMaterialCut(s, cut, M, cls, it.pt === main ? 0 : n);
+      } else drawCut(s, cut, M, it.pt === main ? HATCH_STYLES[0] : HATCH_STYLES[k++ % HATCH_STYLES.length]);
       drawn.push(...cut.regions);
-    }
+    };
+    // Components of a composite carry one stable id each (section:component:<key>).
+    if (composite && it.pt.component) s.withTag({ id: `section:component:${it.pt.component.key}` }, draw);
+    else draw();
   }
   return drawn;
+}
+
+// ---------------------------------------------------------------------------
+// Composite members (profile assemblies, docs/PROFILE_ASSEMBLIES.md)
+
+interface CompositeInfo {
+  name: string;
+  basePoint?: string;
+  /** Base point in the main part's frame (local y, z). */
+  base: Vec2;
+  accessories: AccessoryItem[];
+  /** Accessory pieces as part-shaped solids (drawn and cut in section A–A). */
+  solids: Part[];
+}
+
+function compositeOf(p: Project, dm: DerivedModel, main: Part): CompositeInfo | undefined {
+  if (!main.component?.main) return undefined;
+  const asm = findProfileAssembly(p, main.component.assembly);
+  const comp = asm?.components.find((c) => c.key === main.component!.key);
+  const prof = getProfile(main.profile);
+  if (!asm || !comp || !prof) return undefined;
+  const accessories = (dm.accessories ?? []).filter((x) => x.main === main.ref);
+  const refs = new Set(accessories.map((x) => x.ref));
+  const solids = accessorySolids(dm).filter((x) => refs.has(x.ref.slice(0, x.ref.lastIndexOf(':'))));
+  return { name: asm.name, basePoint: asm.basePoint, base: componentInsertion(comp, prof), accessories, solids };
+}
+
+/** Hatching per material class (ISO 128-50 leaves the pattern free; these follow common practice). */
+const MATERIAL_HATCH: Record<MaterialClass, { angle: number; spacing: number; cross?: boolean }[]> = {
+  steel: [
+    { angle: 45, spacing: 2 },
+    { angle: 45, spacing: 3 },
+  ],
+  stainless: [
+    { angle: 45, spacing: 1.5 },
+    { angle: 45, spacing: 2.5 },
+  ],
+  aluminium: [
+    { angle: 135, spacing: 1.2 },
+    { angle: 135, spacing: 2 },
+    { angle: 105, spacing: 1.6 },
+  ],
+  rubber: [{ angle: 45, spacing: 1, cross: true }],
+  plastic: [{ angle: 45, spacing: 2.5, cross: true }],
+};
+
+const HATCH_LEGEND: Record<MaterialClass, string> = {
+  steel: 'steel 45°',
+  stainless: 'stainless steel 45° fine',
+  aluminium: 'aluminium 135°',
+  rubber: 'EPDM / rubber cross-hatched (thin sections solid)',
+  plastic: 'plastics (packers, shims) cross-hatched wide',
+};
+
+function drawMaterialCut(s: Sheet, cut: Cut, M: (v: Vec2) => Vec2, cls: MaterialClass, variant: number) {
+  const list = MATERIAL_HATCH[cls];
+  const st = list[variant % list.length];
+  drawCut(s, cut, M, st);
+  if (!st.cross) return;
+  const regions = cut.regions.map((r) => r.map(M));
+  let area = 0;
+  let per = 0;
+  for (const r of regions) {
+    let a = 0;
+    for (let i = 0; i < r.length; i++) {
+      const p = r[i];
+      const q = r[(i + 1) % r.length];
+      a += p.x * q.y - q.x * p.y;
+      per += Math.hypot(q.x - p.x, q.y - p.y);
+    }
+    area += Math.abs(a) / 2;
+  }
+  // Narrow sections are already blackened by the first hatching.
+  if (per > 0 && (2 * area) / per < NARROW_SECTION) return;
+  hatch(s, regions, { angle: st.angle + 90, spacing: st.spacing, exclude: cut.voids.map((v) => v.map(M)) });
+}
+
+/** The section notes and the accessories list of a composite assembly drawing. */
+function compositeBlocks(c: CompositeInfo, asm: Assembly) {
+  const classes = new Set<MaterialClass>(['steel', 'aluminium']);
+  for (const x of c.accessories) classes.add(materialClass(x.material));
+  const notes = [
+    `Composite section ${c.name}: every component is placed from the assembly base point BP${c.basePoint ? ` (${c.basePoint})` : ''}; section A–A dimensions run from BP.`,
+    `Section hatching: ${[...classes].map((k) => HATCH_LEGEND[k]).join(', ')}.`,
+  ];
+  const blocks = [notesBlock('Composite section', notes)];
+  if (c.accessories.length)
+    blocks.push(
+      tableBlock({
+        title: `Accessories (not fabricated) – assembly ${asm.mark}`,
+        cols: [
+          { head: 'Item', w: 36 },
+          { head: 'Kind', w: 23 },
+          { head: 'Material', w: 15 },
+          { head: 'Qty', w: 12, align: 'end' },
+          { head: 'Unit', w: 9 },
+          { head: 'Rule', w: 36 },
+        ],
+        rows: c.accessories.map((x) => [x.name, KIND_LABEL[x.kind], x.material, x.unit === 'm' ? x.qty.toFixed(2) : x.qty, x.unit, lengthRuleLabel(x.rule)]),
+      }),
+    );
+  return blocks;
+}
+
+/**
+ * Base point (BP) of a composite in section A–A, with running dimensions
+ * (ISO 129-1) from it to the outer edges of the composite and of the main
+ * component, and the overall size further out.
+ */
+function compositeDims(s: Sheet, drawn: Poly[], mainPolys: Poly[], bp: Vec2, M: (v: Vec2) => Vec2, view = 'section', overall = true) {
+  const all = bounds(drawn.flat());
+  const mb = mainPolys.length ? bounds(mainPolys.flat()) : all;
+  const P = M(bp);
+  s.withTag({ id: `${view}:basepoint` }, () => {
+    s.circle(P, 1.6, 'visible');
+    s.line({ x: P.x - 3.2, y: P.y }, { x: P.x + 3.2, y: P.y }, 'thin');
+    s.line({ x: P.x, y: P.y - 3.2 }, { x: P.x, y: P.y + 3.2 }, 'thin');
+    s.text({ x: P.x + 2, y: P.y + 2 }, 'BP', TEXT.small, 'start', 'text', 0, true);
+  });
+  const a = M({ x: all.minX, y: all.minY });
+  const b = M({ x: all.maxX, y: all.maxY });
+  const x0 = Math.min(a.x, b.x);
+  const x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y);
+  const y1 = Math.max(a.y, b.y);
+  const k = Math.abs(M({ x: 1, y: 0 }).x - M({ x: 0, y: 0 }).x) || 1;
+  // Key edges along each axis (model mm), at least 4 mm apart on paper and from BP.
+  const edges = (vals: number[], at: number) => {
+    const out: number[] = [];
+    for (const v of [...vals].sort((u, w) => u - w)) if (Math.abs(v - at) * k >= 4 && out.every((o) => Math.abs(o - v) * k >= 4)) out.push(v);
+    return out;
+  };
+  const hx = edges([all.minX, all.maxX, mb.minX, mb.maxX], bp.x);
+  const vy = edges([all.minY, all.maxY, mb.minY, mb.maxY], bp.y);
+  // Extension lines start at the edge itself: the lowest outline point on a vertical edge, the rightmost on a horizontal one.
+  const pts = [...drawn.flat(), ...mainPolys.flat()];
+  const lowestAt = (x: number) => M({ x, y: Math.min(...pts.filter((q) => Math.abs(q.x - x) < 1e-6).map((q) => q.y), all.maxY) });
+  const rightmostAt = (y: number) => M({ x: Math.max(...pts.filter((q) => Math.abs(q.y - y) < 1e-6).map((q) => q.x), all.minX), y });
+  for (const side of [-1, 1] as const) {
+    const xs = hx.filter((v) => Math.sign(v - bp.x) === side).sort((u, w) => side * (u - w));
+    if (xs.length) dimRunning(s, [{ x: P.x, y: P.y }, ...xs.map(lowestAt)], [0, ...xs.map((v) => Math.abs(v - bp.x))], 'h', y0 - 9, TEXT.small, `dim:${view}:bp-h${side < 0 ? 'l' : 'r'}`);
+    const ys = vy.filter((v) => Math.sign(v - bp.y) === side).sort((u, w) => side * (u - w));
+    if (ys.length) dimRunning(s, [{ x: P.x, y: P.y }, ...ys.map(rightmostAt)], [0, ...ys.map((v) => Math.abs(v - bp.y))], 'v', x1 + 12, TEXT.small, `dim:${view}:bp-v${side < 0 ? 'd' : 'u'}`);
+  }
+  if (!overall) return;
+  dimLinear(s, { x: x0, y: y0 }, { x: x1, y: y0 }, 'h', y0 - 24, all.maxX - all.minX, { id: `dim:${view}:overall-h` });
+  dimLinear(s, { x: x1, y: y0 }, { x: x1, y: y1 }, 'v', x1 + 26, all.maxY - all.minY, { id: `dim:${view}:overall-v` });
+}
+
+const DETAIL_LETTER = 'B';
+
+/**
+ * ISO 5455 detail of a composite section: when the small components around the
+ * base point (glazing profiles, gaskets, packers) are tiny at the section's
+ * scale, they are drawn again at 2:1, 1:1 or 1:2 to the right of the section,
+ * clipped to their zone (narrow continuous frame), with the base point and
+ * running dimensions from it. The zone is circled on the section with the
+ * detail letter (ISO 128-3).
+ */
+function compositeDetail(S: Sheet, items: SectionPart[], main: Part, view: ViewAxes, at: number, ds: number, bp: Vec2, M: (v: Vec2) => Vec2): { cx: number; dd: number } | null {
+  const cuts = items
+    .filter((it) => it.pt.component && it.proj.dmax > at + 0.5)
+    .map((it) => ({ it, cut: cutPrism(it.prism, view, at, 0) }))
+    .filter((x): x is { it: SectionPart; cut: Cut } => !!x.cut && x.cut.regions.length > 0);
+  if (!cuts.length) return null;
+  const all = bounds(cuts.flatMap((x) => x.cut.regions[0]));
+  const area = (b: { minX: number; minY: number; maxX: number; maxY: number }) => (b.maxX - b.minX) * (b.maxY - b.minY);
+  const small = cuts.filter((x) => x.it.pt !== main && area(bounds(x.cut.regions[0])) < 0.15 * area(all));
+  if (small.length < 2) return null;
+  const sb = bounds([...small.flatMap((x) => x.cut.regions[0]), bp]);
+  const m = 3;
+  const z = { minX: sb.minX - m, minY: sb.minY - m, maxX: sb.maxX + m, maxY: sb.maxY + m };
+  const size = Math.max(z.maxX - z.minX, z.maxY - z.minY);
+  if (size / ds > 40) return null; // legible as it is
+  const dd = [0.5, 1, 2].find((d) => d < ds && size / d <= 95);
+  if (!dd) return null;
+  // Callout on the section: a narrow circle round the zone and the letter.
+  const c = M({ x: (z.minX + z.maxX) / 2, y: (z.minY + z.maxY) / 2 });
+  const r = Math.hypot(z.maxX - z.minX, z.maxY - z.minY) / 2 / ds;
+  S.withTag({ id: 'section:detail-callout' }, () => {
+    S.circle(c, r, 'thin');
+    S.text({ x: c.x - r * 0.72 - 1.5, y: c.y + r * 0.72 }, DETAIL_LETTER, TEXT.normal, 'end', 'text', 0, true);
+  });
+  const eb = entsBox(S.ents);
+  const ox = eb.x1 + 16;
+  const oy = (eb.y0 + eb.y1) / 2 - (z.maxY - z.minY) / 2 / dd;
+  const Md = (v: Vec2) => ({ x: ox + (v.x - z.minX) / dd, y: oy + (v.y - z.minY) / dd });
+  const clip = (poly: Poly) => {
+    let q = poly;
+    for (const [a, b, cc] of [
+      [-1, 0, -z.minX],
+      [1, 0, z.maxX],
+      [0, -1, -z.minY],
+      [0, 1, z.maxY],
+    ] as const) {
+      if (q.length < 3) return [];
+      q = clipHalfPlane(q, a, b, cc);
+    }
+    return q.length >= 3 ? q : [];
+  };
+  const onFrame = (p: Vec2, q: Vec2) =>
+    (Math.abs(p.x - z.minX) < 1e-6 && Math.abs(q.x - z.minX) < 1e-6) ||
+    (Math.abs(p.x - z.maxX) < 1e-6 && Math.abs(q.x - z.maxX) < 1e-6) ||
+    (Math.abs(p.y - z.minY) < 1e-6 && Math.abs(q.y - z.minY) < 1e-6) ||
+    (Math.abs(p.y - z.maxY) < 1e-6 && Math.abs(q.y - z.maxY) < 1e-6);
+  const drawn: Poly[] = [];
+  const seen = new Map<MaterialClass, number>();
+  for (const { it, cut } of cuts) {
+    const regions = cut.regions.map(clip).filter((q) => q.length);
+    if (!regions.length) continue;
+    const cls = materialClass(it.pt.material);
+    const n = seen.get(cls) ?? 0;
+    seen.set(cls, n + 1);
+    S.withTag({ id: `detail:component:${it.pt.component!.key}` }, () => {
+      for (const q of regions)
+        for (let i = 0; i < q.length; i++) {
+          const a = q[i];
+          const b = q[(i + 1) % q.length];
+          if (!onFrame(a, b)) S.line(Md(a), Md(b), 'visible');
+        }
+      materialHatch(S, regions.map((q) => q.map(Md)), [], cls, it.pt === main ? 0 : n);
+    });
+    drawn.push(...regions);
+  }
+  if (!drawn.length) return null;
+  S.withTag({ id: 'detail:frame' }, () => S.poly([Md({ x: z.minX, y: z.minY }), Md({ x: z.maxX, y: z.minY }), Md({ x: z.maxX, y: z.maxY }), Md({ x: z.minX, y: z.maxY })], true, 'thin'));
+  compositeDims(S, drawn, [], bp, Md, 'detail', false);
+  return { cx: Md({ x: (z.minX + z.maxX) / 2, y: 0 }).x, dd };
+}
+
+/** Material hatching of cut regions already on paper (outlines drawn by the caller). */
+function materialHatch(s: Sheet, regions: Poly[], voids: Poly[], cls: MaterialClass, variant: number) {
+  const list = MATERIAL_HATCH[cls];
+  const st = list[variant % list.length];
+  let area = 0;
+  let per = 0;
+  for (const r of regions) {
+    let a = 0;
+    for (let i = 0; i < r.length; i++) {
+      const p = r[i];
+      const q = r[(i + 1) % r.length];
+      a += p.x * q.y - q.x * p.y;
+      per += Math.hypot(q.x - p.x, q.y - p.y);
+    }
+    area += Math.abs(a) / 2;
+  }
+  const narrow = per > 0 && (2 * area) / per < NARROW_SECTION;
+  hatch(s, regions, { angle: st.angle, spacing: narrow ? 0.7 : st.spacing, exclude: voids });
+  if (st.cross && !narrow) hatch(s, regions, { angle: st.angle + 90, spacing: st.spacing, exclude: voids });
 }
 
 /** Overall dimensions of a view's extent: horizontal below, vertical on the right. */
@@ -381,7 +649,7 @@ function overallDims(s: Sheet, b: { minX: number; minY: number; maxX: number; ma
 // ---------------------------------------------------------------------------
 // Linear main part (mullions, transoms, posts …)
 
-function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], welded: Part[], areas: Rect[], first: boolean): string {
+function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], welded: Part[], areas: Rect[], first: boolean, composite?: CompositeInfo): string {
   const F = main.frame;
   const shape = main.shape!;
   const box = shapeBox(shape);
@@ -404,12 +672,21 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
   // (cut parts count double); else through the first hole group, or mid-length.
   const inset = Math.min(L / 2, 20);
   const clampX = (x: number) => Math.min(L - inset, Math.max(inset, x));
+  // Composite: accessory pieces (gaskets, packers) are cut too; a section through a packer shows it.
+  const accs = composite?.solids ?? [];
   const candidates = [
     ...[...secX.values()].sort((a, b) => a - b).map(clampX),
     ...uniqSorted(main.holes.map((h) => h.x)),
+    ...accs.map((pt) => alongMain(pt, F)).filter((x) => x > inset && x < L - inset),
     L / 2,
   ];
-  const sItems: SectionPart[] = parts.map((pt) => ({ pt, prism: prisms.get(pt.ref)!, proj: projS.get(pt.ref)! }));
+  const sItems: SectionPart[] = [
+    ...parts.map((pt) => ({ pt, prism: prisms.get(pt.ref)!, proj: projS.get(pt.ref)! })),
+    ...accs.map((pt) => {
+      const prism = partPrism(pt, F);
+      return { pt, prism, proj: projectPrism(prism, VS) };
+    }),
+  ];
   const score = (x: number) => {
     const at = dot3(VS.D, V(x, 0, 0));
     let n = 0;
@@ -439,6 +716,8 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
     ...sItems.filter((it) => it.pt !== main && it.proj.dmax > at + 0.5).flatMap((it) => it.proj.polys[0]),
   ]);
   const sExtent = Math.max(sExt.maxX - sExt.minX, sExt.maxY - sExt.minY);
+  // A composite section is a detail (ISO 5455): scaled up to about 90–150 mm on paper when it fits.
+  const sectionScales = (den: number) => (composite ? sectionScaleOptions(ISO_SCALES, sExtent, den, 90, 150) : sectionScaleOptions(ISO_SCALES, sExtent, den));
   const look = { x: first ? 1 : -1, y: 0 };
   const eSide = first ? 1 : -1;
   const symmetric = symmetricSection(shape);
@@ -568,20 +847,39 @@ function drawLinearAssembly(ctx: DrawCtx, s: Sheet, main: Part, parts: Part[], w
     // SECTION A–A
     const S = viewSheet('section');
     const M = (v: Vec2) => ({ x: v.x / ds, y: v.y / ds });
-    const drawn = drawSection(S, sItems, main, VS, at, M, 2 * ds);
-    if (symmetric) {
+    const drawn = drawSection(S, sItems, main, VS, at, M, 2 * ds, composite);
+    if (symmetric && !composite) {
       S.line({ x: -box.w / 2 / ds - 3, y: 0 }, { x: box.w / 2 / ds + 3, y: 0 }, 'center');
       S.line({ x: 0, y: -box.h / 2 / ds - 3 }, { x: 0, y: box.h / 2 / ds + 3 }, 'center');
     }
-    overallDims(S, bounds(drawn.flat()), M);
-    labelBelow(S, M({ x: (sExt.minX + sExt.maxX) / 2, y: 0 }).x, SECTION_LABEL, ds !== den ? scaleLabel(ds) : undefined);
+    let detail: { cx: number; dd: number } | null = null;
+    if (composite) {
+      // The base point in view coordinates (the main part frame: y, z = its insertion relative to the box centre).
+      const bp3 = V(0, composite.base.x, composite.base.y);
+      const bp = { x: dot3(bp3, VS.R), y: dot3(bp3, VS.U) };
+      compositeDims(S, drawn, [projS.get(main.ref)!.polys[0]], bp, M);
+      detail = compositeDetail(S, sItems, main, VS, at, ds, bp, M);
+    } else overallDims(S, bounds(drawn.flat()), M);
+    if (detail) {
+      // Both labels on one line below the section and its detail.
+      const y = entsBox(S.ents).y0 - 6.5;
+      viewLabel(S, M({ x: (sExt.minX + sExt.maxX) / 2, y: 0 }).x, y, SECTION_LABEL, ds !== den ? scaleLabel(ds) : undefined);
+      viewLabel(S, detail.cx, y, `DETAIL ${DETAIL_LETTER}`, scaleLabel(detail.dd));
+    } else labelBelow(S, M({ x: (sExt.minX + sExt.maxX) / 2, y: 0 }).x, SECTION_LABEL, ds !== den ? scaleLabel(ds) : undefined);
 
     return { views: { elevation: E, plan: P, section: S }, extra: null };
   };
 
-  const choice = chooseLayout(ISO_SCALES, areas, first, (den) => sectionScaleOptions(ISO_SCALES, sExtent, den), build);
+  const choice = chooseLayout(ISO_SCALES, areas, first, sectionScales, build);
   placeViews(s, choice.views, choice.arr, choice.at);
   return scaleLabel(choice.den);
+}
+
+/** Position of a linear part's mid-length along the main part's x. */
+function alongMain(pt: Part, F: Part['frame']): number {
+  const h = pt.length / 2;
+  const c = { x: pt.frame.origin.x + pt.frame.x.x * h - F.origin.x, y: pt.frame.origin.y + pt.frame.x.y * h - F.origin.y, z: pt.frame.origin.z + pt.frame.x.z * h - F.origin.z };
+  return dot3(c, F.x);
 }
 
 // ---------------------------------------------------------------------------

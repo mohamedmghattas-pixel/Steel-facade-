@@ -28,6 +28,7 @@ import { ISO_SCALES, FINISH_LABEL, TEXT, generalNotes, scaleLabel } from './stan
 import { bendMarks, brokenAxis, drawBand, endFeatures, endMarks, endOutline, frontInnerLines, symmetricSection, topInnerLines, uniqSorted } from './views';
 import { closedByWelding, designation, finalize, newSheet, type DrawCtx } from './compose';
 import { drawingNumber } from './register';
+import { materialClass } from '../library/profileAssembly';
 import { SECTION_LABEL, cutPrism, cuttingPlane, drawCut, lineIntervals, partPrism, viewLabel, type Poly, type ViewAxes } from './section';
 import { chooseLayout, entsBox, placeViews, sectionScaleOptions, viewSheet } from './viewLayout';
 
@@ -63,7 +64,7 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
         { head: 'kg total', w: 16, align: 'end' },
         { head: 'Finish', w: 20 },
       ],
-      rows: [[part.mark, qty, designation(part), part.material, part.mass.toFixed(2), (part.mass * qty).toFixed(1), FINISH_LABEL[part.finish] ?? part.finish]],
+      rows: [[part.mark, qty, designation(part), part.material, part.mass.toFixed(2), (part.mass * qty).toFixed(1), part.finish === 'none' && part.component && !['steel', 'stainless'].includes(materialClass(part.material)) ? 'Mill finish' : (FINISH_LABEL[part.finish] ?? part.finish)]],
       nav: { col: 0, kind: 'part' },
     }),
     tableBlock({

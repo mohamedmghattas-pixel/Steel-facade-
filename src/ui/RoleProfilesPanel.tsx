@@ -12,6 +12,8 @@ import { useStore } from '../state/store';
 import { NumberInput, ProfilePicker, Select } from './widgets';
 import { SectionPreview } from './SectionPreview';
 import { applyRoleProfile, setRoleProfileUi } from './profileActions';
+import { setRoleAssemblyUi } from './profileAssemblyActions';
+import { AssemblyPreview } from './AssemblyPreview';
 import './profiles.css';
 
 const DEFAULT_ROLES: MemberRole[] = ['mullion', 'transom'];
@@ -24,6 +26,20 @@ export function RoleProfilesPanel() {
   const [extra, setExtra] = useState<MemberRole[]>([]);
   const shown = MEMBER_ROLES.filter((r) => DEFAULT_ROLES.includes(r) || rps[r] || extra.includes(r) || counts[r].members + counts[r].lines > 0);
   const addable = MEMBER_ROLES.filter((r) => !shown.includes(r));
+  // Profile assemblies: one option per assembly and drawn orientation ("<id>|<rotation>").
+  const assemblies = project.library.profileAssemblies ?? [];
+  const asmOf = (rp?: RoleProfile) => (rp?.assembly ? assemblies.find((a) => a.id === rp.assembly) : undefined);
+  const asmOptions = assemblies.flatMap((a) =>
+    a.orientations?.length
+      ? a.orientations.map((o) => ({ value: `${a.id}|${o.rotation}`, label: `${a.name} · ${o.name} (${o.rotation}°)` }))
+      : [{ value: `${a.id}|`, label: `${a.name} (composite)` }],
+  );
+  const asmValue = (rp?: RoleProfile) => {
+    const a = asmOf(rp);
+    if (!a) return '';
+    const hit = a.orientations?.find((o) => o.rotation === (rp?.rotation ?? 0));
+    return a.orientations?.length ? `${a.id}|${(hit ?? a.orientations[0]).rotation}` : `${a.id}|`;
+  };
   const update = (role: MemberRole, patch: Partial<RoleProfile>) => {
     const cur = rps[role];
     if (!cur) return;
@@ -41,7 +57,11 @@ export function RoleProfilesPanel() {
         const label = ROLE_LABEL[role].toLowerCase();
         return (
           <div className="rp-row" key={role} data-role={role}>
-            <SectionPreview profile={prof ?? null} size={56} mode={rp?.alignMode ?? (prof?.insertion ? 'insertion' : 'grid')} title={`${ROLE_LABEL[role]} section`} />
+            {asmOf(rp) ? (
+              <AssemblyPreview asm={asmOf(rp)!} size={56} rotation={rp?.rotation ?? 0} />
+            ) : (
+              <SectionPreview profile={prof ?? null} size={56} mode={rp?.alignMode ?? (prof?.insertion ? 'insertion' : 'grid')} title={`${ROLE_LABEL[role]} section`} />
+            )}
             <div className="rp-main">
               <div className="rp-head">
                 <strong>{ROLE_LABEL[role]}</strong>
@@ -52,13 +72,25 @@ export function RoleProfilesPanel() {
                 </span>
               </div>
               <div className="rp-pick">
-                <ProfilePicker value={rp?.profile ?? null} onChange={(v) => v && void setRoleProfileUi(role, { ...(rp ?? {}), profile: v })} />
+                <ProfilePicker value={rp?.profile ?? null} onChange={(v) => v && void setRoleProfileUi(role, { ...(rp ?? {}), profile: v, assembly: undefined })} />
                 {rp && (
                   <button className="icon-btn" title={`No ${label} profile (members keep theirs)`} onClick={() => void setRoleProfileUi(role, null)}>
                     ×
                   </button>
                 )}
               </div>
+              {assemblies.length > 0 && (
+                <div className="rp-asm" title="A profile assembly (composite section): the role's members carry every component from its base point">
+                  <Select<string>
+                    value={asmValue(rp)}
+                    options={[{ value: '', label: 'Single profile (no assembly)' }, ...asmOptions]}
+                    onChange={(v) => {
+                      const [id, rot] = v.split('|');
+                      setRoleAssemblyUi(role, id || null, rot === '' || rot === undefined ? undefined : Number(rot));
+                    }}
+                  />
+                </div>
+              )}
               {rp && (
                 <div className="rp-opts">
                   <label title="Section rotation about the member axis (empty: members keep theirs)">

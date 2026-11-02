@@ -25,7 +25,9 @@ import { bulgeArc, loopArea, moveLoop, reverseLoop, segmentPoint, type PolyVerte
 import { getMaterial } from '../library/materials';
 import { getBolt } from '../library/bolts';
 import type { Hole2D } from '../connections/common';
-import type { DerivedModel, Part } from '../derive/model';
+import { accessorySolids, type DerivedModel, type Part } from '../derive/model';
+import { findMaterial } from '../library/materials';
+import { materialDescription, nonMetal } from '../library/profileAssembly';
 import { copeNotch, isSquare } from '../geometry/endPrep';
 import { holeWalls } from '../geometry/sectionWalls';
 import { foldPlate } from '../geometry/bentPlate';
@@ -34,6 +36,8 @@ import { assemblyGuid, ifcGuidFrom, partGuid } from './guid';
 export interface IfcExportOptions {
   includeBolts?: boolean;
   includeMemberHoles?: boolean;
+  /** Gaskets, packers and other listed-only components of composite members as IfcBuildingElementProxy in their assembly (default on). */
+  includeAccessories?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -534,9 +538,44 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     }
   }
 
+  // Listed-only components of composite members (gaskets, packers): building element proxies in their assembly.
+  const accOf = new Map<string, Ref[]>();
+  if (opts.includeAccessories ?? true) {
+    const meta = new Map((dm.accessories ?? []).map((a) => [a.ref, a]));
+    for (const part of accessorySolids(dm)) {
+      const acc = meta.get(part.ref.slice(0, part.ref.lastIndexOf(':')));
+      if (!acc || !part.shape) continue;
+      const f = part.frame;
+      const pl = w.add('IFCLOCALPLACEMENT', [placementOf.get(acc.main) ?? storeys[0].pl, axis3(f.origin, f.x, f.y)]);
+      const element = w.add('IFCBUILDINGELEMENTPROXY', [
+        str(ifcGuidFrom(`${p.id}|acc|${part.ref}`)),
+        '$',
+        str(acc.name),
+        str(`${acc.kind} ${acc.material}`),
+        str(acc.kind === 'gasket' ? 'Gasket' : acc.kind === 'shim' ? 'Shim' : 'Accessory'),
+        pl,
+        shapeRep([extrude(profileDef(part.profile, part.shape), part.length)]),
+        str(part.ref),
+        en('ELEMENT'),
+      ]);
+      accOf.set(acc.main, [...(accOf.get(acc.main) ?? []), element]);
+      const mats = byMaterial.get(part.material) ?? [];
+      mats.push(element);
+      byMaterial.set(part.material, mats);
+      pset('FacadeSteel_Accessory', [element], [
+        singleValue('AssemblyMark', 'IFCLABEL', str(acc.assembly)),
+        singleValue('Kind', 'IFCLABEL', str(acc.kind)),
+        singleValue('Profile', 'IFCLABEL', str(acc.profile)),
+        singleValue('Material', 'IFCLABEL', str(acc.material)),
+        singleValue('Length', 'IFCLENGTHMEASURE', real(part.length)),
+        singleValue('Quantity', 'IFCLABEL', str(acc.unit === 'm' ? `${acc.qty.toFixed(3)} m` : `${acc.qty} pcs`)),
+      ]);
+    }
+  }
+
   // Assembly composition.
   for (const a of dm.assemblies) {
-    const parts = a.parts.map((r) => elementOf.get(r)).filter((x): x is Ref => !!x);
+    const parts = [...a.parts.map((r) => elementOf.get(r)).filter((x): x is Ref => !!x), ...(accOf.get(a.main) ?? [])];
     if (parts.length) w.add('IFCRELAGGREGATES', [str(ifcGuid()), '$', '$', '$', asmRefs.get(a.id)!, list(parts)]);
   }
 
@@ -575,8 +614,10 @@ export function exportIfc(p: Project, dm: DerivedModel, opts: IfcExportOptions =
     }
   }
   for (const [name, objs] of byMaterial) {
+    // Catalogue metals as before; component materials (EPDM, HDPE …) by their own description.
+    const nm = !findMaterial(name) ? nonMetal(name) : undefined;
     const m = getMaterial(name);
-    const mat = w.add('IFCMATERIAL', [str(name), str(m.description), str(m.category ?? 'Steel')]);
+    const mat = w.add('IFCMATERIAL', [str(name), str(nm ? materialDescription(name) : m.description), str(nm ? (nm.class === 'rubber' ? 'Rubber' : 'Plastic') : (m.category ?? 'Steel'))]);
     w.add('IFCRELASSOCIATESMATERIAL', [str(ifcGuid()), '$', '$', '$', list(objs), mat]);
   }
 

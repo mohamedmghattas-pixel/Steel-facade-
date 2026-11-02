@@ -1,0 +1,211 @@
+/* Profile assemblies (composite sections): previews, the DXF review dialog and the library list. */
+
+.asm-preview {
+  flex: none;
+  background: var(--bg-0);
+  border-radius: 6px;
+}
+.asm-preview .asm-loop {
+  stroke: #1d2733;
+  stroke-width: 1px;
+  vector-effect: non-scaling-stroke;
+  fill-opacity: 0.9;
+}
+.asm-preview .asm-loop.main {
+  stroke: var(--accent);
+  stroke-width: 2px;
+}
+.asm-preview .asm-loop.off {
+  fill-opacity: 0.15;
+  stroke-dasharray: 3 2;
+}
+.asm-preview .asm-loop.hot {
+  stroke: #ffc400;
+  stroke-width: 2.5px;
+}
+.asm-preview .asm-loop.pick {
+  cursor: pointer;
+}
+.asm-preview .asm-bp line,
+.asm-preview .asm-bp circle {
+  stroke: #e5484d;
+  stroke-width: 1.5px;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Review dialog */
+.asm-top {
+  display: grid;
+  grid-template-columns: 160px minmax(160px, 1fr) minmax(200px, 2fr);
+  gap: 12px;
+  align-items: start;
+}
+.asm-markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  max-height: 72px;
+  overflow: auto;
+}
+.asm-notes {
+  font-size: 11px;
+  line-height: 1.45;
+}
+.asm-tabs {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 8px;
+  flex-wrap: wrap;
+}
+.asm-tab {
+  background: var(--bg-2);
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 5px 10px;
+  color: var(--text-1);
+  cursor: pointer;
+  font-size: 12px;
+}
+.asm-tab.on {
+  border-color: var(--accent);
+  background: var(--bg-3);
+}
+.asm-tab.merge,
+.asm-tab.skip {
+  opacity: 0.7;
+}
+.asm-detail {
+  display: grid;
+  grid-template-columns: 310px minmax(0, 1fr);
+  gap: 14px;
+}
+.asm-left {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.asm-small {
+  font-size: 11px;
+}
+.asm-dup {
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 8px;
+  background: var(--bg-2);
+}
+.asm-dup p {
+  margin: 0 0 4px;
+}
+.asm-dup.dup {
+  border-color: var(--accent);
+}
+.asm-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.asm-comps {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--line-1, var(--line-2));
+  border-radius: 6px;
+}
+.asm-comps table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.asm-comps th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-2);
+  text-align: left;
+  font-weight: 600;
+  padding: 4px 5px;
+  z-index: 1;
+}
+.asm-comps td {
+  padding: 3px 5px;
+  border-top: 1px solid var(--line-2);
+  vertical-align: middle;
+}
+.asm-comps .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.asm-comps tr.off td {
+  opacity: 0.5;
+}
+.asm-comps tr.hot td {
+  background: rgba(255, 196, 0, 0.12);
+}
+.asm-comps select {
+  max-width: 120px;
+}
+.asm-name {
+  width: 150px;
+}
+.asm-rule {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+.asm-rule input {
+  width: 52px;
+}
+.asm-rule select {
+  max-width: 104px;
+}
+
+/* Library list */
+.asm-lib .asm-item {
+  border: 1px solid var(--line-2);
+  border-radius: 6px;
+  padding: 6px;
+  margin: 6px 0;
+}
+.asm-lib .asm-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.asm-lib .asm-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+}
+.asm-lib .asm-title {
+  text-align: left;
+  font-weight: 600;
+}
+.asm-lib .asm-edit {
+  margin-top: 6px;
+}
+.rp-asm {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.rp-asm select {
+  min-width: 0;
+  flex: 1;
+}
+
+/* The review needs the room of its components table. */
+.modal.wide:has(.asm-detail) {
+  width: min(1400px, 100%);
+}
+.asm-lib .asm-row {
+  flex-wrap: wrap;
+}
+.asm-lib .asm-actions {
+  display: flex;
+  gap: 6px;
+  width: 100%;
+  justify-content: flex-end;
+}

@@ -181,8 +181,9 @@ export async function setRoleProfileUi(role: MemberRole, rp: RoleProfile | null)
   let apply = false;
   if (rp && members.length) {
     const patch = roleProfilePatch(rp);
-    const differ = members.filter((m) => (Object.keys(patch) as (keyof typeof patch)[]).some((k) => m[k] !== patch[k]));
-    if (differ.length) apply = await askConfirm(`Update all ${plural(role, members.length)} to ${rp.profile}? (${differ.length} change.) Choose Cancel to only use it for new ${ROLE_LABEL[role].toLowerCase()}s.`, { title: 'Profiles by role', ok: `Update all ${ROLE_LABEL[role].toLowerCase()}s` });
+    const differ = members.filter((m) => (Object.keys(patch) as (keyof typeof patch)[]).some((k) => m[k] !== patch[k]) || (!patch.profileAssembly && !!m.profileAssembly));
+    const what = rp.assembly ? (p.library.profileAssemblies ?? []).find((a) => a.id === rp.assembly)?.name ?? rp.profile : rp.profile;
+    if (differ.length) apply = await askConfirm(`Update all ${plural(role, members.length)} to ${what}? (${differ.length} change.) Choose Cancel to only use it for new ${ROLE_LABEL[role].toLowerCase()}s.`, { title: 'Profiles by role', ok: `Update all ${ROLE_LABEL[role].toLowerCase()}s` });
   }
   let n = 0;
   st().apply(`${ROLE_LABEL[role]} profile`, (d) => {

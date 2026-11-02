@@ -29,6 +29,7 @@ cross product, `madd(p, d, s) = p + d·s` (`src/core/model/geometry.ts:22`).
 | Collinear (rules) | `\|û·v̂\| > 0.999` | `src/core/connections/registry.ts:229` |
 | Through member at node | distance < `NODE_TOL` and `1e-4 < t < 1−1e-4` | `src/core/model/ops.ts:418-419` |
 | Cut angle limit / saw warning | 85° / 60° | `src/core/geometry/endPrep.ts:51,53` |
+| Face fit: square joint | web and flange saw angles within `FIT_SQUARE_TOL` = 0.25°: the square cut-back; one within it is dropped | `src/core/geometry/endPrep.ts` (`fitNormal`, §3.4a) |
 
 Section coordinates: a profile outline's `x` is member local `y` (width `b`),
 its `y` is local `z` (height `h`); outlines are centred on their bounding box
@@ -348,7 +349,110 @@ shifted by `−xMin` (`src/core/derive/model.ts:472-495`).
 **Notes / caveats:** mitre and fit planes use the raw centre lines
 (`centreLine`, `src/core/geometry/endPrep.ts:120-130`). They replace the
 nominal end, so they override extensions **and** connection trims at that end
-(`:200-203`). An end slot (§5.2) at such an end is measured from the cut end.
+(`:200-203`), and the face fits of §3.4a. An end slot (§5.2) at such an end is
+measured from the cut end.
+
+### 3.4a Face fits: connection cut-backs and the auto-cut (`Trim.fit`, `EndFit`)
+
+On a joint that is not square — transoms meeting a mullion at a fold, a raking
+transom, a mullion ending on a raking head or sill, a brace into a post — a
+square cut-back of `face + gap` (measured at the secondary's axis, §4.3)
+overlaps the main member on one side of the section and leaves a wedge gap on
+the other. The end is cut on the plane of the main member's facing side
+instead, offset by the joint's clearance:
+
+```
+f      = envelopeFace(main, dIn)                        the main face the secondary's axis meets (endPrep.ts):
+           rectangular envelopes: the box face (±ŷm at w/2, ±ẑm at h/2) whose outward normal n is
+           closest to dIn, with n·dIn ≥ 0.2 — the face and order of faceDistance (§4.3);
+           round (CHS, RD): the tangent plane ⊥ e = dIn − x̂m(dIn·x̂m), |e| ≥ 0.2
+fit    = { p: f.at + n·clearance,  n_out = −n }         Trim.fit, by faceTrim / fitAt (common.ts)
+angles = web atan(|n·ẑs| / |n·x̂s|), flange atan(|n·ŷs| / |n·x̂s|)   (the secondary's axes)
+         an angle ≤ FIT_SQUARE_TOL (0.25°) is dropped: the plane turns about the point where it crosses the axis
+         both dropped (fitNormal → null) → no fit: the square cut-back face + clearance, exactly as before
+```
+
+The **clearance** is what the type puts between the main face and the end:
+`gap` for fin plate, angle cleat, double angle, seated angle, U-saddle, shear
+block, welded, gusset plate (flat and angle braces) and the cross-brace split
+members (against the through brace); the plate thickness `t` for end plate and
+flange clamp; the template `cut` for custom templates with a main member and
+no plate across the end. Types whose secondary ends on a part square to its
+axis keep the square cut-back: tee cleat (its flange), stub bracket (its
+plates), hanger rod / tie-back (fork, cap, tab), gusset knife plates in tube
+braces, splices, and every type without a main member.
+
+**Derivation** (`src/core/derive/model.ts`, pass 1): the governing (largest)
+trim of each member end carries its fit — the amount at the axis still decides
+which connection governs (§3.3). `memberGeom` hands the fits to
+`resolveEndCuts`, which converts the plane into the member frame like a user
+fit (§3.4): `x = ((P − O)·n)/(x̂·n)`, the saw angles from the normal, the 85°
+limit (end left square at the cut-back, with a warning) and the 60° saw
+warning. A user bevel, mitre or fit at that end wins; a user cope is kept on
+the fitted end (kind `fit` with the copes). Composite components (profile
+assemblies) and mirrored sections are cut on the same plane.
+
+The **parts** of the joints are placed from the node and the face at the axis
+(`Cs`, `face`, §4.3), not from the member end, so plates, profile parts, bolts
+and holes stay where they were (to rounding: the section centre `Cs` is
+measured from the moved origin, < 1e-9 mm). The end plate is the exception:
+on a skewed joint (`endPlateOnFace`, `memberJoints.ts`) its contact face lies
+on the main face, its sides along the secondary's ŷ and ẑ projected onto the
+face, its outline the secondary's footprint on the face (the section box
+projected along `dIn`) plus `edge` and `margin`, the bolt columns `edge` beside
+the footprint, the bolts along −n square through the main member (grip
+t + 2·halfExtent(main, n)); the secondary is cut to the plate's outer face
+(clearance t) and welded to it. Square joints place it as before.
+
+The **outputs** read the cut like any end preparation (§11): exact 3D cut, IFC
+clipping, DSTV saw angles, part-drawing angle dimensions, the machining list's
+saw cut, MIS `cuts` (now from the derived ends), the overall stock length to
+the long point, and the part signature (numbering).
+
+**Auto-cut** (`src/core/derive/autoCut.ts`, `settings.autoCut`): after the
+connection trims, each profiled member end that no connection governs (§3.3),
+with no bevel / mitre / fit and no extension of its own, is cut to the face of
+the member it meets at its node, less the project gap — the same plane and
+square test as `faceTrim`; a square joint gets the plain cut-back `face + gap`.
+Which member: for transoms, rails, braces and bracket stubs the mullion / post
+at the node (passing through, else the piece continuing upwards, else any),
+else any member passing through the node; for mullions and posts a member
+passing through the node (a sill, head or edge member; another mullion only
+when no other member passes), unless a collinear piece continues the mullion
+there (a split or a stack joint is not a junction). Member kinds and the main
+member are auto-connect's (`memberKind`), and the default joint gap is the
+default auto-cut gap (10 mm), so placing the joints later keeps the cut length.
+An end more than 60° (the saw range) from square is not cut, with the warning
+"Auto-cut — … not cut automatically".
+
+**Settings** (`ProjectSettings.autoCut`, `autoCutSettings`): `enabled` (the
+auto-cut), `gap`, `connections` (connection face fits). New projects:
+`{ enabled: true, gap: 10, connections: true }`. Projects saved before: the
+auto-cut off, so no member end moves on load; connection fits on — skewed
+connected ends change, square ones do not (ARCHITECTURE.md D42). UI: Project →
+*End fitting* (with counts); assistant `set_end_fitting`, face fits in
+`get_modelling_info`.
+
+**Notes / caveats:**
+- A fit is one plane. On a round main member it is the tangent plane at the
+  axis: corners of a wide secondary still reach the tube closer than the
+  clearance (no saddle / fish-mouth profile cut is modelled).
+- I and U main members are fitted to their box face (flange tips), as the
+  connections measure it; to frame into the web use Fit to (web face, cope).
+- Parts that bear on the main face at the secondary's axis — cleat legs
+  (angle, double angle, tee, seat), the fin plate's and shear block's welded
+  edges — stay square to the secondary: on a skewed joint they touch the face
+  along one line, with a wedge gap of (b/2)·tan θ under their far edge. Only
+  the end plate turns onto the face.
+- Joints within 0.25° of square are square, and a saw angle within 0.25° is
+  dropped (the client facade has ends 0.05–0.2° off square from drafting, and
+  cuts 37.4° in plan and 0.02° in elevation): no noise angles in DSTV or the
+  drawings and no extra part marks; the clearance at a corner changes by at
+  most (h/2)·tan 0.25° (0.2 mm on a 100 mm section).
+- A fitted part's start is re-based 1e-9 mm short of its extreme point
+  (`linearPart`), so the rounding of a cut plane from world geometry never puts
+  the extreme at x < 0, which an interrupted part view would draw outside the
+  first window.
 
 ---
 
@@ -470,9 +574,10 @@ picks its face the same way (`src/core/connections/bracing.ts:74-77`), as does
 
 **Notes / caveats:**
 - `face` is the contact **at the secondary's axis**. For a skewed secondary,
-  one side of its section is closer to the main face than the axis; the trim
-  `face + gap` does not add that `(w_sec/2)·tan θ`. Use a larger gap or a fit
-  end preparation (§3.4) for strongly skewed members.
+  one side of its section is closer to the main face than the axis; the
+  square trim `face + gap` would not add that `(w_sec/2)·tan θ`, so the joints
+  that end the secondary at the main face cut it on the face plane instead
+  (§3.4a).
 - `depth_main` (through-bolt grip) is still `2·halfExtent(main, dIn)`, the
   bounding-box depth along `dIn` — exact for square framing.
 
@@ -833,6 +938,9 @@ across-axis slot (test "6. slot directions") now reaches every output.
     applied in `memberGeom` (§3.3). Intended: coincident joints cut the member
     to the governing face. Different amounts on one end raise a derivation
     warning (`:259-265`).
+  - `fit` (optional, `faceTrim`): on a joint that is not square the end is cut
+    on the main face plane plus the clearance instead (§3.4a); the governing
+    trim's fit is used.
   - An end a connection trims or supports is governed by it: user extensions
     there are ignored (§3.3).
 - **Welds**:
@@ -972,6 +1080,13 @@ holes on the centre line.
 
 Plate notation in the tables below: `[P | n_out | x, y]` means
 `plateOn(P, n_out, x, y, t)` (§2.1).
+
+Trim column: on a joint that is not square, the cut-backs of `finPlate`,
+`angleCleat`, `endPlate` (its plate then lies on the main face), `welded`,
+`custom` (with a main member, no end plate), `flangeClamp`, `doubleAngle`,
+`seatedAngle`, `saddleBracket`, `shearBlock`, `gussetPlate` (flat and angle
+braces) and `crossBrace` (split members) follow the main face plus the same
+clearance (§3.4a); the others stay square.
 
 ### 10.1 Original types
 
@@ -1227,7 +1342,10 @@ Assemblies: `M1 = {mullion, fin plate}`: welded, and the main is the member
    - Optional `paramsFor(c, p)` (per-connection specs, as in `custom.ts:72-77`).
 3. **`trims(ctx)`**: it runs on **untrimmed** geometry, and the result is
    combined by maximum per member end (`src/core/derive/model.ts:244-275`).
-   Return `{member, end: inward(g, N).end, amount}`.
+   Return `{member, end: inward(g, N).end, amount}`; when the supported end
+   faces the main member across a clearance, return
+   `faceTrim(main, sec, end, dIn, face, clearance)` so a skewed joint follows
+   the face (§3.4a) — not when it bears on a part square to its axis.
 4. **`build(ctx)`**: it returns a `ConnectionOut` (`common.ts:84-93`) built
    from trimmed geometry.
    - Get the joint with `jointOf`, `memberOf` or `bracketFrame`

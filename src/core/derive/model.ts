@@ -784,7 +784,9 @@ export function linearPart(
   centroid: { y: number; z: number },
 ): { frame: Frame; length: number; massLength: number; ends?: Part['ends']; sig?: string } {
   if (!cuts || !shape) return { frame, length, massLength: length };
-  const x0 = cuts.xMin;
+  // A fitted start keeps its extreme point at x ≥ 0 after rounding (1e-9 mm margin): the cut planes of face fits
+  // come from world geometry, and a silhouette at x = −1e-16 would fall outside an interrupted drawing view.
+  const x0 = cuts.xMin - (cuts.start.kind === 'fit' && cutAngle(cuts.start) > 1e-6 ? 1e-9 : 0);
   const start = { ...cuts.start, x: cuts.start.x - x0 };
   const end = { ...cuts.end, x: cuts.end.x - x0 };
   const ml = massLength(shape, area, centroid, start, end);

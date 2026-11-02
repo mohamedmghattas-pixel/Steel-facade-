@@ -58,12 +58,14 @@ export const MAX_CUT_ANGLE = 85;
 /** Cuts steeper than this get a warning (typical band-saw limit). */
 export const SAW_LIMIT = 60;
 /**
- * Face fits (connection cut-backs, auto-cut) within this angle of square, degrees,
- * stay square cut-backs: perpendicular joints derive exactly as without fits, and
- * rounding noise of imported geometry gives no saw angle. 0.05° is 0.09 mm over a
- * 100 mm section, and below the 0.05° the shop texts already print as 90°.
+ * Saw angles (web, flange) of face fits (connection cut-backs, auto-cut) up to
+ * this many degrees are dropped, and a fit with both dropped is the square
+ * cut-back: perpendicular joints derive exactly as without fits, and the
+ * drafting noise of imported wireframes (the client facade has ends 0.05–0.2°
+ * off square) gives no saw angle and no extra part marks. 0.25° moves a corner
+ * of a 100 mm section by 0.2 mm — below the setting accuracy of a saw.
  */
-export const FIT_SQUARE_TOL = 0.05;
+export const FIT_SQUARE_TOL = 0.25;
 
 /**
  * An end cut on the facing side of another member without a user end
@@ -188,8 +190,23 @@ export function envelopeFace(f: Frame, w: number, h: number, shape: Shape | unde
   return { n: best[0], at: madd(f.origin, best[0], best[1]) };
 }
 
-/** A cut plane with world normal `n` is square to a member axis `x` (within FIT_SQUARE_TOL). */
-export const isSquareTo = (x: Vec3, n: Vec3): boolean => Math.abs(dot(normalize(x), normalize(n))) >= Math.cos(FIT_SQUARE_TOL * DEG);
+/**
+ * The world normal of a face fit on a member with axes `f`, with a saw angle
+ * (web: about local y, flange: about local z) within FIT_SQUARE_TOL dropped —
+ * a cut 37.4° in plan and 0.02° in elevation is a plain flange cut — or null
+ * when both are (a square joint). Returns `n` itself when nothing is dropped.
+ */
+export function fitNormal(f: Pick<Frame, 'x' | 'y' | 'z'>, n: Vec3): Vec3 | null {
+  const lx = dot(n, f.x);
+  const ly = dot(n, f.y);
+  const lz = dot(n, f.z);
+  const t = Math.tan(FIT_SQUARE_TOL * DEG) * Math.abs(lx);
+  const y = Math.abs(ly) <= t ? 0 : ly;
+  const z = Math.abs(lz) <= t ? 0 : lz;
+  if (!y && !z) return null;
+  if (y === ly && z === lz) return n;
+  return normalize({ x: f.x.x * lx + f.y.x * y + f.z.x * z, y: f.x.y * lx + f.y.y * y + f.z.y * z, z: f.x.z * lx + f.y.z * y + f.z.z * z });
+}
 
 /** Which end of `m` sits on node `nodeId` (or within 1 mm of it). */
 export function endOnNode(p: Project, m: Member, nodeId: string): End | null {

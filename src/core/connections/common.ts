@@ -2,7 +2,7 @@ import type { Connection, ConnectionType, Id, ParamValue, Project, Vec2, Vec3 } 
 import { add, cross, dot, len, madd, normalize, scale, sub, v3, type Frame } from '../model/geometry';
 import type { MemberGeom } from '../derive/memberGeom';
 import { getBolt } from '../library/bolts';
-import { envelopeFace, isSquareTo } from '../geometry/endPrep';
+import { envelopeFace, fitNormal } from '../geometry/endPrep';
 
 /** Hole in a plate, in the plate's outline coordinates. Slots extend `slot` mm along `angle` (deg). */
 export interface Hole2D {
@@ -291,9 +291,23 @@ export function faceDistance(main: MemberGeom, from: Vec3, dir: Vec3): number {
 export function faceTrim(main: MemberGeom, sec: MemberGeom, end: 'start' | 'end', dIn: Vec3, face: number, clearance: number): Trim {
   const t: Trim = { member: sec.member.id, end, amount: face + clearance };
   const f = envelopeFace(main.frame, main.w, main.h, main.profile?.shape, dIn);
-  if (!f || isSquareTo(sec.frame.x, f.n)) return t;
-  t.fit = { to: main.member.id, p: madd(f.at, f.n, clearance), n: scale(f.n, -1) };
+  const fit = f && fitAt(sec, main.member.id, madd(f.at, f.n, clearance), scale(f.n, -1));
+  if (fit) t.fit = fit;
   return t;
+}
+
+/**
+ * `Trim.fit` for the end of `sec` on the plane through `p` with outward normal
+ * `n` (out of the member's material, towards `to`), or undefined for a square
+ * joint (fitNormal). A saw angle within FIT_SQUARE_TOL is dropped by turning
+ * the plane about the point where it crosses the member's axis.
+ */
+export function fitAt(sec: MemberGeom, to: Id, p: Vec3, n: Vec3): Trim['fit'] | undefined {
+  const m = fitNormal(sec.frame, n);
+  if (!m) return undefined;
+  if (m === n) return { to, p, n };
+  const x = sec.frame.x;
+  return { to, p: madd(sec.frame.origin, x, dot(sub(p, sec.frame.origin), n) / dot(x, n)), n: m };
 }
 
 /** Unit direction from the node into the member (along its axis). */

@@ -327,6 +327,28 @@ Copy and Array in `ops.ts`):
 After every operation the joints of the changed members are checked: a main
 member that no longer meets its joint is reported once.
 
+### 10a. Fit to, and ends that follow the face by themselves
+
+*Fit to* (tool rail → Members, Properties → End preparation → *Fit to 2nd*,
+assistant `fit_member_end`) cuts the first selected member's nearer end to the
+facing side of the second, leaving the gap: in any direction — a transom to a
+mullion, a mullion to a sill, head or beam — and on sloped, raking and folded
+geometry, where the cut gets the saw angles of the face it meets (web, flange
+or both). The face is the side whose normal is closest to the member's
+direction; I and U members are cut to their web (with *cope* the flanges that
+clash are coped). The status line reports the cut ("Fitted the end end
+(flange 12.0°) with a 10 mm gap"), or why the end stayed square: the member
+does not meet a side face (more than 78° off), or the cut would be steeper
+than 85°; beyond 60° it adds the saw-range warning. A Fit replaces the
+connection's cut-back and the auto-cut at that end.
+
+Without a Fit, ends follow faces on their own: a connection's cut-back follows
+the main member's face on a joint that is not square, and the project auto-cut
+cuts ends that have no connection (Project → *End fitting*,
+[CONNECTION_GEOMETRY.md §3.4a](CONNECTION_GEOMETRY.md)). Operations keep
+neither in the model: they are derived from the joint, so they follow every
+move, mirror, extend or split.
+
 ## 11. Member vectors
 
 Operations that derive a member from another write it as `{ ...m, … }`, so new optional member fields carry over.

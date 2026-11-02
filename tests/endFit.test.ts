@@ -144,9 +144,21 @@ describe('connection cut-backs follow the main face', () => {
   });
 
   it(`noise below ${FIT_SQUARE_TOL}° stays square`, () => {
-    const t = tee(normalize(v3(1, Math.tan(0.02 * deg), 0)));
+    const t = tee(normalize(v3(1, Math.tan(0.2 * deg), 0)));
     joint(t, 'finPlate');
     expect(deriveModel(t.p).geoms.get(t.transom)!.cuts).toBeUndefined();
+  });
+
+  it('a saw angle within the tolerance is dropped: 20° in plan and 0.1° in elevation is a plain flange cut', () => {
+    const t = tee(normalize(v3(Math.cos(20 * deg), Math.sin(20 * deg), Math.tan(0.1 * deg))));
+    joint(t, 'finPlate');
+    const dm = deriveModel(t.p);
+    const pt = dm.partByRef.get(`m:${t.transom}`)!;
+    expect(pt.ends!.start.angleWeb).toBe(0);
+    expect(Math.abs(pt.ends!.start.angleFlange)).toBeCloseTo(20, 1);
+    // The clearance stays within (h/2)·tan 0.25° of the gap.
+    const c = clearances(t.p, dm, t.transom, t.mullion, t.node);
+    expect(Math.max(...c.map((x) => Math.abs(x - 10)))).toBeLessThan(0.25);
   });
 
   it('a user bevel on the end wins; a cope is kept on top of the fit', () => {
@@ -400,5 +412,24 @@ describe('auto-cut of ends without a connection', () => {
     const r = grid();
     r.settings.autoCut = { enabled: true, gap: 6, connections: false };
     expect(migrateProject(JSON.parse(JSON.stringify(r)))!.settings.autoCut).toEqual({ enabled: true, gap: 6, connections: false });
+  });
+});
+
+describe('assistant: set_end_fitting', () => {
+  it('switches the auto-cut and the connection fits, sets the gap and reports the counts', async () => {
+    const { runTool } = await import('../src/assistant/tools');
+    const { useStore } = await import('../src/state/store');
+    const p = createProject('chat');
+    facadeGrid(p, { plane: { kind: 'XZ', offset: 0 }, u0: 0, v0: 0, bays: [1500], rows: [1500], floorLines: [], mullionProfile: 'SHS 100x100x5', transomProfile: 'RHS 100x50x4', transomDepthNormal: true, addLevels: false });
+    useStore.getState().replaceProject(p);
+    const run = async (input: Record<string, unknown>) => JSON.parse(await runTool('set_end_fitting', input));
+    const on = await run({ gap: 6 });
+    expect(on).toMatchObject({ enabled: true, gap: 6, connections: true, autoCutAtAngle: 0 });
+    expect(on.autoCutEnds).toBeGreaterThan(0);
+    const off = await run({ autoCut: false, connections: false });
+    expect(off).toMatchObject({ enabled: false, gap: 6, connections: false, autoCutEnds: 0 });
+    await expect(runTool('set_end_fitting', { gap: -1 })).rejects.toThrow(/gap/);
+    const info = JSON.parse(await runTool('get_modelling_info', { members: [] }));
+    expect(info.endFitting).toMatchObject({ enabled: false, gap: 6, connections: false });
   });
 });

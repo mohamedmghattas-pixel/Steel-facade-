@@ -6,7 +6,7 @@ import { boltLength, getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
 import { cross, dot, madd, normalize, scale, sub } from '../model/geometry';
 import type { Vec3 } from '../model/types';
-import { envelopeFace, isSquareTo } from '../geometry/endPrep';
+import { envelopeFace, fitNormal } from '../geometry/endPrep';
 import type { MemberGeom } from '../derive/memberGeom';
 import { throughHole } from './kit';
 import { jointMovement } from '../movement/provisions';
@@ -335,7 +335,7 @@ export const endPlate: ConnectionDef = {
 /** The main member's face a skewed secondary meets (outward normal and a point on it); null for a square joint. */
 function skewFace(main: MemberGeom, sec: MemberGeom, dIn: Vec3): { n: Vec3; at: Vec3 } | null {
   const f = envelopeFace(main.frame, main.w, main.h, main.profile?.shape, dIn);
-  return f && !isSquareTo(sec.frame.x, f.n) ? f : null;
+  return f && fitNormal(sec.frame, f.n) ? f : null;
 }
 
 /**

@@ -192,13 +192,13 @@ joined at nodes; a stack joint (gap) separates two lengths.
 | --- | --- | --- | --- |
 | Transom joints | A transom / rail end at a node with a mullion / post (T-junction): main = the mullion passing through, else the piece continuing upwards, else any | `angleCleat` (picker: fin plate, end plate, double angle, tee cleat, seated angle, U-saddle, shear block, welded) | Oriented by the members' local axes (so by the surface normals). Cleats / fins go on the side of the transom where the mullion continues: `side = sign(ŷ·d)` when the main ends at the node and `\|ŷ·d\| > 0.7` (`d` from the node into the main) — the old rule on vertical facades, up the slope on sloped ones |
 | Fold joints | Transoms meeting one mullion at more than 2° to each other (a fold, a building corner, a raking edge) | `finPlate` (fold joint picker: fin plate, welded, shear block, or the transom joint) | Only when the transom joint bolts through the mullion (angle cleat, end plate, double angle, tee cleat, seated angle): their through-bolts would cross inside it |
-| Mullion ends | A mullion end on an edge member that passes through the node (nothing continues the mullion) | the transom joint type | |
+| Mullion ends | A mullion end on a member that passes through the node (a sill, head or raking edge; nothing collinear continues the mullion), whatever that member's role — two mullions ending there at a kink (the bottom of a V) both land on it | the transom joint type | At a vertical chain end this joint comes before the level bracket, so the mullion is joined and fitted to the member it lands on |
 | Brace joints | Role brace ending on a member | `gussetPlate` (flat, angle, hollow braces), else the transom joint | as before |
 | Stack joints | Two collinear mullion line ends facing each other across a gap of the stack-joint size (wireframe setting, 10–60 mm), lateral offset ≤ the junction tolerance | `sleeveSplice`, sliding, gap = the measured gap rounded up to 0.1 mm; `splicePlates` when the section is not hollow | One per joint; the lower length is the main member, the upper one slides (`slides: supported`). Picker: sleeve, splice plates, end-plate splice (pack = gap − 2t) |
 | Structure brackets | With reference models (visible IFC / Rhino .3dm triangles): where each mullion length comes nearest to each structure element within the distance (600 mm) | `slabBracket` (picker: helping hand, 3-way bracket, cast-in channel, embed plate) | See below |
 | Stack brackets (option) | A stack joint within reach of a structure bracket on its lower length | `slabBracket` carrying both lengths | Off by default; replaces the splice and moves the bracket to the joint node |
 | Bracket stubs | Role bracket, profiled, one end on a mullion and the other free | free end: `anchorPlate` (picker: wall angle, base plate); mullion end: `endPlate` (picker: fin plate, angle cleat, welded) | The mullion length counts as supported |
-| Level brackets | Fallback for vertical mullion lengths without structure or stub support: chain ends; a node where two mullion pieces meet when it is at a level (± 50 mm) or, without levels, when no other member meets there; a level the length passes without a node (bracket on the piece across it, at level − 100 mm) | `slabBracket` (edge / top mount) | Not for sloped mullions. **Fix:** a transom junction where the wireframe check cut the mullion is not a support |
+| Level brackets | Fallback for vertical mullion lengths without structure or stub support: chain ends (not on a member passing through: the mullion end joint); a node where two mullion pieces meet when it is at a level (± 50 mm) or, without levels, when no other member meets there; a level the length passes without a node (bracket on the piece across it, at level − 100 mm) | `slabBracket` (edge / top mount) | Not for sloped mullions. **Fix:** a transom junction where the wireframe check cut the mullion is not a support |
 | Post bases | Bottom end of a vertical post | `baseplate` | as before |
 
 **Structure brackets.** The mullion length is sampled every 50 mm against the
@@ -233,6 +233,37 @@ the plan again on the model as it is, as one undo step.
 `structureDistance`, `stubEnd`, `stubJoint`, `levelBrackets`, `slabSide`,
 `standoff`, `dryRun`; returns the counts per rule and type, how the lengths are
 held, and the notes.
+
+## End fitting (cut-backs that follow the slope)
+
+The member ends a joint cuts back follow the main member's face. On a square
+joint the cut-back is `face + gap` as before; on a joint that is not square —
+transoms at a fold, a raking transom, a mullion ending on a raking head or
+sill, a brace into a post — the end is cut on the plane of the main member's
+facing side plus the joint's clearance, so it keeps that clearance across the
+whole section (no overlap on one side, no wedge gap on the other). Saw angles,
+3D, IFC, DSTV, part drawings, the machining list and MIS follow. This works in
+both directions: a transom fitted to a mullion and a mullion fitted to a
+horizontal member. A Fit, Mitre or Bevel on the end wins; a cope is kept.
+Joint types and clearances: [CONNECTION_GEOMETRY.md §3.4a](CONNECTION_GEOMETRY.md).
+On a skewed joint the end plate lies on the main face, its bolts square to it.
+
+**Auto-cut.** Ends with no connection — profiles just inserted — are cut to the
+face of the member they meet less the project gap (default 10 mm, the default
+joint gap): transoms, rails and braces to the mullion or post at the node
+(passing through or ending there), a mullion end to a member passing through
+(sill, head, edge). Ends with their own preparation or extension are left
+alone. Placing the joints later keeps the cut. Project → *End fitting* switches
+the auto-cut (new projects on, projects saved before off) and the connection
+face fits, and shows how many ends each cuts; assistant `set_end_fitting`.
+
+On the client facade (V-shaped, sloped; SHS 100×100×5 mullions, RHS 100×50×4
+transoms) 504 transom ends meet mullions (2 a transom): 398 are not square and
+are cut at 0.7°–52.4° (148 under 5°, 156 at 5°–20°, 94 above 20°; 22 of them
+compound, web and flange, at the fold), 106 are square. The auto-cut gives the
+same planes before auto-connect as the joints after it (372 angle cleat and 26
+fin plate ends); no derivation warnings, no detailing errors; the member marks
+go from 260 to 280 (the cut angles tell the transoms apart).
 
 ## Member operations, mirror and flip side
 
@@ -402,3 +433,8 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
   into fin plates; two fins on the same face (transoms meeting from one side
   at an angle) are not checked for overlap. Through-bolts of a transom meeting
   a mullion skew keep the bounding-box grip length.
+- End fitting: the member end follows the main face, the cleats, tee flanges,
+  seats, fin plates and shear blocks of a skewed joint stay square to the
+  secondary (they touch the face along one line); a fit on a round main member
+  is its tangent plane at the axis (no fish-mouth cut); I / U main members are
+  fitted to their flange tips, not the web.

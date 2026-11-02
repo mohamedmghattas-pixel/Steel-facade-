@@ -4,6 +4,28 @@ import { sheetsToPdf, type PdfBookOptions, type PdfSheet, type SvgPainter } from
 import type { SvgPage } from '../core/reports/tablePages';
 
 let host: HTMLDivElement | null = null;
+let measureCanvas: HTMLCanvasElement | null = null;
+
+/**
+ * svg2pdf.js measures every centred or right-aligned text on a new canvas (and its
+ * 2D context), which dominated the painting of large drawing sets. While it paints,
+ * canvases asked for get one shared canvas instead: the measuring sets its font
+ * before each measurement, so sharing gives the same widths.
+ */
+async function withSharedCanvas<T>(run: () => Promise<T>): Promise<T> {
+  const doc = document;
+  const create = doc.createElement;
+  measureCanvas ??= create.call(doc, 'canvas') as HTMLCanvasElement;
+  const shared = measureCanvas;
+  doc.createElement = function (this: Document, tag: string, options?: ElementCreationOptions) {
+    return typeof tag === 'string' && tag.toLowerCase() === 'canvas' ? shared : create.call(this, tag, options);
+  } as typeof doc.createElement;
+  try {
+    return await run();
+  } finally {
+    doc.createElement = create;
+  }
+}
 
 /** Puts an SVG on a jsPDF page with svg2pdf.js (vector output); needs the DOM. */
 export const svgPainter: SvgPainter = async (doc, svg, w, h) => {
@@ -16,7 +38,7 @@ export const svgPainter: SvgPainter = async (doc, svg, w, h) => {
   host.innerHTML = svg;
   const el = host.querySelector('svg');
   try {
-    if (el) await svg2pdf(el, doc, { x: 0, y: 0, width: w, height: h });
+    if (el) await withSharedCanvas(() => svg2pdf(el, doc, { x: 0, y: 0, width: w, height: h }));
   } finally {
     host.innerHTML = '';
   }

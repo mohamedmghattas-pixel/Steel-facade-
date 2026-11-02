@@ -83,41 +83,47 @@ const DXF_LAYERS: Record<DLayer, { name: string; color: number; linetype: 'CONTI
 };
 
 export function drawingToDxf(d: Drawing): string {
-  const w = new DxfWriter(Object.values(DXF_LAYERS));
-  for (const e of d.entities) {
-    const layer = DXF_LAYERS[e.layer].name;
-    switch (e.t) {
-      case 'line':
-        w.line(e.a.x, e.a.y, e.b.x, e.b.y, layer);
-        break;
-      case 'circle':
-        w.circle(e.c.x, e.c.y, e.r, layer);
-        break;
-      case 'poly':
-        if (e.fill && e.pts.length >= 3 && e.pts.length <= 4) w.solid(e.pts, layer);
-        else w.polyline(e.pts, e.closed, layer);
-        break;
-      case 'text':
-        w.text(e.p.x, e.p.y, e.h, e.text, {
-          layer,
-          rot: e.rot,
-          align: e.anchor === 'middle' ? 'center' : e.anchor === 'end' ? 'right' : 'left',
-        });
-        break;
-      case 'image':
-        // DXF has no embedded images: a frame placeholder where the image (logo) sits.
-        w.polyline(
-          [
-            { x: e.p.x, y: e.p.y },
-            { x: e.p.x + e.w, y: e.p.y },
-            { x: e.p.x + e.w, y: e.p.y + e.h },
-            { x: e.p.x, y: e.p.y + e.h },
-          ],
-          true,
-          layer,
-        );
-        break;
-    }
-  }
+  const w = dxfSheetWriter();
+  for (const e of d.entities) writeDxfEntity(w, e);
   return w.toString();
+}
+
+/** A DXF writer with the drawing layers (ISO 128-2 line types). */
+export const dxfSheetWriter = () => new DxfWriter(Object.values(DXF_LAYERS));
+
+/** One drawing entity into a DXF writer. */
+export function writeDxfEntity(w: DxfWriter, e: DEnt) {
+  const layer = DXF_LAYERS[e.layer].name;
+  switch (e.t) {
+    case 'line':
+      w.line(e.a.x, e.a.y, e.b.x, e.b.y, layer);
+      break;
+    case 'circle':
+      w.circle(e.c.x, e.c.y, e.r, layer);
+      break;
+    case 'poly':
+      if (e.fill && e.pts.length >= 3 && e.pts.length <= 4) w.solid(e.pts, layer);
+      else w.polyline(e.pts, e.closed, layer);
+      break;
+    case 'text':
+      w.text(e.p.x, e.p.y, e.h, e.text, {
+        layer,
+        rot: e.rot,
+        align: e.anchor === 'middle' ? 'center' : e.anchor === 'end' ? 'right' : 'left',
+      });
+      break;
+    case 'image':
+      // DXF has no embedded images: a frame placeholder where the image (logo) sits.
+      w.polyline(
+        [
+          { x: e.p.x, y: e.p.y },
+          { x: e.p.x + e.w, y: e.p.y },
+          { x: e.p.x + e.w, y: e.p.y + e.h },
+          { x: e.p.x, y: e.p.y + e.h },
+        ],
+        true,
+        layer,
+      );
+      break;
+  }
 }

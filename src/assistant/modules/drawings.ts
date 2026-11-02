@@ -29,9 +29,11 @@ import {
   zonePlanFor,
   zoningSettings,
   type Drawing,
+  type SheetEntry,
 } from '../../core/drawings';
 import { derived, useStore } from '../../state/store';
-import { drawingsFor, exportAnchorScheduleCsv } from '../../ui/actions';
+import { exportAnchorScheduleCsv } from '../../ui/actions';
+import { currentDrawingSet } from '../../ui/drawingJobs';
 import type { Json, ToolModule } from './types';
 
 const num = { type: 'number' } as const;
@@ -40,10 +42,15 @@ const vec3 = { type: 'array', items: num, minItems: 3, maxItems: 3, description:
 
 const st = () => useStore.getState();
 
+/** The drawing index of the current state (sheets are made on demand). */
+const sheetIndex = () => currentDrawingSet().index().entries;
+
+/** One sheet by id, number or "number (n/N)", made now. */
 function findDrawing(key: unknown): Drawing {
   const k = String(key ?? '').trim().toLowerCase();
-  const ds = drawingsFor();
-  const d = ds.find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k || sheetLabel(x).toLowerCase() === k);
+  const ds = sheetIndex();
+  const e = ds.find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k || sheetLabel(x).toLowerCase() === k);
+  const d = e && currentDrawingSet().sheet(e.id);
   if (!d) throw new Error(`No drawing "${key}". Drawings: ${ds.slice(0, 40).map((x) => x.number).join(', ')}${ds.length > 40 ? ' …' : ''}`);
   return d;
 }
@@ -57,18 +64,22 @@ const v3 = (v: unknown, name: string): Vec3 => {
   if (!Array.isArray(v) || v.length !== 3) throw new Error(`${name} must be [x, y, z].`);
   return { x: n(v[0], name), y: n(v[1], name), z: n(v[2], name) };
 };
-const summary = (d: Drawing) => ({
-  id: d.id,
-  number: d.number,
-  ...(d.sheetCount ? { sheet: `${d.sheetIndex}/${d.sheetCount}` } : {}),
-  title: d.title,
-  kind: d.kind,
-  scale: d.scale,
-  rev: d.rev,
-  changed: d.changed,
-  edited: !!d.edited,
-  ...(d.zone ? { zone: d.zone.name } : {}),
-});
+const summary = (d: Drawing | SheetEntry) => {
+  if ('drawing' in d) currentDrawingSet().refresh(d, false);
+  return {
+    id: d.id,
+    number: d.number,
+    ...(d.sheetCount ? { sheet: `${d.sheetIndex}/${d.sheetCount}` } : {}),
+    title: d.title,
+    kind: d.kind,
+    // Index entries: scale and "changed" are known once the sheet has been made (null: not yet).
+    scale: d.scale ?? null,
+    rev: d.rev,
+    changed: d.changed ?? null,
+    edited: !!d.edited,
+    ...(d.zone ? { zone: d.zone.name } : {}),
+  };
+};
 
 const ERECTION = new Set(['setout', 'anchors', 'sequence']);
 
@@ -238,8 +249,7 @@ export const drawingsModule: ToolModule = {
       const action = String(input.action);
       const p = st().project;
       const cuts = p.drawings.cuts ?? [];
-      const ds = () => drawingsFor();
-      const show = (c: GaCut) => ({ ...c, sheet: ds().find((d) => d.id === `cut-${c.id}`)?.number });
+      const show = (c: GaCut) => ({ ...c, sheet: sheetIndex().find((d) => d.id === `cut-${c.id}`)?.number });
       if (action === 'list') return cuts.map(show);
       if (action === 'delete') {
         if (!cuts.some((c) => c.id === input.id)) throw new Error(`No cut "${input.id}".`);
@@ -286,7 +296,7 @@ export const drawingsModule: ToolModule = {
         return { erection: action === 'enable' };
       }
       if (action === 'list') {
-        const list = drawingsFor().filter((d) => ERECTION.has(d.kind)).map(summary);
+        const list = sheetIndex().filter((d) => ERECTION.has(d.kind)).map(summary);
         return { erection: st().project.drawings.settings.erection !== false, sheets: list };
       }
       const p = st().project;
@@ -306,16 +316,20 @@ export const drawingsModule: ToolModule = {
     drawing_layout(input: Json) {
       const action = String(input.action);
       if (action === 'check') {
-        const list = input.drawing ? [findDrawing(input.drawing)] : drawingsFor();
-        const sheets = list
-          .map((d) => ({ ...summary(d), issues: checkSheetLayout(d).map((i) => i.message), notices: d.notices ?? [] }))
-          .filter((x) => input.drawing || x.issues.length || x.notices.length);
-        return { checked: list.length, withProblems: sheets.filter((x) => x.issues.length).length, sheets: sheets.slice(0, 60) };
+        // Every sheet is made one at a time (and released), only its problems are kept.
+        const set = currentDrawingSet();
+        const ids = input.drawing ? [findDrawing(input.drawing).id] : sheetIndex().map((e) => e.id);
+        const sheets: (ReturnType<typeof summary> & { issues: string[]; notices: string[] })[] = [];
+        for (const d of set.sheets(ids)) {
+          const x = { ...summary(d), issues: checkSheetLayout(d).map((i) => i.message), notices: d.notices ?? [] };
+          if (input.drawing || x.issues.length || x.notices.length) sheets.push(x);
+        }
+        return { checked: ids.length, withProblems: sheets.filter((x) => x.issues.length).length, sheets: sheets.slice(0, 60) };
       }
       if (action === 'zones') {
         const p = st().project;
         const ctx = makeCtx(p, derived(p));
-        const ds = drawingsFor();
+        const ds = sheetIndex();
         const view = (v: 'front' | 'plan') => {
           const plan = zonePlanFor(ctx, v);
           if (!plan) return { divided: false };

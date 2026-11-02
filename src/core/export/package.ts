@@ -7,11 +7,10 @@
  */
 import type { Project } from '../model/types';
 import { uniqueParts, type DerivedModel } from '../derive/model';
-import { allDrawings, drawingToSvg, sheetFileStem } from '../drawings';
-import type { Drawing } from '../drawings/types';
+import { drawingSet, drawingToSvg, sheetFileStem, yieldMacrotask, type DrawingSet, type SheetEntry } from '../drawings';
+import type { Drawing, SheetRecord } from '../drawings/types';
 import { exportPlateDxfAll, flatPatternsDxf } from '../fabrication/plateDxf';
 import { buildBom, toCsv } from '../reports/bom';
-import { drawingToDxf } from '../drawings';
 import { fillXlsxTemplate } from '../io/xlsxTemplate';
 import { wireframeStatus } from '../wireframe/record';
 import * as extra from './extras';
@@ -24,6 +23,7 @@ import type { SvgPage } from '../reports/tablePages';
 import { textBytes, zipChunks } from '../io/zip';
 import { outputMeta, outputTitle, type TokenValues } from './catalog';
 import { sheetsToPdf, PdfCancelled, type PdfSheet, type SvgPainter } from './pdfBook';
+import { assemblePdf, bookFromPages, PdfPageCache, type BookPage, type PageSource } from './pdfPages';
 import * as out from './outputs';
 import { expandPattern, MAX_PATH_WARN, packageSettings, packageTokens, revisionFromDrawings, sanitizePath, sanitizeSegment, walkFolders } from './template';
 import type { DrawingGroup, ExportItem, ExportPackageSettings, ExportTemplate, OutputId, PackageIssue } from './types';
@@ -54,8 +54,10 @@ type Plan = { sources: Source[] } | { skip: string };
 export interface PackageContext {
   p: Project;
   dm: DerivedModel;
-  /** Full drawing set in register order (allDrawings). */
-  drawings: Drawing[];
+  /** Every sheet in register order: the drawing index (sheets are made when their files are). */
+  drawings: SheetEntry[];
+  /** Makes the sheets on demand (absent when there are no parts). */
+  set?: DrawingSet;
   settings: ExportPackageSettings;
   /** Revision from the drawings (used when settings.rev is empty). */
   autoRev: string;
@@ -70,16 +72,33 @@ export interface PackageContext {
 
 /** Plans of a project that do not depend on the package fields; pass the same one to reuse them while editing. */
 export interface PlanCache {
-  drawings: Drawing[];
+  /** The drawing index (register) — not the sheets, which are made while the package is built. */
+  drawings: SheetEntry[];
+  set?: DrawingSet;
   cache: Map<OutputId, Plan>;
 }
 
+/** The plan cache with the drawing index of the project state (measured now; see planCacheAsync). */
 export function planCache(p: Project, dm: DerivedModel): PlanCache {
-  return { drawings: dm.parts.length ? allDrawings(p, dm) : [], cache: new Map() };
+  if (!dm.parts.length) return { drawings: [], cache: new Map() };
+  const set = drawingSet(p, dm);
+  return { drawings: set.index().entries, set, cache: new Map() };
+}
+
+/** planCache with the drawing index measured in slices that yield to the page (large models). */
+export async function planCacheAsync(p: Project, dm: DerivedModel, o: { signal?: AbortSignal; onProgress?: (sheets: number) => void } = {}): Promise<PlanCache> {
+  if (!dm.parts.length) return { drawings: [], cache: new Map() };
+  const set = drawingSet(p, dm);
+  const idx = await set.indexAsync({ signal: o.signal, onProgress: (x) => o.onProgress?.(x.sheets) });
+  return { drawings: idx.entries, set, cache: new Map() };
 }
 
 export interface BuildContext {
   painter: SvgPainter;
+  /** Drawing pages painted once per build and reused by every PDF that contains them. */
+  pages?: PdfPageCache;
+  /** Every sheet with its facts (scale, status, fingerprint), made where not known yet; once per build. */
+  records?: () => Promise<PackageSheet[]>;
   /** Bytes of a reference model or underlay kept in the browser's storage (IndexedDB). */
   blob?: (id: string) => Promise<ArrayBuffer | Uint8Array | null>;
   /** Return false to stop (the PDF in progress is dropped). */
@@ -143,8 +162,48 @@ export function packageContext(p: Project, dm: DerivedModel, o: { shared?: PlanC
   const autoRev = revisionFromDrawings(shared.drawings);
   const date = o.date ?? new Date();
   const tokens = packageTokens(p, settings, autoRev, date);
-  return { p, dm, drawings: shared.drawings, settings, autoRev, rev: tokens.rev ?? autoRev, tokens, date, cache: shared.cache };
+  return { p, dm, drawings: shared.drawings, set: shared.set, settings, autoRev, rev: tokens.rev ?? autoRev, tokens, date, cache: shared.cache };
 }
+
+/** A sheet of the package with its facts (see BuildContext.records). */
+export type PackageSheet = SheetRecord & { fingerprint: string; small: { count: number; min: number } };
+
+/**
+ * Every sheet of the set with its scale, revision state, fingerprint and small text,
+ * making (one at a time, yielding to the page) the sheets whose facts are not known yet.
+ */
+export async function packageSheets(ctx: PackageContext, o: { signal?: AbortSignal; onSheet?: (done: number, total: number) => void } = {}): Promise<PackageSheet[]> {
+  const set = ctx.set;
+  if (!set) return [];
+  let last = Date.now();
+  for (const step of set.metaSteps(ctx.drawings.filter((e) => e.kind !== 'register').map((e) => e.id))) {
+    o.onSheet?.(step.done, step.total);
+    if (o.signal?.aborted) throw new PdfCancelled();
+    if (Date.now() - last > 40) {
+      await yieldMacrotask();
+      last = Date.now();
+    }
+  }
+  return ctx.drawings.map((e) => {
+    const st = set.state(e.id)!;
+    const m = set.meta(e.id)!;
+    return { ...e, scale: m.scale, rev: st.rev, status: st.status, changed: st.changed, fingerprint: st.fingerprint, small: m.small, sheetSize: e.sheetSize as Drawing['sheetSize'] };
+  });
+}
+
+/** Small text of the package's sheets (QAF), from their facts. */
+const smallOf = (rows: PackageSheet[]) => {
+  let count = 0;
+  let min = Infinity;
+  const sheets: string[] = [];
+  for (const r of rows)
+    if (r.small.count) {
+      count += r.small.count;
+      min = Math.min(min, r.small.min);
+      if (!sheets.includes(r.number)) sheets.push(r.number);
+    }
+  return { count, min: Number.isFinite(min) ? min : 0, sheets };
+};
 
 // ---------------------------------------------------------------------------
 // Sources per output
@@ -190,7 +249,7 @@ function partContext(ctx: PackageContext): Map<string, TokenValues> {
   return out;
 }
 
-function drawingTokens(ctx: PackageContext, d: Drawing, index: number): TokenValues {
+function drawingTokens(ctx: PackageContext, d: SheetEntry, index: number): TokenValues {
   const asm = d.kind === 'assembly' ? ctx.dm.assemblies.find((a) => a.mark === d.mark) : undefined;
   const part = d.kind === 'part' ? partContext(ctx).get(d.mark) : undefined;
   const t: TokenValues = {
@@ -208,21 +267,62 @@ function drawingTokens(ctx: PackageContext, d: Drawing, index: number): TokenVal
   return t;
 }
 
-const pdfSheet = (d: Drawing, bookmark = false): PdfSheet => ({
-  svg: () => drawingToSvg(d),
-  w: d.sheet.w,
-  h: d.sheet.h,
-  ...(bookmark ? { bookmark: { title: `${d.number}  ${d.title}`, group: BOOKMARK_GROUP[d.kind] ?? DRAWING_GROUP_LABEL.other } } : {}),
+/** A sheet made on demand (released to the drawing cache after use). */
+function sheetOf(ctx: PackageContext, e: SheetEntry): Drawing {
+  const d = ctx.set?.sheet(e.id);
+  if (!d) throw new Error(`Sheet ${e.number} could not be made`);
+  return d;
+}
+
+/** The page of a sheet for the PDF page cache: painted once per build, keyed by its content. */
+const pageSource = (ctx: PackageContext, e: SheetEntry): PageSource => ({
+  key: `${ctx.set ? ctx.set.fullKey(e.drawing) : e.drawing}#${e.id}`,
+  sheet: () => {
+    const d = sheetOf(ctx, e);
+    return { svg: () => drawingToSvg(d), w: d.sheet.w, h: d.sheet.h };
+  },
 });
+
+const bookPage = (ctx: PackageContext, e: SheetEntry, bookmark = false): BookPage => ({
+  src: pageSource(ctx, e),
+  ...(bookmark ? { bookmark: { title: `${e.number}  ${e.title}`, group: BOOKMARK_GROUP[e.kind] ?? DRAWING_GROUP_LABEL.other } } : {}),
+});
+
+const pagesOf = (b: BuildContext) => (b.pages ??= new PdfPageCache(b.painter));
+/** Every sheet with its facts, once per build (made where needed). */
+const recordsOf = (ctx: PackageContext, b: BuildContext) => (b.records ??= lazyAsync(() => packageSheets(ctx)))();
 
 const svgPdfSheets = (pages: SvgPage[]): PdfSheet[] => pages.map((pg) => ({ svg: () => pg.svg, w: pg.w, h: pg.h }));
 
-/** PDF size estimate: vector sheets compress to roughly 17 bytes per entity (measured on the sample). */
-const drawingPdfSize = (d: Drawing) => 2500 + d.entities.length * 17;
-const drawingDxfSize = (d: Drawing) => 3000 + d.entities.length * 110;
+/** Entities of a sheet: known once it has been made, else a typical count for its kind. */
+function entityCount(ctx: PackageContext, e: SheetEntry): number {
+  const known = ctx.set?.meta(e.id)?.entities;
+  if (known !== undefined) return known;
+  const parts = ctx.dm.parts.length;
+  switch (e.kind) {
+    case 'ga':
+    case 'sequence':
+      return 1500 + (e.zone ? Math.round((parts * 1.3) / Math.max(1, e.zone.count)) : Math.round(parts * 1.1));
+    case 'register':
+    case 'anchors':
+    case 'section':
+      return 1500;
+    default:
+      return 500;
+  }
+}
 
-function filteredDrawings(ctx: PackageContext, groups?: DrawingGroup[]): { d: Drawing; i: number }[] {
+/** PDF size estimate: vector sheets compress to roughly 17 bytes per entity (measured on the sample). */
+const drawingPdfSize = (ctx: PackageContext, d: SheetEntry) => 2500 + entityCount(ctx, d) * 17;
+const drawingDxfSize = (ctx: PackageContext, d: SheetEntry) => 3000 + entityCount(ctx, d) * 110;
+
+function filteredDrawings(ctx: PackageContext, groups?: DrawingGroup[]): { d: SheetEntry; i: number }[] {
   return ctx.drawings.map((d, i) => ({ d, i })).filter(({ d }) => inGroups(d, groups));
+}
+
+function lazyAsync<T>(f: () => Promise<T>): () => Promise<T> {
+  let p: Promise<T> | null = null;
+  return () => (p ??= f());
 }
 
 function pdfSource(base: string, sheets: PdfSheet[], size: number, title: string, tokens: TokenValues = {}, rev?: string): Source {
@@ -271,7 +371,11 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       if (!parts) return { skip: NO_PARTS };
       const ds = filteredDrawings(ctx, item?.drawings).map((x) => x.d);
       if (!ds.length) return { skip: 'no sheets of the chosen drawing types' };
-      return { sources: [{ base: 'Sheets', ext: 'dxf', tokens: {}, size: ds.reduce((s2, d) => s2 + drawingDxfSize(d), 0), data: () => drawingToDxf(extra.sheetsSideBySide(ds, ds.map((d) => d.number).join(', '))) }] };
+      // Written sheet by sheet: only one sheet's entities are held at a time.
+      const sheets = function* () {
+        for (const d of ds) yield sheetOf(ctx, d);
+      };
+      return { sources: [{ base: 'Sheets', ext: 'dxf', tokens: {}, size: ds.reduce((s2, d) => s2 + drawingDxfSize(ctx, d), 0), data: () => extra.sheetsSideBySideDxf(sheets()) }] };
     }
     case 'part-schedule-pdf': {
       if (!parts) return { skip: NO_PARTS };
@@ -283,7 +387,7 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     case 'erection-notes-txt':
       return parts ? { sources: [exact('Erection notes', 'txt', extra.erectionNotes(p, dm, ctx.drawings))] } : { skip: NO_PARTS };
     case 'run-report-txt':
-      return { sources: [{ base: 'Run report', ext: 'txt', tokens: {}, size: 6000, late: true, data: (b) => runReport(b.plan!, b.result!) }] };
+      return { sources: [{ base: 'Run report', ext: 'txt', tokens: {}, size: 6000, late: true, data: async (b) => runReport(b.plan!, b.result!, await recordsOf(ctx, b)) }] };
     case 'cutplan-csv':
     case 'cutplan-pdf': {
       if (!out.hasLinearParts(dm)) return { skip: 'there are no linear parts to nest' };
@@ -352,7 +456,8 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
         ],
       };
     case 'qaf-xlsx':
-      return { sources: [{ base: 'QAF', ext: 'xlsx', tokens: {}, size: 9000, data: (b) => qafFile(ctx, b) }] };
+      // Late: the text-size and status checks read every sheet's facts.
+      return { sources: [{ base: 'QAF', ext: 'xlsx', tokens: {}, size: 9000, late: true, data: (b) => qafFile(ctx, b) }] };
     case 'vcf-xlsx':
       return { sources: [{ base: 'VCF', ext: 'xlsx', tokens: {}, size: 7000, data: (b) => vcfFile(ctx, b) }] };
     case 'drawing-pdf':
@@ -363,8 +468,21 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       return {
         sources: ds.map(({ d, i }) =>
           id === 'drawing-pdf'
-            ? pdfSource(d.number, [pdfSheet(d)], drawingPdfSize(d), `${d.number} ${d.title}`, drawingTokens(ctx, d, i), d.rev)
-            : { base: d.number, ext: 'dxf', tokens: drawingTokens(ctx, d, i), size: drawingDxfSize(d), rev: d.rev, data: () => out.drawingDxf(d) },
+            ? {
+                base: d.number,
+                ext: 'pdf',
+                tokens: drawingTokens(ctx, d, i),
+                size: drawingPdfSize(ctx, d),
+                pages: 1,
+                rev: d.rev,
+                // The sheet's page is painted once and reused by the combined PDFs.
+                data: async (b: BuildContext) => {
+                  const pg = await pagesOf(b).page(pageSource(ctx, d));
+                  if (b.onPage?.(0, 1) === false) throw new PdfCancelled();
+                  return assemblePdf([pg], { title: `${d.number} ${d.title}` });
+                },
+              }
+            : { base: d.number, ext: 'dxf', tokens: drawingTokens(ctx, d, i), size: drawingDxfSize(ctx, d), rev: d.rev, data: () => out.drawingDxf(sheetOf(ctx, d)) },
         ),
       };
     }
@@ -372,14 +490,30 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       if (!parts) return { skip: NO_PARTS };
       const ds = filteredDrawings(ctx, item?.drawings);
       if (!ds.length) return { skip: 'no sheets of the chosen drawing types' };
-      const sheets = ds.map(({ d }) => pdfSheet(d, true));
-      return { sources: [pdfSource('Combined', sheets, ds.reduce((s, { d }) => s + d.entities.length * 18, 3000), title('drawings'))] };
+      const list = ds.map(({ d }) => bookPage(ctx, d, true));
+      return {
+        sources: [
+          {
+            base: 'Combined',
+            ext: 'pdf',
+            tokens: {},
+            size: ds.reduce((s, { d }) => s + entityCount(ctx, d) * 18, 3000),
+            pages: list.length,
+            data: (b: BuildContext) => bookFromPages(pagesOf(b), list, { title: title('drawings'), onPage: b.onPage, yieldTo: yieldMacrotask }),
+          },
+        ],
+      };
     }
     case 'register-xlsx':
     case 'register-csv': {
       if (!ctx.drawings.length) return { skip: NO_PARTS };
-      const data = id === 'register-xlsx' ? out.registerXlsx(p, ctx.drawings) : out.rowsCsv(out.registerRows(ctx.drawings));
-      return { sources: [exact('Drawing register', id === 'register-xlsx' ? 'xlsx' : 'csv', data)] };
+      // Late: scales and statuses are known once the sheets are made.
+      const xlsx = id === 'register-xlsx';
+      const data = async (b: BuildContext) => {
+        const rows = await recordsOf(ctx, b);
+        return xlsx ? out.registerXlsx(p, rows) : out.rowsCsv(out.registerRows(rows));
+      };
+      return { sources: [{ base: 'Drawing register', ext: xlsx ? 'xlsx' : 'csv', tokens: {}, size: 2000 + ctx.drawings.length * (xlsx ? 60 : 110), late: true, data }] };
     }
     case 'revision-log-xlsx':
     case 'revision-log-csv': {
@@ -513,10 +647,11 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     }
     case 'qc-checklist-pdf':
     case 'qc-checklist-xlsx': {
-      const checks = out.qcChecks(p, dm, ctx.drawings);
-      if (id === 'qc-checklist-xlsx') return { sources: [exact('QC checklist', 'xlsx', out.qcXlsx(p, checks))] };
-      const pages = out.qcPages(p, checks);
-      return { sources: [pdfSource('QC checklist', svgPdfSheets(pages), 3000 + pages.length * 6000, title('QC checklist'))] };
+      // Late: "changed since issue" is known once the sheets are made.
+      const checks = async (b: BuildContext) => out.qcChecks(p, dm, await recordsOf(ctx, b));
+      if (id === 'qc-checklist-xlsx') return { sources: [{ base: 'QC checklist', ext: 'xlsx', tokens: {}, size: 9000, late: true, data: async (b) => out.qcXlsx(p, await checks(b)) }] };
+      const pdf = async (b: BuildContext) => sheetsToPdf(svgPdfSheets(out.qcPages(p, await checks(b))), b.painter, { title: title('QC checklist'), onPage: b.onPage });
+      return { sources: [{ base: 'QC checklist', ext: 'pdf', tokens: {}, size: 15000, pages: 2, late: true, data: pdf }] };
     }
     case 'checks-csv':
     case 'checks-pdf': {
@@ -732,6 +867,9 @@ export async function buildPackage(plan: PackagePlan, o: BuildOptions): Promise<
     res.bytes += data.length;
   };
   const paths = new Map(plan.files.map((f) => [f.source, f.path]));
+  // Drawing pages are painted once per build and shared by every PDF that contains them.
+  const pageCache = new PdfPageCache(o.painter);
+  const records = lazyAsync(() => packageSheets(plan.ctx, { signal: o.signal }));
   const ordered = [...plan.files.filter((f) => !f.source.late), ...plan.files.filter((f) => f.source.late)];
   for (const [i, f] of ordered.entries()) {
     if (aborted()) {
@@ -744,6 +882,8 @@ export async function buildPackage(plan: PackagePlan, o: BuildOptions): Promise<
       const pages = f.source.pages ?? 0;
       const data = await f.source.data({
         painter: o.painter,
+        pages: pageCache,
+        records,
         blob: o.blob,
         plan,
         result: res,
@@ -921,9 +1061,20 @@ export function relativePath(from: string, to: string): string {
 /** Outputs that write at least one file in the plan. */
 export const exportedOutputs = (plan: PackagePlan) => new Set(plan.items.filter((i) => i.files.length).map((i) => i.item.output));
 
-export function qafDecisions(plan: PackagePlan): QafDecision[] {
-  const { p, dm, drawings } = plan.ctx;
-  return evaluateQaf({ p, dm, drawings, exported: exportedOutputs(plan) });
+/**
+ * QAF decisions of a plan. With the sheets' facts (`rows`, as the package build has them)
+ * the text-size and status checks are exact; without, they use the facts known so far
+ * (sheets not made yet count as not released, and their text is checked when the package is made).
+ */
+export function qafDecisions(plan: PackagePlan, rows?: PackageSheet[]): QafDecision[] {
+  const { p, dm, drawings, set } = plan.ctx;
+  if (rows) return evaluateQaf({ p, dm, drawings: rows, exported: exportedOutputs(plan), small: smallOf(rows) });
+  const known = drawings.map((e) => {
+    const m = set?.meta(e.id);
+    const st = m ? set!.state(e.id) : undefined;
+    return { ...e, fingerprint: st?.fingerprint ?? '', status: st?.status ?? e.status ?? 'In preparation', small: m?.small ?? { count: 0, min: 0 } } as PackageSheet;
+  });
+  return evaluateQaf({ p, dm, drawings: known, exported: exportedOutputs(plan), small: smallOf(known) });
 }
 
 async function templateBytes(b: BuildContext, blobId: string, name: string): Promise<Uint8Array> {
@@ -933,7 +1084,8 @@ async function templateBytes(b: BuildContext, blobId: string, name: string): Pro
 }
 
 async function qafFile(ctx: PackageContext, b: BuildContext): Promise<Uint8Array> {
-  const decisions = b.plan ? qafDecisions(b.plan) : evaluateQaf({ p: ctx.p, dm: ctx.dm, drawings: ctx.drawings, exported: new Set() });
+  const rows = await recordsOf(ctx, b);
+  const decisions = b.plan ? qafDecisions(b.plan, rows) : evaluateQaf({ p: ctx.p, dm: ctx.dm, drawings: rows, exported: new Set(), small: smallOf(rows) });
   const o = { name: ctx.p.drawings.settings.checkedBy, date: ctx.date };
   const t = ctx.settings.forms?.qaf;
   if (!t) return qafWorkbook(decisions, o);
@@ -975,8 +1127,10 @@ function fnv(s: string): string {
 }
 
 /** Run report.txt: settings, model counts, fingerprints, files per item, QAF decisions, skipped items, warnings, errors. */
-export function runReport(plan: PackagePlan, res: PackageResult): string {
-  const { p, dm, drawings, settings } = plan.ctx;
+export function runReport(plan: PackagePlan, res: PackageResult, rows?: PackageSheet[]): string {
+  const { p, dm, settings } = plan.ctx;
+  const drawings: (SheetRecord & { fingerprint?: string })[] =
+    rows ?? plan.ctx.drawings.map((e) => ({ ...e, changed: e.changed ?? false, status: e.status ?? 'In preparation', scale: e.scale ?? '', sheetSize: e.sheetSize as Drawing['sheetSize'] }));
   const d = plan.ctx.date;
   const L: string[] = [];
   const head = `RUN REPORT ${plan.root}`;
@@ -1028,7 +1182,7 @@ export function runReport(plan: PackagePlan, res: PackageResult): string {
   L.push(`  Total so far: ${res.entries.length} files, ${formatBytes(res.bytes)} (README.txt and this report come last)`);
   L.push('');
   L.push('QAF DECISIONS (Yes / No / N/A ticked automatically; "manual" left blank)');
-  for (const x of qafDecisions(plan)) L.push(`  Row ${String(x.item.row).padStart(2)} ${(x.answer ?? 'manual').toUpperCase().padEnd(6)} ${x.item.text} — ${x.reason}`);
+  for (const x of qafDecisions(plan, rows)) L.push(`  Row ${String(x.item.row).padStart(2)} ${(x.answer ?? 'manual').toUpperCase().padEnd(6)} ${x.item.text} — ${x.reason}`);
   if (res.errors.length) {
     L.push('', 'ERRORS');
     for (const e of res.errors) L.push(`  ${e.path}: ${e.message}`);

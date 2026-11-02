@@ -21,6 +21,7 @@ import {
   type BuildProgress,
   type PackagePlan,
   type PackageResult,
+  planCache,
   type PlanCache,
 } from '../core/export/package';
 import { activeExportTemplate, isBuiltinTemplate, packageSettings, templateIssues } from '../core/export/template';
@@ -30,7 +31,6 @@ import { defaultQafMapping, defaultVcfMapping } from '../core/export/forms';
 import { readXlsxCells } from '../core/io/xlsxTemplate';
 import type { SvgPainter } from '../core/export/pdfBook';
 import { svgPainter } from './pdf';
-import { drawingsOf } from './actions';
 import { askConfirm } from './askState';
 
 const st = () => useStore.getState();
@@ -53,12 +53,12 @@ export function setPackagePainter(p: SvgPainter | null) {
   painter = p ?? svgPainter;
 }
 
-// Drawing set and generated files per project object (reused while the dialog is open).
+// Drawing index and generated files per project object (reused while the dialog is open).
 const caches = new WeakMap<Project, PlanCache>();
 function sharedCache(p: Project, dm: DerivedModel): PlanCache {
   let c = caches.get(p);
-  // The drawing set is shared with the Drawings tab (one generation per model state).
-  if (!c) caches.set(p, (c = { drawings: dm.parts.length ? drawingsOf(p, dm) : [], cache: new Map() }));
+  // The drawing index is shared with the Drawings tab (one per model state); sheets are made while the package is built.
+  if (!c) caches.set(p, (c = planCache(p, dm)));
   return c;
 }
 

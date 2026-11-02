@@ -78,7 +78,7 @@ export interface SheetMeta {
   /** Texts below 2.5 mm outside the title block (QAF check): count and smallest height. */
   small: { count: number; min: number };
   /** View sheets: the assembly instances shown (main part ref → score and mark box, see navigation.ts). */
-  hits?: [string, SheetHit][];
+  hits?: Map<string, SheetHit>;
   entities: number;
 }
 
@@ -240,6 +240,8 @@ export class DrawingSet {
   private asmById?: Map<string, Assembly>;
   /** Bumped whenever facts of a sheet become known (UI refresh). */
   version = 0;
+  /** Layout problem counts of the sheets known so far (made, or found in the cache). */
+  readonly layout = new Map<string, number>();
 
   constructor(
     readonly p: Project,
@@ -446,10 +448,12 @@ export class DrawingSet {
         scale: d.scale,
         ...(d.notices?.length ? { notices: d.notices } : {}),
         small: smallTextOf(d),
-        ...(hits.size ? { hits: [...hits] } : {}),
+        ...(hits.size ? { hits } : {}),
         entities: d.entities.length,
       });
-      putBounded(layoutCache, `${d.id}|${full}`, checkSheetLayout(d).length);
+      const issues = checkSheetLayout(d).length;
+      putBounded(layoutCache, `${d.id}|${full}`, issues);
+      this.layout.set(d.id, issues);
       const e = this.idx?.byId.get(d.id);
       if (e) this.refresh(e, false);
     }
@@ -536,6 +540,7 @@ export class DrawingSet {
     const f = this.factsOf(id);
     if (!f) return undefined;
     const layout = layoutCache.get(`${id}|${this.fullKey(drawingIdOf(id))}`);
+    if (layout !== undefined) this.layout.set(id, layout);
     return { ...f, layout: layout ?? -1 };
   }
 
@@ -602,6 +607,23 @@ export class DrawingSet {
     }
   }
 
+  /**
+   * Is the sheet one of those that depend on the whole model (GA, zone, sequence, section)?
+   * They are made again after every model edit and are the slowest on large facades.
+   */
+  heavy(id: string): boolean {
+    const pl = this.planned(id);
+    return !!pl && !pl.item.dep;
+  }
+
+  /** Can the sheet be made without the index's preparation (zone plans, slab brackets) of its family? */
+  prepared(id: string): boolean {
+    const base = drawingIdOf(id);
+    if (base.startsWith(`${REGISTER}-`)) return !!this.idx;
+    const f = this.families.find((x) => x.has(base));
+    return !f || !f.prepare || this.famItems.has(f.name);
+  }
+
   // -- navigation ------------------------------------------------------------
 
   /** Navigation bound of a sheet for an assembly instance (see PlanItem.bound). */
@@ -611,9 +633,21 @@ export class DrawingSet {
     if (e.kind !== 'ga' && e.kind !== 'sequence' && e.kind !== 'setout' && e.kind !== 'section') return 0;
     const pl = this.planned(e.drawing);
     if (!pl) return 0;
-    // Continuation sheets carry tables only.
-    if ((e.sheetIndex ?? 1) > 1) return 0;
+    // Continuation sheets carry tables only (and the zone record of their drawing).
+    if ((e.sheetIndex ?? 1) > 1) return e.zone && this.zoneMains(e).has(inst) ? 2 : 0;
     return pl.item.bound ? pl.item.bound(inst) : 3;
+  }
+
+  private zoneMainsOf = new Map<string, Set<string>>();
+  /** Main part refs of the assemblies listed in a sheet's zone. */
+  private zoneMains(e: SheetEntry): Set<string> {
+    let m = this.zoneMainsOf.get(e.id);
+    if (!m) {
+      const by = (this.asmById ??= new Map(this.dm.assemblies.map((a) => [a.id, a])));
+      m = new Set((e.zone?.assemblies ?? []).map((id) => by.get(id)?.main).filter((x): x is string => !!x));
+      this.zoneMainsOf.set(e.id, m);
+    }
+    return m;
   }
 }
 

@@ -22,8 +22,8 @@ import { designation } from '../../core/drawings/compose';
 import { sheetLabel } from '../../core/drawings/register';
 import { sheetTargets } from '../../core/drawings/navigation';
 import { derived, useStore } from '../../state/store';
-import { drawingsFor } from '../../ui/actions';
-import { currentIndex, openAssemblyDrawing, openDrawing, openPartDrawing, selectAssemblies, selectRefs, showOnSheet } from '../../ui/navigationActions';
+import { currentDrawingSet } from '../../ui/drawingJobs';
+import { currentIndex, openAssemblyDrawing, openDrawing, openPartDrawing, selectAssemblies, selectRefs, sheetsShowing, showOnSheet } from '../../ui/navigationActions';
 import type { Json, ToolModule } from './types';
 
 const st = () => useStore.getState();
@@ -260,7 +260,7 @@ const run: ToolModule['run'] = {
       opened: d ? { id: d.id, number: sheetLabel(d), title: d.title } : f?.id,
       assembly: a?.mark,
       part: dm.partByRef.get(ref)?.mark,
-      sheets: a ? (currentIndex().instances.get(a.main) ?? []).map((s) => ({ id: s.id, number: s.label, kind: s.kind })) : [],
+      sheets: a ? sheetsShowing(a.main).map((s) => ({ id: s.id, number: s.label, kind: s.kind })) : [],
     };
   },
   show_in_3d: (input) => {
@@ -270,7 +270,9 @@ const run: ToolModule['run'] = {
     let kind = 'assembly';
     if (input.drawing) {
       const k = String(input.drawing).toLowerCase();
-      const d = drawingsFor().find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k || sheetLabel(x).toLowerCase() === k);
+      const set = currentDrawingSet();
+      const e = set.index().entries.find((x) => x.id.toLowerCase() === k || x.number.toLowerCase() === k || sheetLabel(x).toLowerCase() === k);
+      const d = e && set.sheet(e.id);
       if (!d) throw new Error(`No drawing "${input.drawing}".`);
       const t = sheetTargets(dm, d);
       if (!t) throw new Error(`${d.number} shows no parts (register / schedule).`);

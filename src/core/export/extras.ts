@@ -8,6 +8,7 @@ import type { Project } from '../model/types';
 import { uniqueParts, type DerivedModel } from '../derive/model';
 import type { DEnt, Drawing } from '../drawings/types';
 import { anchorRows } from '../drawings';
+import { dxfSheetWriter, writeDxfEntity } from '../drawings/render';
 import { planBars } from '../optimize/barNesting';
 import { nestPlates } from '../optimize/plateNesting';
 import { flatPlate } from '../fabrication/plateDxf';
@@ -27,7 +28,7 @@ const n2 = (v: number) => (Math.round(v * 100) / 100).toString();
 // ---------------------------------------------------------------------------
 // Part schedule
 
-export function partScheduleRows(dm: DerivedModel, drawings: Drawing[]): Row[] {
+export function partScheduleRows(dm: DerivedModel, drawings: Pick<Drawing, 'kind' | 'mark' | 'number'>[]): Row[] {
   const dwg = new Map(drawings.filter((d) => d.kind === 'part').map((d) => [d.mark, d.number]));
   const usedIn = new Map<string, Set<string>>();
   for (const a of dm.assemblies)
@@ -53,7 +54,7 @@ export function partScheduleRows(dm: DerivedModel, drawings: Drawing[]): Row[] {
   ];
 }
 
-export function partSchedulePages(p: Project, dm: DerivedModel, drawings: Drawing[]): SvgPage[] {
+export function partSchedulePages(p: Project, dm: DerivedModel, drawings: Pick<Drawing, 'kind' | 'mark' | 'number'>[]): SvgPage[] {
   const rows = partScheduleRows(dm, drawings);
   const body = rows.slice(1);
   const pieces = body.reduce((s, r) => s + Number(r[1]), 0);
@@ -282,7 +283,7 @@ export function profilesUsedJson(p: Project, dm: DerivedModel): string {
 // ---------------------------------------------------------------------------
 // Erection notes
 
-export function erectionNotes(p: Project, dm: DerivedModel, drawings: Drawing[]): string {
+export function erectionNotes(p: Project, dm: DerivedModel, drawings: Pick<Drawing, 'kind' | 'number' | 'title' | 'rev'>[]): string {
   const er = drawings.filter((d) => d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence');
   const phases = [...p.phases].sort((a, b) => a.sequence - b.sequence);
   const mv = p.settings.movement;
@@ -332,6 +333,20 @@ function shift(e: DEnt, dx: number): DEnt {
     case 'image':
       return { ...e, p: m(e.p) };
   }
+}
+
+/**
+ * Several sheets side by side (20 mm apart) in one DXF, written sheet by sheet so that
+ * only one sheet's entities are needed at a time (same file as drawingToDxf(sheetsSideBySide(…))).
+ */
+export function sheetsSideBySideDxf(sheets: Iterable<Drawing>): string {
+  const w = dxfSheetWriter();
+  let x = 0;
+  for (const d of sheets) {
+    for (const e of d.entities) writeDxfEntity(w, shift(e, x));
+    x += d.sheet.w + 20;
+  }
+  return w.toString();
 }
 
 /** One drawing with the given sheets side by side (20 mm apart), for a single DXF of several sheets. */

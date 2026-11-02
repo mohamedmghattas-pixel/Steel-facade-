@@ -28,11 +28,11 @@ import { derived, useStore, type Tool } from '../state/store';
 import { askConfirm, askText } from './askState';
 import { download, migrateProject, pickFile, putBlob, deleteBlob, safeName } from '../state/storage';
 import { zip } from '../core/io/zip';
-import { allDrawings, sheetFileStem } from '../core/drawings';
-import { anchorCsv, bomCsvFiles, bomXlsx, drawingDxf, dstvFiles, hasAnchors, ifcText, projectJson, XLSX_MIME } from '../core/export/outputs';
+import { allDrawings, sheetFileStem, type SheetEntry } from '../core/drawings';
+import { anchorCsv, bomCsvFiles, bomXlsx, dstvFiles, hasAnchors, ifcText, projectJson, XLSX_MIME } from '../core/export/outputs';
 import type { Drawing } from '../core/drawings/types';
 import type { DerivedModel } from '../core/derive/model';
-import { drawingsToPdf } from './pdf';
+import { currentDrawingSet, exportSheetsDxf, exportSheetsPdf, requestIndex } from './drawingJobs';
 import { sampleProject } from '../core/sample';
 import { parseProfileCsv, profileDefsToCsv, type ProfileDef } from '../core/library/profiles';
 import { importDrawingFile } from './managementActions';
@@ -317,16 +317,17 @@ export function exportNc() {
 }
 
 /** "FS-001-A-M1_revA" — identification number (with "_sh2" for sheet 2 of a multi-sheet drawing) plus revision index. */
-export function drawingFileName(d: Drawing): string {
+export function drawingFileName(d: Pick<Drawing, 'number' | 'sheetIndex' | 'sheetCount' | 'rev'>): string {
   return safeName(`${sheetFileStem(d)}_rev${d.rev === '-' ? '0' : d.rev}`);
 }
 
 const drawingCache = new WeakMap<object, Drawing[]>();
 
 /**
- * The drawing set of the current project, cached per derived model (one per
- * project state), so the Drawings tab, exports and the 3D ↔ drawing navigation
- * share one generation. Treat the result as read-only.
+ * Every sheet of the current project, drawn now (eager; cached per derived model).
+ * The app itself lists sheets from the drawing index and makes them on demand
+ * (`currentDrawingSet()` in drawingJobs.ts): use that on large models. Kept for
+ * code that needs the whole set at once. Treat the result as read-only.
  */
 export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
   const p = st().project;
@@ -344,11 +345,15 @@ export function drawingsOf(p: Project, dm: DerivedModel): Drawing[] {
   return all;
 }
 
-export function exportDrawingsDxf(list?: Drawing[]) {
+/** DXF of sheets (default: every sheet) in one ZIP, made one by one with progress and Cancel. */
+export async function exportDrawingsDxf(list?: SheetEntry[]) {
   if (!guardModel()) return;
-  const ds = list ?? drawingsFor();
-  const files = ds.map((d) => ({ name: `${drawingFileName(d)}.dxf`, data: drawingDxf(d) }));
-  download(`${fileBase()}-drawings-dxf.zip`, zip(files), 'application/zip');
+  const set = currentDrawingSet();
+  try {
+    await exportSheetsDxf(set, list ?? (await requestIndex(set)).entries);
+  } catch (e) {
+    notify(`DXF export failed: ${(e as Error).message}`, 'error');
+  }
 }
 
 /** Anchor schedule (every anchor: bracket, grid / level reference, coordinates, type, size, length) as CSV. */
@@ -360,13 +365,12 @@ export function exportAnchorScheduleCsv() {
   download(`${fileBase()}-anchor-schedule.csv`, anchorCsv(p, dm), 'text/csv');
 }
 
-export async function exportDrawingsPdf(list?: Drawing[]) {
+/** PDF of sheets (default: every sheet), made and painted one by one with progress and Cancel. */
+export async function exportDrawingsPdf(list?: SheetEntry[]) {
   if (!guardModel()) return;
-  const ds = list ?? drawingsFor();
-  notify(`Creating PDF with ${ds.length} sheet${ds.length === 1 ? '' : 's'}…`);
+  const set = currentDrawingSet();
   try {
-    const blob = await drawingsToPdf(ds);
-    download(ds.length === 1 ? `${drawingFileName(ds[0])}.pdf` : `${fileBase()}-drawings.pdf`, blob, 'application/pdf');
+    await exportSheetsPdf(set, list ?? (await requestIndex(set)).entries);
   } catch (e) {
     notify(`PDF export failed: ${(e as Error).message}`, 'error');
   }

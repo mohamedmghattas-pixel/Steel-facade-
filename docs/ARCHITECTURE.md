@@ -301,6 +301,13 @@ lists and NC files cannot disagree.
   sequences share it.
 - **Rendering:** one entity model renders to SVG (preview, PDF through
   svg2pdf.js) and DXF R12.
+- **On demand** (`onDemand.ts`): the drawing index (register) is measured
+  without drawing — generators pack their tables on a dry sheet and skip the
+  views — and built in slices; sheets are made one drawing at a time into an LRU
+  cache keyed by what each drawing shows, so an edit makes again only the
+  drawings it touched, when they are viewed or exported. `allDrawings` (eager)
+  gives the same sheets. Exports stream the sheets and paint each PDF page once
+  (`export/pdfPages.ts`).
 
 ### 3.8 Outputs
 

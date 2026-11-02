@@ -292,6 +292,14 @@ const pagesOf = (b: BuildContext) => (b.pages ??= new PdfPageCache(b.painter));
 /** Every sheet with its facts, once per build (made where needed). */
 const recordsOf = (ctx: PackageContext, b: BuildContext) => (b.records ??= lazyAsync(() => packageSheets(ctx)))();
 
+/**
+ * Before a register sheet is made: the register lists every sheet's scale and status, so the
+ * sheets whose facts are not known yet are made first, one at a time, yielding to the page.
+ */
+const readyFor = async (ctx: PackageContext, b: BuildContext, ds: SheetEntry[]) => {
+  if (ds.some((d) => d.kind === 'register')) await recordsOf(ctx, b);
+};
+
 const svgPdfSheets = (pages: SvgPage[]): PdfSheet[] => pages.map((pg) => ({ svg: () => pg.svg, w: pg.w, h: pg.h }));
 
 /** Entities of a sheet: known once it has been made, else a typical count for its kind. */
@@ -375,7 +383,11 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       const sheets = function* () {
         for (const d of ds) yield sheetOf(ctx, d);
       };
-      return { sources: [{ base: 'Sheets', ext: 'dxf', tokens: {}, size: ds.reduce((s2, d) => s2 + drawingDxfSize(ctx, d), 0), data: () => extra.sheetsSideBySideDxf(sheets()) }] };
+      const data = async (b: BuildContext) => {
+        await readyFor(ctx, b, ds);
+        return extra.sheetsSideBySideDxf(sheets());
+      };
+      return { sources: [{ base: 'Sheets', ext: 'dxf', tokens: {}, size: ds.reduce((s2, d) => s2 + drawingDxfSize(ctx, d), 0), data }] };
     }
     case 'part-schedule-pdf': {
       if (!parts) return { skip: NO_PARTS };
@@ -477,12 +489,23 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
                 rev: d.rev,
                 // The sheet's page is painted once and reused by the combined PDFs.
                 data: async (b: BuildContext) => {
+                  await readyFor(ctx, b, [d]);
                   const pg = await pagesOf(b).page(pageSource(ctx, d));
                   if (b.onPage?.(0, 1) === false) throw new PdfCancelled();
                   return assemblePdf([pg], { title: `${d.number} ${d.title}` });
                 },
               }
-            : { base: d.number, ext: 'dxf', tokens: drawingTokens(ctx, d, i), size: drawingDxfSize(ctx, d), rev: d.rev, data: () => out.drawingDxf(sheetOf(ctx, d)) },
+            : {
+                base: d.number,
+                ext: 'dxf',
+                tokens: drawingTokens(ctx, d, i),
+                size: drawingDxfSize(ctx, d),
+                rev: d.rev,
+                data: async (b: BuildContext) => {
+                  await readyFor(ctx, b, [d]);
+                  return out.drawingDxf(sheetOf(ctx, d));
+                },
+              },
         ),
       };
     }
@@ -499,7 +522,15 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
             tokens: {},
             size: ds.reduce((s, { d }) => s + entityCount(ctx, d) * 18, 3000),
             pages: list.length,
-            data: (b: BuildContext) => bookFromPages(pagesOf(b), list, { title: title('drawings'), onPage: b.onPage, yieldTo: yieldMacrotask }),
+            // Register sheets list the others' scales and statuses: painted last (when the others are made), in place.
+            data: (b: BuildContext) =>
+              bookFromPages(pagesOf(b), list, {
+                title: title('drawings'),
+                onPage: b.onPage,
+                yieldTo: yieldMacrotask,
+                later: (_, i) => ds[i].d.kind === 'register',
+                beforeLater: () => recordsOf(ctx, b),
+              }),
           },
         ],
       };

@@ -12,7 +12,7 @@
  * direct stream lengths); pages it cannot read are reported as errors so the
  * caller can paint them the usual way.
  */
-import { sheetsToPdf, bookmarkText, type PdfSheet, type SvgPainter } from './pdfBook';
+import { sheetsToPdf, bookmarkText, PdfCancelled, type PdfSheet, type SvgPainter } from './pdfBook';
 
 /** A page lifted out of a PDF: content stream, resources and the objects they refer to. */
 export interface PdfPage {
@@ -402,19 +402,34 @@ export interface BookPage {
  * A book (one PDF) of pages from the cache: each page is painted at most once per cache.
  * `onPage` is called after each page; return false to stop (throws PdfCancelled).
  */
-export async function bookFromPages(cache: PdfPageCache, list: BookPage[], o: { title?: string; onPage?: (i: number, n: number) => boolean | void; yieldTo?: () => Promise<void> } = {}): Promise<Uint8Array> {
-  const pages: PdfPage[] = [];
+export async function bookFromPages(
+  cache: PdfPageCache,
+  list: BookPage[],
+  o: {
+    title?: string;
+    onPage?: (i: number, n: number) => boolean | void;
+    yieldTo?: () => Promise<void>;
+    /** Pages painted after all others (in book order still), e.g. register sheets that list the others; `beforeLater` runs first. */
+    later?: (bp: BookPage, i: number) => boolean;
+    beforeLater?: () => Promise<unknown>;
+  } = {},
+): Promise<Uint8Array> {
+  const pages: PdfPage[] = new Array(list.length);
   let lastYield = Date.now();
-  for (const [i, bp] of list.entries()) {
-    pages.push(await cache.page(bp.src));
-    if (o.onPage?.(i, list.length) === false) {
-      const { PdfCancelled } = await import('./pdfBook');
-      throw new PdfCancelled();
-    }
+  let done = 0;
+  const paint = async (i: number) => {
+    pages[i] = await cache.page(list[i].src);
+    if (o.onPage?.(done++, list.length) === false) throw new PdfCancelled();
     if (o.yieldTo && Date.now() - lastYield > 50) {
       await o.yieldTo();
       lastYield = Date.now();
     }
+  };
+  const later = list.map((bp, i) => !!o.later?.(bp, i));
+  for (let i = 0; i < list.length; i++) if (!later[i]) await paint(i);
+  if (later.some(Boolean)) {
+    await o.beforeLater?.();
+    for (let i = 0; i < list.length; i++) if (later[i]) await paint(i);
   }
   return assemblePdf(pages, { title: o.title, bookmarks: list.map((b) => b.bookmark) });
 }

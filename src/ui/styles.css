@@ -1124,7 +1124,23 @@ tr.clickable:hover td {
 .drawing-list .list {
   flex: 1;
   overflow-y: auto;
-  min-height: 0;
+  min-height: 72px;
+}
+/* Buttons two by two (the list keeps more room); the main action and the link span both columns. */
+.drawing-list .btn-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+.drawing-list .btn-col > .primary-btn,
+.drawing-list .btn-col > .link-btn {
+  grid-column: 1 / -1;
+}
+.drawing-list .btn-col > button {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .drawing-list .list .list-space {
   position: relative;

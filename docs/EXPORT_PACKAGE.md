@@ -8,10 +8,10 @@ also from the offline `file://` build) or into **one ZIP** (every browser, and t
 inside the claude.ai artifact).
 
 Code: `src/core/export/` (pure: template, catalogue, outputs, package builder, forms,
-meshes, OBJ, STEP, PDF book), `src/core/io/zipRead.ts` and `xlsxTemplate.ts` (form
+meshes, OBJ, STEP, PDF book, PDF pages), `src/core/io/zipRead.ts` and `xlsxTemplate.ts` (form
 templates), UI in `src/ui/dialogs/ExportPackageDialog.tsx`, `QaFormsTab.tsx` and
 `src/ui/exportPackageActions.ts`, assistant tools in `src/assistant/modules/exportPackage.ts`.
-Tests: `tests/exportPackage.test.ts`.
+Tests: `tests/exportPackage.test.ts`, `tests/drawingsOnDemand.test.ts` (pages painted once).
 
 ## Default package (the client's layout)
 
@@ -135,8 +135,10 @@ get `-2`, `-3` …; a warning appears when a path inside the package exceeds 240
 
 `register`, `ga` (with `elevation` / `plan` by sheet id), `section`, `setout`, `anchors`,
 `sequence`, `erection` (= setout + anchors + sequence), `assembly`, `part`, `other` (sheet
-kinds added later). Drawing items read the set through `allDrawings()`, so new sheets flow
-in; a warning lists sheets that only the unfiltered combined PDF takes.
+kinds added later). Drawing items are planned from the drawing index (the register, see
+[DRAWING_STANDARDS.md](DRAWING_STANDARDS.md#drawings-on-demand)), so new sheets flow in; the
+sheets themselves are made one at a time while the package is built. A warning lists sheets
+that only the unfiltered combined PDF takes.
 
 ## Items
 
@@ -196,6 +198,25 @@ sheet. **VCF**: each export appends the package revision to `project.exportPacka
 *Superseded*, with an automatic change summary (initial counts, then the drawing revisions
 and wireframe confirmations since the previous issue).
 
+## Drawing PDFs
+
+Each sheet is painted once per package: drawn (on demand), turned into SVG and painted by
+svg2pdf.js into a one-page PDF, from which the page is lifted (its compressed content and the
+fonts / images it uses, `src/core/export/pdfPages.ts`). The per-sheet file, the combined PDF and
+the group books (*Master elevation*, *Single Parts (all)*, *Assemblies (all)*, *Erection (all)* …)
+are then put together from those pages, with their bookmarks; shared objects such as the fonts
+or a logo are written once per file. The pages are kept within about 256 MB (least recently
+used out; an evicted page is painted again if a later book needs it), and the sheets themselves
+are released to the drawing cache after painting. While painting, svg2pdf.js measures text on
+one shared canvas instead of a new one per text.
+
+The drawing register (XLSX / CSV), QC checklist, QAF and run report read every sheet's scale,
+status and fingerprint, so they are written last, after the drawings (sheets not made by then
+are made for them). Sizes of drawing files in the plan are estimates until the sheets are made.
+
+On the client's facade (528 sheets, 1,268 files, 1,596 PDF pages) the package took 391 s
+before and 35 s after this change in the same browser.
+
 ## Writing
 
 - **Export to folder…** (`window.showDirectoryPicker`): files are written one by one as they
@@ -211,9 +232,11 @@ and wireframe confirmations since the previous issue).
 
 - STEP solids are faceted (planar triangles), not exact cylinders / B-splines; validated
   structurally (entity references, closed shells) — check the first files in the target CAD.
-- OBJ / STEP and per-sheet PDFs are generated in the browser; very large models take time
-  (progress shown). The combined and per-sheet PDFs are rendered separately.
+- OBJ / STEP and the drawing PDFs are generated in the browser; very large models take time
+  (progress shown). Each sheet is painted once, but a combined PDF is still assembled in memory
+  (about 20–40 KB per page). A page that uses resources the page reader does not know is
+  reported as an error for that file.
 - Profile parts are not unfolded (`CNC/Profiles/DXF` stays empty).
-- The QAF text-size rule reads the drawing entities (no separate layout validator yet).
+- The QAF text-size rule reads the text of every sheet as it is made (no separate layout validator yet).
 - Uploaded form workbooks and reference files live in the browser's storage; on another
   browser they must be uploaded again (the item reports the missing file).

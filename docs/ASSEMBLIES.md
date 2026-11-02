@@ -180,10 +180,16 @@ Right-click a member, plate or connection part (or use Properties → Assembly):
 The drawing opens in **Outputs → Drawings** under the 3D view; the 3D view stays
 visible. The preview zooms to the highlighted mark and scrolls it to the middle.
 
-**Index** (`src/core/drawings/navigation.ts`, pure): built from the drawing set
-and the derived model, cached per derived model and drawing list
-(`drawingIndexFor`); the drawing set itself is cached per derived model
-(`drawingsFor`), so the Drawings tab and navigation share one generation.
+**Index** (`src/core/drawings/navigation.ts`, pure): from the drawing index (the
+register, made without drawing the sheets — see *Drawings on demand* in
+[DRAWING_STANDARDS.md](DRAWING_STANDARDS.md)) and the derived model. Part and
+assembly drawings come straight from the register. For an assembly instance,
+`instanceSheets` makes only the view sheets that can show it (each plan item
+knows, without drawing, the best score it can give an instance — its zone, its
+phase, its brackets) and, for *Show on GA sheet*, only as many as needed to know
+the best one; made sheets stay in the drawing cache, so the Drawings tab and
+navigation share them. `buildDrawingIndex` builds the same index from a drawn set
+(`allDrawings`).
 - part mark → part drawing; assembly mark → assembly drawing;
 - assembly instance (main part ref) → the sheets that show it, best first:
   its mark is placed on the sheet (3) › it is listed in the sheet's zone (2) ›
@@ -270,8 +276,8 @@ Every edit is one undo step.
 - The assembly drawing of a large manual assembly (long transoms across the
   main part's axes) uses the linear assembly layout; views can get small.
 - Isolation hides the wireframe and labels; reference models stay visible.
-- The 3D → drawing commands generate the drawing set once per model state; on
-  very large models the first call after an edit takes as long as opening the
-  Drawings tab.
+- The 3D → drawing commands make the sheets they need (the best GA / zone sheet:
+  usually one); *Sheets showing M3…* makes every view sheet that can show it —
+  on very large models the GA overall and zone sheets take about a second each.
 - Alt+click may be taken by the window manager on some Linux desktops; use
   Assembly mode instead.

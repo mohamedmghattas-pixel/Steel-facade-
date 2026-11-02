@@ -30,6 +30,8 @@ export interface DrawingFamily {
   items: () => PlanItem[];
   /** The expensive state of the family (zone plans, slab brackets) in steps, so the index can be built in slices. */
   prepare?: () => Generator<unknown, unknown>;
+  /** Its drawings show the whole model (no dependency signature of their own): made again after every model edit. */
+  whole?: boolean;
 }
 
 /**
@@ -46,14 +48,15 @@ export function drawingFamilies(ctx: DrawCtx): DrawingFamily[] {
     has: (id) => id === `ga-${view}` || id.startsWith(`ga-${view}-z`),
     items: () => gaItems(ctx, view),
     prepare: () => zonePlanForSteps(ctx, view),
+    whole: true,
   });
   return [
     ga('front'),
     ga('plan'),
-    { name: 'cuts', has: (id) => id.startsWith('cut-'), items: () => cutItems(ctx) },
+    { name: 'cuts', has: (id) => id.startsWith('cut-'), items: () => cutItems(ctx), whole: true },
     { name: 'setout', has: (id) => id.startsWith('setout-'), items: () => (erection ? setoutItems(ctx) : []), prepare: () => (erection ? setoutGroupsFor(ctx) : [][Symbol.iterator]()) as Generator<unknown, unknown> },
     { name: 'anchors', has: (id) => id.startsWith('anchors-'), items: () => (erection ? anchorItems(ctx) : []), prepare: () => (erection ? anchorRowsFor(ctx) : [][Symbol.iterator]()) as Generator<unknown, unknown> },
-    { name: 'sequence', has: (id) => id.startsWith('seq-'), items: () => (erection ? sequenceItems(ctx) : []) },
+    { name: 'sequence', has: (id) => id.startsWith('seq-'), items: () => (erection ? sequenceItems(ctx) : []), whole: true },
     {
       name: 'assembly',
       has: (id) => id.startsWith('asm-'),

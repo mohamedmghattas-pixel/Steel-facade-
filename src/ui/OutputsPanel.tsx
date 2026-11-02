@@ -8,7 +8,7 @@ import { GaCutsDialog } from './dialogs/DrawingDialogs';
 import type { Drawing } from '../core/drawings/types';
 import type { DrawingSet, SheetEntry } from '../core/drawings';
 import { exportAnchorScheduleCsv, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
-import { cancelDrawingJob, checkAllSheets, prefetchSheets, sheetsChanged, useDrawingIndex, useDrawingJob } from './drawingJobs';
+import { cancelDrawingJob, checkAllSheets, HEAVY_PARTS, prefetchSheets, sheetsChanged, startFactsPass, useDrawingIndex, useDrawingJob } from './drawingJobs';
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
@@ -325,8 +325,11 @@ function DrawingsView() {
               : d.kind === kind)) &&
       (!q || d.number.toLowerCase().includes(q) || d.title.toLowerCase().includes(q) || d.mark.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)),
   );
-  // Follow the sheet by id, so it stays selected when sheets are added or removed.
-  const d = list.find((x) => x.id === currentId) ?? list[0];
+  // Follow the sheet by id, so it stays selected when sheets are added or removed. By default the first sheet
+  // after the register (the register lists every sheet with its status, so it is made last); on large models
+  // the first one that does not show the whole model (those take a while to make).
+  const large = dset.dm.parts.length > HEAVY_PARTS;
+  const d = list.find((x) => x.id === currentId) ?? list.find((x) => x.kind !== 'register' && !(large && dset.heavy(x.id))) ?? list[0];
   const changed = entries.filter((x) => x.changed === true).length;
   const unknown = entries.filter((x) => x.changed === undefined).length;
   const layoutCount = entries.filter((x) => layoutOf(x.id) > 0).length;
@@ -347,6 +350,12 @@ function DrawingsView() {
     // Sheets of a family that needs the index's preparation (zone plans …) wait for it: it is built in slices.
     if (!ready && !dset.prepared(wantId)) {
       setLoading(true);
+      return;
+    }
+    // The register needs every sheet's scale and status: the background pass makes the sheets first.
+    if (d?.kind === 'register' && !dset.cached(wantId) && !dset.allFactsKnown()) {
+      setLoading(true);
+      startFactsPass(dset, { heavy: true });
       return;
     }
     const neighbours = () => {
@@ -384,8 +393,13 @@ function DrawingsView() {
       if (timer) clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dset, wantId, ready]);
+  }, [dset, wantId, ready, d?.kind === 'register' && facts?.running]);
   const sheet = shown && shown.id === wantId ? shown.drawing : (shown?.drawing ?? null);
+  const loadingText = !ready
+    ? 'Updating the register…'
+    : d?.kind === 'register' && facts?.running
+      ? `The register lists every sheet — checking ${facts.done.toLocaleString('en')} / ${facts.total.toLocaleString('en')}…`
+      : `Making ${d?.number ?? 'the sheet'}…`;
   const stale = !!shown && (shown.id !== wantId || shown.set !== dset);
 
   const row = (x: SheetEntry) => {
@@ -517,7 +531,7 @@ function DrawingsView() {
           />
           {(loading || stale) && (
             <div className="dwg-loading" aria-live="polite">
-              <span className="spinner" /> {ready ? `Making ${d?.number ?? 'the sheet'}…` : 'Updating the register…'}
+              <span className="spinner" /> {loadingText}
             </div>
           )}
         </div>
@@ -525,7 +539,7 @@ function DrawingsView() {
         <div className="drawing-preview">
           {loading ? (
             <p className="dwg-loading">
-              <span className="spinner" /> {ready ? `Making ${d?.number ?? 'the sheet'}…` : 'Updating the register…'}
+              <span className="spinner" /> {loadingText}
             </p>
           ) : d && shown && shown.id === d.id ? (
             <p className="muted pad">This sheet is not in the drawing set any more.</p>

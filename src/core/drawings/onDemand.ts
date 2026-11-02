@@ -158,7 +158,7 @@ export const sheetCache = new SheetCache(200 * 1024 * 1024);
 
 /** Facts of made sheets by sheet id and content signature (small: kept for many more sheets than the cache holds). */
 const factCache = new Map<string, Omit<SheetMeta, 'layout'>>();
-/** Layout problem counts by sheet id and full signature (the title block and revision table count). */
+/** Layout problem counts by sheet id and content signature. */
 const layoutCache = new Map<string, number>();
 const FACTS_MAX = 400_000;
 const putBounded = <V>(m: Map<string, V>, k: string, v: V) => {
@@ -387,23 +387,26 @@ export class DrawingSet {
 
   // -- keys ------------------------------------------------------------------
 
-  /** Sheet ids with revisions or edits, by drawing id (so continuation sheets count too). */
-  private sheetsWithRecords(drawing: string): string[] {
+  /** Sheet ids with edits (or with revisions), by drawing id (so continuation sheets count too). */
+  private sheetsWith(what: 'edits' | 'revisions', drawing: string): string[] {
     if (!this.sheetEdits) {
-      const m = new Map<string, string[]>();
-      const add = (id: string) => {
-        const base = drawingIdOf(id);
-        const l = m.get(base);
-        if (!l) m.set(base, [id]);
-        else if (!l.includes(id)) l.push(id);
+      const by = (ids: string[]) => {
+        const m = new Map<string, string[]>();
+        for (const id of ids) {
+          const base = drawingIdOf(id);
+          const l = m.get(base);
+          if (!l) m.set(base, [id]);
+          else l.push(id);
+        }
+        for (const l of m.values()) l.sort();
+        return m;
       };
-      for (const id of Object.keys(this.p.drawings.revisions)) add(id);
-      for (const id of Object.keys(this.p.drawings.edits ?? {})) add(id);
-      for (const l of m.values()) l.sort();
-      this.sheetEdits = m;
+      this.sheetEdits = by(Object.keys(this.p.drawings.edits ?? {}));
+      this.sheetRevs = by(Object.keys(this.p.drawings.revisions));
     }
-    return this.sheetEdits.get(drawing) ?? [];
+    return (what === 'edits' ? this.sheetEdits : this.sheetRevs!).get(drawing) ?? [];
   }
+  private sheetRevs?: Map<string, string[]>;
 
   /** What the content of a drawing depends on (no revisions): drives fingerprints and the other facts. */
   contentKey(drawing: string): string {
@@ -417,7 +420,7 @@ export class DrawingSet {
       const pl = this.planned(drawing);
       dep = pl?.item.dep ? pl.item.dep() : `model:${oid(this.dm)}:${oid(this.p)}`;
     }
-    const edits = this.sheetsWithRecords(drawing).map((id) => [id, this.p.drawings.edits?.[id] ?? null]);
+    const edits = this.sheetsWith('edits', drawing).map((id) => [id, this.p.drawings.edits?.[id] ?? null]);
     k = depHash(this.global, dep, edits);
     this.contentKeys.set(drawing, k);
     return k;
@@ -427,7 +430,7 @@ export class DrawingSet {
   fullKey(drawing: string): string {
     let k = this.fullKeys.get(drawing);
     if (k) return k;
-    const revs = this.sheetsWithRecords(drawing).map((id) => [id, this.p.drawings.revisions[id] ?? null]);
+    const revs = this.sheetsWith('revisions', drawing).map((id) => [id, this.p.drawings.revisions[id] ?? null]);
     k = `${drawing}|${depHash(this.contentKey(drawing), revs)}`;
     this.fullKeys.set(drawing, k);
     return k;
@@ -440,7 +443,6 @@ export class DrawingSet {
     madeCount++;
     sheetCache.set(this.fullKey(drawing), sheets);
     const ck = this.contentKey(drawing);
-    const full = this.fullKey(drawing);
     for (const d of sheets) {
       const hits = sheetHits(d, (this.asmById ??= new Map(this.dm.assemblies.map((a) => [a.id, a]))));
       putBounded(factCache, `${d.id}|${ck}`, {
@@ -452,7 +454,8 @@ export class DrawingSet {
         entities: d.entities.length,
       });
       const issues = checkSheetLayout(d).length;
-      putBounded(layoutCache, `${d.id}|${full}`, issues);
+      // By content: the revision table's text does not move any block.
+      putBounded(layoutCache, `${d.id}|${ck}`, issues);
       this.layout.set(d.id, issues);
       const e = this.idx?.byId.get(d.id);
       if (e) this.refresh(e, false);
@@ -483,6 +486,11 @@ export class DrawingSet {
   /** One sheet, made now unless cached. */
   sheet(id: string): Drawing | undefined {
     return this.drawing(id)?.find((d) => d.id === id);
+  }
+
+  /** Are the facts of every sheet but the register known (the register can be made without making sheets)? */
+  allFactsKnown(): boolean {
+    return !!this.idx && this.idx.entries.every((e) => e.kind === 'register' || !!this.factsOf(e.id));
   }
 
   /** Is the sheet in the cache (no work to show it)? */
@@ -539,7 +547,7 @@ export class DrawingSet {
   meta(id: string): SheetMeta | undefined {
     const f = this.factsOf(id);
     if (!f) return undefined;
-    const layout = layoutCache.get(`${id}|${this.fullKey(drawingIdOf(id))}`);
+    const layout = layoutCache.get(`${id}|${this.contentKey(drawingIdOf(id))}`);
     if (layout !== undefined) this.layout.set(id, layout);
     return { ...f, layout: layout ?? -1 };
   }
@@ -584,10 +592,7 @@ export class DrawingSet {
       return !m || m.layout < 0;
     });
     // Drawings that depend on the whole model are the slowest on large facades: last.
-    const heavy = (id: string) => {
-      const pl = this.planned(id);
-      return pl && !pl.item.dep ? 1 : 0;
-    };
+    const heavy = (id: string) => (this.heavy(id) ? 1 : 0);
     todo.sort((a, b) => heavy(a) - heavy(b));
     let done = 0;
     for (const id of todo) {
@@ -612,8 +617,8 @@ export class DrawingSet {
    * They are made again after every model edit and are the slowest on large facades.
    */
   heavy(id: string): boolean {
-    const pl = this.planned(id);
-    return !!pl && !pl.item.dep;
+    const base = drawingIdOf(id);
+    return !!this.families.find((f) => f.has(base))?.whole;
   }
 
   /** Can the sheet be made without the index's preparation (zone plans, slab brackets) of its family? */

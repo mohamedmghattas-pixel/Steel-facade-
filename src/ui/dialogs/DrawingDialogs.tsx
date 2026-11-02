@@ -64,7 +64,6 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
     return () => void (stop.current = true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ready, index]);
-  for (const e of drawings) if (e.changed === undefined) dset.refresh(e, false);
   const unknown = drawings.filter((d) => d.changed === undefined).length;
   const selected = which === 'all' ? drawings : drawings.filter((d) => d.changed === true);
 

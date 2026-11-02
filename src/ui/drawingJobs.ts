@@ -135,7 +135,7 @@ export const sheetsChanged = () => emit();
 // Background pass: facts of every sheet, in idle time
 
 /** Models above this many parts leave the sheets that depend on the whole model to "Check all". */
-const HEAVY_PARTS = 15000;
+export const HEAVY_PARTS = 15000;
 let pass: { set: DrawingSet; ids: string[]; i: number; heavy: boolean } | null = null;
 
 const idle = (f: (deadline?: { timeRemaining(): number }) => void) => {
@@ -155,10 +155,11 @@ export function startFactsPass(set: DrawingSet, o: { heavy?: boolean } = {}) {
   const slow = (id: string) => (set.heavy(id) ? 1 : 0);
   ids.sort((a, b) => slow(a) - slow(b) || issued(a) - issued(b));
   const todo = ids.filter((id) => heavy || !set.heavy(id));
-  pass = { set, ids: todo, i: 0, heavy };
+  const run = { set, ids: todo, i: 0, heavy };
+  pass = run;
   state.facts = { done: 0, total: todo.length, running: true, heavyLeft: heavy ? 0 : ids.length - todo.length };
   emit();
-  idle(tick);
+  idle((d) => tick(run, d));
 }
 
 /** Make the remaining sheets too (those that depend on the whole model). */
@@ -167,9 +168,9 @@ export const checkAllSheets = () => {
   if (set.ready) startFactsPass(set, { heavy: true });
 };
 
-function tick(deadline?: { timeRemaining(): number }) {
-  const p = pass;
-  if (!p || p.set.p !== st().project) return;
+function tick(p: NonNullable<typeof pass>, deadline?: { timeRemaining(): number }) {
+  // A newer pass (another model state, or Check all) replaces this one.
+  if (pass !== p || p.set.p !== st().project) return;
   const t0 = performance.now();
   // One drawing at least; more while the idle period lasts (cheap sheets).
   do {
@@ -189,7 +190,7 @@ function tick(deadline?: { timeRemaining(): number }) {
   const left = state.facts?.heavyLeft ?? 0;
   state.facts = { done: p.i, total: p.ids.length, running: p.i < p.ids.length, heavyLeft: left };
   emit(!state.facts.running);
-  if (p.i < p.ids.length) idle(tick);
+  if (p.i < p.ids.length) idle((d) => tick(p, d));
 }
 
 // ---------------------------------------------------------------------------
@@ -197,7 +198,7 @@ function tick(deadline?: { timeRemaining(): number }) {
 
 /** Makes these sheets in idle time (skipping slow ones), so stepping through the list shows them at once. */
 export function prefetchSheets(set: DrawingSet, ids: string[]) {
-  const todo = ids.filter((id) => !set.cached(id) && !set.heavy(id));
+  const todo = ids.filter((id) => !set.heavy(id) && set.prepared(id) && !set.cached(id));
   const step = () => {
     const id = todo.shift();
     if (!id || set.p !== st().project) return;
@@ -258,6 +259,13 @@ export async function ensureSheetFacts(set: DrawingSet, ids: string[], label = '
   return runJob(label, todo.length, (i) => void set.ensureMeta(todo[i]));
 }
 
+/** Register sheets list every sheet's scale and status: make the sheets whose facts are not known first (with progress). */
+async function registerReady(set: DrawingSet, entries: SheetEntry[]): Promise<boolean> {
+  if (!entries.some((e) => e.kind === 'register')) return true;
+  const ids = set.index().entries.filter((e) => e.kind !== 'register').map((e) => e.id);
+  return ensureSheetFacts(set, ids, 'Checking every sheet for the register');
+}
+
 /** "FS-001-A-M1_revA" — identification number (with "_sh2" for sheet 2 of a multi-sheet drawing) plus revision index. */
 export function sheetFileName(d: { number: string; sheetIndex?: number; sheetCount?: number; rev: string }): string {
   return safeName(`${sheetFileStem(d)}_rev${d.rev === '-' ? '0' : d.rev}`);
@@ -268,6 +276,7 @@ const fileBase = () => safeName(st().project.info.name || 'facade') || 'facade';
 /** PDF of sheets: each made and painted once, then put together (bookmarks when there are several). */
 export async function exportSheetsPdf(set: DrawingSet, entries: SheetEntry[]): Promise<void> {
   if (!entries.length) return;
+  if (!(await registerReady(set, entries))) return st().notify('PDF export cancelled.', 'error');
   const cache = new PdfPageCache(svgPainter);
   const pages: Awaited<ReturnType<PdfPageCache['page']>>[] = [];
   const ok = await runJob(`PDF of ${entries.length} sheet${entries.length === 1 ? '' : 's'}`, entries.length, async (i) => {
@@ -293,6 +302,7 @@ export async function exportSheetsPdf(set: DrawingSet, entries: SheetEntry[]): P
 /** DXF files of sheets in one ZIP, made one by one (each sheet is released after it is written). */
 export async function exportSheetsDxf(set: DrawingSet, entries: SheetEntry[]): Promise<void> {
   if (!entries.length) return;
+  if (!(await registerReady(set, entries))) return st().notify('DXF export cancelled.', 'error');
   const files: { name: string; data: string }[] = [];
   const ok = await runJob(`DXF of ${entries.length} sheet${entries.length === 1 ? '' : 's'}`, entries.length, (i) => {
     const d = set.sheet(entries[i].id);

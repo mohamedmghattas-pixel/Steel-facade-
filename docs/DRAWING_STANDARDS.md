@@ -8,7 +8,7 @@ FacadeSteel produces a numbered drawing set:
 - assembly drawings
 - part (fabrication) drawings
 
-Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*). Every sheet is laid out by one layout engine that keeps its blocks apart, continues long tables on further sheets and checks the result (see *Sheet layout*). Large facades are divided into zones, one sheet per zone (see *Large facades: zones*).
+Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*). Every sheet is laid out by one layout engine that keeps its blocks apart, continues long tables on further sheets and checks the result (see *Sheet layout*). Large facades are divided into zones, one sheet per zone (see *Large facades: zones*). Sheets are made when they are viewed or exported, not all at once (see *Drawings on demand*).
 
 By default the sheets follow the ISO technical-drawing standards and EN 1090-2 for steel execution. You can switch the set to an **ASME / AISC** profile under *Outputs → Drawings → Drawing settings*.
 
@@ -142,7 +142,7 @@ There is no ISO standard for where blocks go on a sheet; FacadeSteel keeps to IS
 - **One layout engine** places all blocks of a sheet — views, tables, legends, notes, key plans — in the free regions of the frame. Reserved regions are kept clear: the frame margins and centring marks, the title block and the revision table above it. Notes and legends go into the column above the revision table (title block width), tables into columns along the bottom; views get the free area that remains. Every placement is checked against the reserved regions and the blocks already placed.
 - **Nothing is drawn over anything else.** A block that does not fit is not squeezed in: tables and notes are split at a row or line (the rest titled *(cont.)*), and what is left **continues on the next sheet of the same drawing**, where it flows in columns from the top left, clear of the title block.
 - **Multi-sheet drawings (ISO 7200):** the sheets of one drawing share its identification number and are told apart by the sheet number in the title block (*Sheet 2/3*). The register lists every sheet, multi-sheet drawings as `FS-001-ES-01 (2/3)`; exported files are named `<number>_sh2_rev<rev>`. Each sheet has its own id (`seq-floor-1#2` for sheet 2; the first sheet keeps the drawing's id), so revisions, fingerprints and manual edits are kept per sheet. Single-sheet drawings keep their ids and numbers.
-- **Layout check** (`checkSheetLayout`): every sheet is checked for blocks that overlap each other, blocks outside the frame or over the title block / revision table, lettering below 1.8 mm (notes, tables, dimensions) or 2.5 mm (marks and item references, ISO 3098 guidance), and marks overlapping other text. Problems are shown above the sheet in the Drawings tab, and the list marks such sheets with ⚠ (filter *Layout*). Manual edits (moved blocks, notes) are checked too.
+- **Layout check** (`checkSheetLayout`): every sheet is checked for blocks that overlap each other, blocks outside the frame or over the title block / revision table, lettering below 1.8 mm (notes, tables, dimensions) or 2.5 mm (marks and item references, ISO 3098 guidance), and marks overlapping other text. Problems are shown above the sheet in the Drawings tab, and the list marks such sheets with ⚠ (filter *Layout*) once they have been made — when viewed, or by the background check (see *Drawings on demand*). Manual edits (moved blocks, notes) are checked too.
 
 ### Mark placement
 
@@ -178,6 +178,36 @@ Elevation views have a view direction (*Elevation view direction*):
 - **Auto** (default) — normal to the facade where its best-fit plane is inclined more than 10° from vertical or is not aligned with X; else the front elevation.
 
 A folded facade (V-shaped or polygonal in plan, or with parts at different inclinations) is first split where the best-fit planes of its parts differ by more than 10° (recursive two-plane fits along the facade); each part (*facade A, B* …) gets its own view and zones, and the zones meet at the fold with match lines. The view label states the direction (*VIEW NORMAL TO FACADE A — ZONE 2*) and a note gives the plane's inclination. Levels are drawn where they cut the plane (horizontal lines with their true heights); grid lines are projected onto the plane; both are omitted where they do not cross the zone. Section cuts and details are placed on world-projection GA views only.
+
+## Drawings on demand
+
+A large facade has thousands of sheets (a 24,000-member facade about 7,000, most of them setting-out plans and anchor schedules). They are not drawn all at once: the drawing set is listed first and each sheet is made when it is viewed or exported (`src/core/drawings/onDemand.ts`).
+
+**The register (drawing index).** `drawingIndex(p, dm)` lists every sheet without drawing it: id, number, title, type, zone, sheet n/N, size, revision, and the scale where it is known without drawing (zone sheets, setting-out plans, schedules). Each generator builds and packs the sheet's tables and notes on a *measuring* sheet and leaves out the views; what continues on sheet 2/N depends only on those blocks, so ids, numbers, titles and sheet counts are exactly those of the drawn set. The zone partition, the slab brackets and the anchor rows are worked out once per model state, in steps, so the Drawings tab builds the register in slices that never hold up the page for long; while the register of a new model state is being measured (after an edit), the previous one stays on screen with *Updating the register…*.
+
+**Sheets.** `drawSheet(p, dm, id)` makes one drawing (its first sheet and any continuation sheets) and keeps it in a cache of about 200 MB, least recently used out. A drawing is keyed by its id and what it shows:
+
+| Sheet | Made again when … changes |
+|---|---|
+| Part drawing | the part (geometry, holes, profile, material, finish), its quantity, the assemblies it is used in |
+| Assembly drawing | the assembly, its parts, its quantity, the shop bolts of its joints |
+| Bracket setting-out plan | its brackets (with their plates, anchors and mullions), its place along the slab edge, the grids, the survey, the tolerances |
+| Anchor schedule | its rows (and on sheet 1 the totals) |
+| GA, zone, erection sequence, section / detail sheets | anything in the model (they show all of it) |
+| Register | the number, title, scale or status of any sheet |
+| Every sheet | the drawing settings, the title block fields, the sheet template, its own edits and revisions |
+
+So after an edit only the drawings whose inputs changed are made again, and only when they are viewed or exported; undo and redo find the sheets of the earlier state in the cache. The eager `allDrawings(p, dm)` still draws the whole set (same sheets, same fingerprints).
+
+**Changed since issue.** A sheet that has never been issued is always *changed*. For an issued sheet the flag needs its fingerprint, which is known once the sheet has been made; fingerprints, scales and layout results are kept for many more sheets than the cache holds, by the same key without the revisions — so issuing does not lose them, and sheets an edit did not touch keep their flag. In the Drawings tab a background check makes the sheets one at a time in idle time (issued sheets first) until every flag and layout badge is known; a rev shown with `?` has not been checked since the last edit. On models with more than 15,000 parts the GA, zone and sequence sheets (the slowest, made again after every edit) are left to *Check all*.
+
+**The register sheet** lists the scale and status of every sheet, so viewing or exporting it first makes the sheets whose facts are not known yet (the background check, with progress).
+
+**In the Drawings tab** the list shows only the rows in view; search (number, title or mark) and the filters work on the register. Selecting a sheet makes it (a spinner shows while it is made); its neighbours in the list are made in idle time. PDF and DXF exports make the sheets one by one with progress and Cancel; each sheet is painted into PDF once (see [EXPORT_PACKAGE.md](EXPORT_PACKAGE.md)). The issue dialog makes the sheets it needs fingerprints of, with progress. 3D → drawing navigation makes only the view sheets that can show the part's assembly (see [ASSEMBLIES.md](ASSEMBLIES.md)).
+
+Code: `src/core/drawings/onDemand.ts` (index, cache, facts), `families.ts` (plan items per family), `src/ui/drawingJobs.ts` (sliced index, background check, streamed exports). Tests: `tests/drawingsOnDemand.test.ts`.
+
+**Limits.** A single sheet is made in one piece: on a 24,000-member facade a GA or zone sheet takes about a second, during which the page does not respond. Building the register of such a model takes several seconds of work after each model edit (spread over slices); the derived model itself is still computed in one piece. Fingerprints and the cache live for the session; after reloading a project, issued sheets are checked again.
 
 ## Editing drawings
 

@@ -60,7 +60,23 @@ text rotate with the part). The DXF geometry is nominal; kerf compensation (G41/
 CAM's kerf table), lead-ins and pierce points are set in CAM.
 
 Limits: parts are nested by their bounding rectangle (no true-shape / common-line nesting),
-no remnant tracking, bent plates are not unfolded here.
+no remnant tracking. Bent plates are cut as their flat pattern (the stored, developed
+outline); their bend lines are not on the cutting layers (see *Flat patterns* below).
+
+**Flat patterns** (`Flat patterns, all plates`, `flatPatternsDxf`): every unique plate's
+flat pattern in one DXF, largest first, labelled on the SHEET layer (`pl1  PL10 S355  x4
+160x150`), for checking and quoting:
+
+- Bent plates carry their **bend lines** on layer `BEND` (long-dash dotted, colour 2,
+  never cut) with a note per bend on SHEET (`UP 90 R5`, `DOWN 90 R5`).
+- Folded (cold-formed) profile parts — lipped C and Z, cold-formed L and U, POLY thin-wall
+  outlines with a sheet thickness — follow as **developed strips**: the blank developed
+  width × cut length on OUTLINE, the bend lines along the length on BEND, labelled
+  `a1  C 200x75x20x2 t2 S355  x1  375x3000 developed`. Developed by bend allowance with
+  K = 0.33 (`profileStrip`, `src/core/geometry/bentPlate.ts`; see DRAWING_STANDARDS.md,
+  *Flat patterns*). Holes and end cuts of the strips are not drawn.
+- The heading counts both: `… flat patterns - 12 plate marks, 3 folded profile marks`.
+  Without bends or folded sections the file is as before (no BEND layer).
 
 ## 2. DSTV NC1 for plates
 

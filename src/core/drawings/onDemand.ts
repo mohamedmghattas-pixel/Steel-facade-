@@ -614,11 +614,13 @@ export class DrawingSet {
 
   /**
    * Is the sheet one of those that depend on the whole model (GA, zone, sequence, section)?
-   * They are made again after every model edit and are the slowest on large facades.
+   * They are made again after every model edit and are the slowest on large facades. The
+   * unfolded elevation is as slow (keyed by what it shows, though).
    */
   heavy(id: string): boolean {
     const base = drawingIdOf(id);
-    return !!this.families.find((f) => f.has(base))?.whole;
+    const f = this.families.find((x) => x.has(base));
+    return !!(f?.whole || f?.heavy);
   }
 
   /** Can the sheet be made without the index's preparation (zone plans, slab brackets) of its family? */

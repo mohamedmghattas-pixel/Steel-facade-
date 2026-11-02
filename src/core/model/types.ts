@@ -824,6 +824,12 @@ export interface DrawingSettings {
   erection?: boolean;
   /** Dividing large elevations and plans into zones, one sheet per zone (GA, erection sequences). */
   zoning?: DrawingZoning;
+  /**
+   * Unfolded (developed) elevation of folded, V-shaped, faceted or curved facades: the
+   * facade planes laid out flat side by side (drawings/unfolded.ts). Default on: made
+   * when the facade has folds; planar facades have no unfolded sheet.
+   */
+  unfolded?: boolean;
 }
 
 /**

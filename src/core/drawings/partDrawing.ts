@@ -31,6 +31,7 @@ import { drawingNumber } from './register';
 import { materialClass } from '../library/profileAssembly';
 import { SECTION_LABEL, cutPrism, cuttingPlane, drawCut, lineIntervals, partPrism, viewLabel, type Poly, type ViewAxes } from './section';
 import { chooseLayout, entsBox, placeViews, sectionScaleOptions, viewSheet } from './viewLayout';
+import { bendOrientation, bendTable, drawFormed, flatPatternNotes, flatStripBlock, formedProfile, partStrip } from './flatPattern';
 
 export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
   const { p } = ctx;
@@ -130,6 +131,15 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
       }),
     );
   }
+  // Flat patterns: a bent plate's bend table and notes; the developed strip of a folded (cold-formed) section.
+  if (part.kind === 'plate' && part.bends?.length && part.outline?.length) {
+    const ob = bbox2(part.outline);
+    blocks.push(notesBlock('Flat pattern', flatPatternNotes(part, ob.maxX - ob.minX, ob.maxY - ob.minY), s.tb.w));
+    const bt = bendTable(part, { x: ob.minX, y: ob.minY });
+    if (bt) blocks.push(bt);
+  }
+  const strip = partStrip(part);
+  if (strip) blocks.push(flatStripBlock(strip, part.length));
   const areas = packBlocks(s, size, blocks);
   const free = [areas.full, areas.left];
   // Measuring (drawing index): the blocks decide the sheet count; the views (and with them the scale) are left out.
@@ -410,6 +420,11 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
   const look = { x: first ? 1 : -1, y: 0 };
   const eSide = first ? 1 : -1;
   const corners = sharpCorners(outline).filter((v) => v.x > bb.minX + 0.5 && v.x < bb.maxX - 0.5);
+  // Bent plates: the elevation is the flat pattern; the plan shows the formed shape seen along the bend lines.
+  const bends = part.bends ?? [];
+  const formed = bends.length ? formedProfile(outline, bends, t, part.kFactor) : null;
+  const bendX = uniqSorted(bends.filter((b) => bendOrientation(b) === 'y').map((b) => b.a.x - bb.minX)).filter((x) => x > 0.5 && x < W - 0.5);
+  const bendY = uniqSorted(bends.filter((b) => bendOrientation(b) === 'x').map((b) => b.a.y - bb.minY)).filter((y) => y > 0.5 && y < H - 0.5);
 
   const build = (den: number) => {
     const X = (x: number) => (x - bb.minX) / den;
@@ -437,13 +452,23 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     const ys = uniqSorted(holes.map((h) => h.y)).filter((y) => y > 0.5 && y < H - 0.5);
     const edge = eSide > 0 ? Hp : 0;
     if (xs.length) dimRunning(E, [{ x: 0, y: edge }, ...xs.map((x) => ({ x: x / den, y: edge }))], [0, ...xs], 'h', edge + eSide * CUT_CLEAR);
-    dimLinear(E, { x: 0, y: edge }, { x: Wp, y: edge }, 'h', edge + eSide * (CUT_CLEAR + (xs.length ? 10 : 0)), W);
+    // Bend lines of a flat pattern: their positions from the datum, between the hole dimensions and the overall size.
+    const xRow = CUT_CLEAR + (xs.length ? 10 : 0);
+    if (bendX.length) dimRunning(E, [{ x: 0, y: edge }, ...bendX.map((x) => ({ x: x / den, y: edge }))], [0, ...bendX], 'h', edge + eSide * xRow, undefined, 'dim:elevation:bends-x');
+    dimLinear(E, { x: 0, y: edge }, { x: Wp, y: edge }, 'h', edge + eSide * (xRow + (bendX.length ? 10 : 0)), W);
     if (ys.length) dimRunning(E, [{ x: 0, y: 0 }, ...ys.map((y) => ({ x: 0, y: y / den }))], [0, ...ys], 'v', -8);
-    dimLinear(E, { x: 0, y: 0 }, { x: 0, y: Hp }, 'v', -(ys.length ? 20 : 9), H);
-    labelBelow(E, Wp / 2, 'ELEVATION');
+    if (bendY.length) dimRunning(E, [{ x: 0, y: 0 }, ...bendY.map((y) => ({ x: 0, y: y / den }))], [0, ...bendY], 'v', -(ys.length ? 20 : 8), undefined, 'dim:elevation:bends-y');
+    dimLinear(E, { x: 0, y: 0 }, { x: 0, y: Hp }, 'v', -((ys.length ? 20 : 9) + (bendY.length ? 12 : 0)), H);
+    labelBelow(E, Wp / 2, bends.length ? 'FLAT PATTERN' : 'ELEVATION');
 
     // PLAN: the edge seen from above; the face towards the elevation's viewer at the bottom.
+    // Bent plates: the formed shape seen along the bend lines instead (UP bends rise).
     const P = viewSheet('plan');
+    if (formed) {
+      drawFormed(P, formed, den);
+      labelBelow(P, entsBox(P.ents).x0 / 2 + entsBox(P.ents).x1 / 2, 'FORMED SHAPE');
+      return { views: { elevation: E, plan: P, section: sectionView(den) }, extra: null };
+    }
     const tp = Math.max(t / den, 0.7);
     const Z = (z: number) => (-z / t) * tp;
     P.rect(0, -tp, Wp, tp, 'visible');
@@ -462,8 +487,12 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     }
     dimLinear(P, { x: Wp, y: -tp }, { x: Wp, y: 0 }, 'v', Wp + 7, t);
     labelBelow(P, Wp / 2, 'PLAN');
+    return { views: { elevation: E, plan: P, section: sectionView(den) }, extra: null };
+  };
 
-    // SECTION A–A through the hole column, same scale, aligned with the elevation.
+  // SECTION A–A through the hole column, same scale, aligned with the elevation.
+  const sectionView = (den: number) => {
+    const Y = (y: number) => (y - bb.minY) / den;
     const S = viewSheet('section');
     const view: ViewAxes = first
       ? { R: { x: 0, y: 0, z: 1 }, U: { x: 0, y: 1, z: 0 }, D: { x: 1, y: 0, z: 0 } }
@@ -488,8 +517,7 @@ function drawPlate(ctx: DrawCtx, s: Sheet, part: Part, holes: HoleRow[], areas: 
     const yb = Y(beyond ? beyond[0] : bb.minY);
     dimLinear(S, { x: Math.min(0, tx), y: yb }, { x: Math.max(0, tx), y: yb }, 'h', yb - 8, t);
     labelBelow(S, tx / 2, SECTION_LABEL);
-
-    return { views: { elevation: E, plan: P, section: S }, extra: null };
+    return S;
   };
 
   const choice = chooseLayout(ISO_SCALES, areas, first, (den) => [den], build);

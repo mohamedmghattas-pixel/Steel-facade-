@@ -207,7 +207,8 @@ export function facadeSegments(dm: DerivedModel, mode: DrawingZoning['viewDirect
   return drain(facadeSegmentSteps(dm, mode));
 }
 
-function* facadeSegmentSteps(dm: DerivedModel, mode: DrawingZoning['viewDirection']): Generator<void, FacadeSegment[]> {
+/** facadeSegments in steps (yields between pieces of work), for building the drawing index in slices. */
+export function* facadeSegmentSteps(dm: DerivedModel, mode: DrawingZoning['viewDirection']): Generator<void, FacadeSegment[]> {
   const asms: { a: Assembly; parts: Part[]; pts: Vec3[]; anchor: Vec3 }[] = [];
   for (const a of dm.assemblies) {
     const parts = a.parts.map((r) => dm.partByRef.get(r)).filter((x): x is Part => !!x);
@@ -388,7 +389,8 @@ export function legibleScaleByPlacement(groups: MarkItem[][]): number {
   return drain(legibleScaleSteps(groups));
 }
 
-function* legibleScaleSteps(groups: MarkItem[][]): Generator<void, number> {
+/** legibleScaleByPlacement in steps (yields between scales and slices of marks). */
+export function* legibleScaleSteps(groups: MarkItem[][]): Generator<void, number> {
   let worst = 0;
   for (const g of groups) {
     const seen = new Set<string>();

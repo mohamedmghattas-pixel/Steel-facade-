@@ -255,7 +255,8 @@ before and 35 s after this change in the same browser.
   (progress shown). Each sheet is painted once, but a combined PDF is still assembled in memory
   (about 20–40 KB per page). A page that uses resources the page reader does not know is
   reported as an error for that file.
-- Profile parts are not unfolded. `CNC/Profiles/DXF` holds only the aluminium extrusion cutting
+- Profile parts are not unfolded into `CNC/Profiles/DXF`: cold-formed sections get their developed strip in the
+  flat-patterns DXF and on their part drawings ([DRAWING_STANDARDS.md](DRAWING_STANDARDS.md)). `CNC/Profiles/DXF` holds the aluminium extrusion cutting
   list and sections of composite members (profile assemblies, [PROFILE_ASSEMBLIES.md](PROFILE_ASSEMBLIES.md)).
 - The STEP model is made once per export even when two folders carry it, in slices that let the
   page paint and Cancel work (about 13 s and 390 MB for 1.1 million triangles: the client facade

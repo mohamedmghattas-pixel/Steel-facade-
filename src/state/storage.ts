@@ -109,6 +109,8 @@ export function migrateProject(p: Project | null): Project | null {
   };
   // Sheet templates: free content (imported / drawn title blocks) is optional, older templates load unchanged.
   p.drawings.templates = migrateSheetTemplates(p.drawings.templates);
+  // Unfolded elevation of folded facades (added with the unfolded drawings): on unless switched off.
+  if (typeof p.drawings.settings.unfolded !== 'boolean') p.drawings.settings.unfolded = true;
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [], profileAssemblies: sanitizeProfileAssemblies(p.library?.profileAssemblies) };
   migrateTemplates(p);
   p.workPlanes ??= [];

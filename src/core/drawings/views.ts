@@ -10,6 +10,7 @@ import { cutXAt, flangeProfile, sideProfile, type EndCut } from '../geometry/end
 import { bendAllowance, DEFAULT_K_FACTOR } from '../geometry/bentPlate';
 import { TEXT } from './standards';
 import type { Sheet } from './dims';
+import { textExtent } from './viewLayout';
 
 export interface BrokenAxis {
   /** Model coordinate along the part → paper offset from the view start. */
@@ -49,7 +50,8 @@ export function brokenAxis(L: number, features: number[], den: number, keep: num
   const map = (x: number) => {
     for (const [i, w] of windows.entries()) {
       if (x <= w.b + 1e-6 || i === windows.length - 1) {
-        if (x < w.a) return offsets[i] - BREAK_GAP / 2; // inside the previous gap
+        // Inside the previous gap (the first window has none: a value a hair below 0 is rounding, mapped as is).
+        if (i > 0 && x < w.a - 1e-6) return offsets[i] - BREAK_GAP / 2;
         return offsets[i] + (Math.min(x, w.b) - w.a) / den;
       }
     }
@@ -495,6 +497,27 @@ export function bendMarks(s: Sheet, part: Part, X: (x: number) => number, Y: (y:
     let rot = (Math.atan2(pb.y - pa.y, pb.x - pa.x) * 180) / Math.PI;
     if (rot > 90) rot -= 180;
     if (rot < -90) rot += 180;
-    s.text({ x: (pa.x + pb.x) / 2 - ey * 1.5, y: (pa.y + pb.y) / 2 + ex * 1.5 }, label, TEXT.small, 'middle', 'text', rot);
+    // Along the bend line, at the middle unless a hole (with its label) is in the way there.
+    const halfL = textExtent(label, TEXT.small) / 2 + 1;
+    const holes = (part.plateHoles ?? []).map((h) => ({ c: { x: X(h.x), y: Y(h.y) }, r: Math.abs(X(h.x + (h.d + (h.slot ?? 0)) / 2) - X(h.x)) + 3 }));
+    // Text box centre beside the line (o > 0: on its left, as before), at u along it.
+    const at = (u: number, o: number) => ({ x: pa.x + (pb.x - pa.x) * u - ey * o, y: pa.y + (pb.y - pa.y) * u + ex * o });
+    const clear = (u: number, o: number) => {
+      const c = at(u, o + (o > 0 ? 0.35 : -0.35) * TEXT.small);
+      return holes.every((h) => {
+        const dx = h.c.x - c.x;
+        const dy = h.c.y - c.y;
+        const along = Math.max(-halfL, Math.min(halfL, dx * ex + dy * ey));
+        return Math.hypot(dx - along * ex, dy - along * ey) > h.r + TEXT.small / 2;
+      });
+    };
+    let pos = at(0.5, 1.5);
+    search: for (const o of [1.5, -(1.5 + TEXT.small)])
+      for (const u of [0.5, 0.35, 0.65, 0.2, 0.8])
+        if (clear(u, o)) {
+          pos = at(u, o);
+          break search;
+        }
+    s.text(pos, label, TEXT.small, 'middle', 'text', rot);
   }
 }

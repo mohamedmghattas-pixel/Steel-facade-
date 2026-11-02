@@ -336,6 +336,18 @@ export function DrawingSettingsDialog({ onClose }: { onClose: () => void }) {
           />
         </Field>
       </div>
+      <div className="row3">
+        <Field label="Unfolded elevation" hint="Folded, V-shaped or curved facades: the facade planes laid out flat side by side, true lengths, fold lines with their angles (planar facades have none)">
+          <Segmented
+            value={s.unfolded === false ? 'off' : 'on'}
+            options={[
+              { value: 'on', label: 'When folded' },
+              { value: 'off', label: 'Leave out' },
+            ]}
+            onChange={(v) => patch('Unfolded elevation', { unfolded: v === 'on' })}
+          />
+        </Field>
+      </div>
       <Field label="Additional general notes" hint="One note per line — printed after the standard notes on every sheet">
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} onKeyDown={(e) => e.stopPropagation()} />
       </Field>

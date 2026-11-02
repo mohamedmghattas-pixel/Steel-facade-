@@ -13,6 +13,9 @@ export function numberPrefix(p: Project): string {
 
 export const GA_VIEWS = ['front', 'plan', 'side'] as const;
 
+/** Drawing id of the unfolded (developed) elevation; its zone sheets are "ga-unfolded-z<n>". */
+export const UNFOLDED_ID = 'ga-unfolded';
+
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
 /**
@@ -23,6 +26,8 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
 export function drawingNumber(p: Project, id: string): string {
   const pre = numberPrefix(p);
   if (id.startsWith('register-')) return `${pre}-DR-${id.slice(9).padStart(2, '0')}`;
+  // Unfolded (developed) elevation of a folded facade: after the GA front, plan and side views.
+  if (id === UNFOLDED_ID) return `${pre}-GA-04`;
   if (id.startsWith('ga-')) return `${pre}-GA-${String(GA_VIEWS.indexOf(id.slice(3) as (typeof GA_VIEWS)[number]) + 1).padStart(2, '0')}`;
   if (id.startsWith('asm-')) return `${pre}-A-${id.slice(4)}`;
   if (id.startsWith('part-')) return `${pre}-P-${id.slice(5)}`;

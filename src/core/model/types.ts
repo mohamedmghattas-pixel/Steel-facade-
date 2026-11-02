@@ -722,6 +722,27 @@ export interface ProjectSettings {
   stock: StockItem[];
   /** Fabrication outputs (labels, CNC DXF, paint, dip checks); missing keys use defaults (core/fabrication/settings). */
   fabrication?: Partial<FabricationSettings>;
+  /**
+   * End fitting (docs/CONNECTION_GEOMETRY.md §3.4a). Absent = the defaults of
+   * projects saved before it existed: connection fits on, auto-cut off.
+   */
+  autoCut?: AutoCutSettings;
+}
+
+/** How member ends follow the faces of the members they meet. */
+export interface AutoCutSettings {
+  /**
+   * Auto-cut: a member end that meets another member's side with no connection
+   * at that end and no end preparation or extension of its own is cut to that
+   * member's face less `gap` (transoms / rails to mullions, a mullion onto a
+   * horizontal member passing through, braces). New projects: on; projects
+   * saved before: off.
+   */
+  enabled: boolean;
+  /** Clearance from the face, mm (default 10, the default joint gap). */
+  gap: number;
+  /** Connection cut-backs follow the main member's face on joints that are not square (default on). */
+  connections: boolean;
 }
 
 export interface StockItem {

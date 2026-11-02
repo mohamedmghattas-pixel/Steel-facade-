@@ -7,6 +7,7 @@
  */
 import { getBolt } from '../library/bolts';
 import { membersAtNode } from '../model/ops';
+import { envelopeFace, isSquareTo } from '../geometry/endPrep';
 import type { Id, Vec2, Vec3 } from '../model/types';
 import type { MemberGeom } from '../derive/memberGeom';
 import { centreAt, emptyOut, endSlot, halfExtent, inward, num, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
@@ -150,7 +151,11 @@ export const gussetPlate: ConnectionDef = {
   ],
   trims(ctx) {
     const g = gussetGeom(ctx);
-    return g ? [{ member: g.j.sec.member.id, end: g.j.end, amount: g.trim }] : [];
+    if (!g) return [];
+    const t: Trim = { member: g.j.sec.member.id, end: g.j.end, amount: g.trim };
+    // Flat and angle braces end at the main face: cut parallel to it with the clearance (tubes end on the knife, square).
+    if (g.kind !== 'tube' && !isSquareTo(g.j.sec.frame.x, g.n)) t.fit = { to: g.j.main.member.id, p: madd(g.O, g.n, num(ctx.v.gap, 20)), n: scale(g.n, -1) };
+    return [t];
   },
   build(ctx) {
     const out = emptyOut();
@@ -282,7 +287,11 @@ function crossLayout(ctx: ConnCtx) {
       const tHalf = halfExtent(thr.g, nt);
       trim = sinT > 0.2 ? (tHalf + gap + half * Math.abs(dot(wdir, nt))) / sinT : trim;
     }
-    trims.push({ member: m.g.member.id, end: m.end!, amount: trim });
+    const t: Trim = { member: m.g.member.id, end: m.end!, amount: trim };
+    // A split brace ends at the through brace: cut parallel to its face with the clearance.
+    const f = thr ? envelopeFace(thr.g.frame, thr.g.w, thr.g.h, thr.g.profile?.shape, d) : null;
+    if (thr && f && !isSquareTo(m.g.frame.x, f.n)) t.fit = { to: thr.g.member.id, p: madd(f.at, f.n, gap), n: scale(f.n, -1) };
+    trims.push(t);
     groups.push({ m, d, ss: Array.from({ length: n }, (_, i) => trim + e + i * pitch) });
   }
   return { list, nG, groups, trims, bolt, e };

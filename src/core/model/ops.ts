@@ -6,6 +6,7 @@
 import { copyConnections, followConnections, snapshotConnections, type ConnectionSummary } from './connectionFollow';
 import type {
   AutoAssignRule,
+  AutoCutSettings,
   Connection,
   ConnectionType,
   EndPrep,
@@ -98,7 +99,19 @@ export function defaultSettings(): ProjectSettings {
     movement: defaultMovement(),
     galvBath: { length: 7000, width: 1500, depth: 2500 },
     stock: [],
+    autoCut: defaultAutoCut(),
   };
+}
+
+/** End fitting of new projects: auto-cut on with a 10 mm gap, connection cut-backs following the main face. */
+export function defaultAutoCut(): AutoCutSettings {
+  return { enabled: true, gap: 10, connections: true };
+}
+
+/** The project's end-fitting settings; projects without them (saved before) have the auto-cut off. */
+export function autoCutSettings(p: Project): AutoCutSettings {
+  const a = p.settings?.autoCut;
+  return { enabled: a?.enabled === true, gap: Number.isFinite(a?.gap) ? Math.max(0, a!.gap) : 10, connections: a?.connections !== false };
 }
 
 /** Typical facade movement and tolerance assumptions — to be replaced by the project specification. */

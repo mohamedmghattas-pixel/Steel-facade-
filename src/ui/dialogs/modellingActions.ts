@@ -3,7 +3,8 @@
  * mitre / fit-to / end preparations, polygon plates, 3-point arcs and work planes.
  */
 import { create } from 'zustand';
-import { useStore, type Tool } from '../../state/store';
+import { useStore, derived, type Tool } from '../../state/store';
+import { cutAngle, endCutText, SAW_LIMIT } from '../../core/geometry/endPrep';
 import type { Id, Vec3 } from '../../core/model/types';
 import {
   addArcMembers,
@@ -64,12 +65,19 @@ export function fitSelection() {
   if (ids.length !== 2) return notify('Fit to: select the member to cut, then Shift+click the member to fit it to.', 'error');
   const { fitGap, fitCope } = useModelling.getState();
   try {
-    let msg = '';
+    let r: ReturnType<typeof fitEnd> = { end: 'start' };
     st().apply('Fit to member', (p) => {
-      const r = fitEnd(p, ids[0], 'auto', ids[1], fitGap, fitCope);
-      msg = `Fitted the ${r.end} end with a ${fitGap} mm gap${r.cope ? ` and a ${r.cope.side} cope ${r.cope.depth} × ${r.cope.length}` : ''}.`;
+      r = fitEnd(p, ids[0], 'auto', ids[1], fitGap, fitCope);
     });
-    notify(msg);
+    // Report the cut as derived: its saw angles (any direction: vertical to horizontal, raking, folded), or why it stayed square.
+    const dm = derived(st().project);
+    const label = r.end === 'start' ? 'Start' : 'End';
+    const problem = dm.warnings.find((w) => w.memberId === ids[0] && w.text.startsWith(`End preparation — ${label}:`) && !w.text.includes('saw range'));
+    if (problem) return notify(`${label} end: ${problem.text.replace(/^End preparation — (Start|End): /, '')}`, 'error');
+    const cut = dm.geoms.get(ids[0])?.cuts?.[r.end];
+    const angle = cut ? endCutText(cut).replace('square 90°', 'square') : 'square';
+    const steep = cut && cutAngle(cut) > SAW_LIMIT ? ` — beyond the usual saw range (${SAW_LIMIT}°), check with the shop` : '';
+    notify(`Fitted the ${r.end} end (${angle}) with a ${fitGap} mm gap${r.cope ? ` and a ${r.cope.side} cope ${r.cope.depth} × ${r.cope.length}` : ''}${steep}.`);
   } catch (e) {
     notify((e as Error).message, 'error');
   }

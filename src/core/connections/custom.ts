@@ -12,6 +12,7 @@ import {
   centreAt,
   emptyOut,
   faceDistance,
+  faceTrim,
   halfExtent,
   inward,
   num,
@@ -95,6 +96,8 @@ export const customConnection: ConnectionDef = {
     const j = joint(ctx, t);
     if (!j) return [];
     const cut = evalExpr(t.cut || '0', templateVars(ctx, t, j));
+    // The end faces the main member (no plate across it): on a joint that is not square it follows the main face.
+    if (j.main && !t.plates.some((pl) => pl.plane === 'end')) return [faceTrim(j.main, j.sec, j.end, j.dIn, j.face, cut)];
     return [{ member: j.sec.member.id, end: j.end, amount: j.face + cut }];
   },
   build(ctx) {

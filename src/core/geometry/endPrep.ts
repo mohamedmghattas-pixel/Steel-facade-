@@ -20,8 +20,14 @@
  *   flanges with `fitEnd(…, cope)` where they clash).
  * - Copes remove a flange over `length` from the end and `depth` from the
  *   outer face, with a re-entrant corner radius.
+ * - Face fits without a user preparation (`EndFit`): a connection's cut-back
+ *   on a skewed, raking, sloped or folded joint, or the project auto-cut
+ *   (settings.autoCut), cut the end on the plane of the other member's facing
+ *   side plus a clearance. A user bevel, mitre or fit at that end wins; a cope
+ *   is kept on top. Square joints never get one (FIT_SQUARE_TOL), so they keep
+ *   the square cut-back (docs/CONNECTION_GEOMETRY.md §3.4a).
  */
-import type { EndPrep, EndPrepKind, Member, Project, Vec2, Vec3 } from '../model/types';
+import type { EndPrep, EndPrepKind, Id, Member, Project, Vec2, Vec3 } from '../model/types';
 import {
   memberAxes,
   clipHalfPlane,
@@ -51,6 +57,29 @@ export const DEFAULT_COPE_RADIUS = 15;
 export const MAX_CUT_ANGLE = 85;
 /** Cuts steeper than this get a warning (typical band-saw limit). */
 export const SAW_LIMIT = 60;
+/**
+ * Face fits (connection cut-backs, auto-cut) within this angle of square, degrees,
+ * stay square cut-backs: perpendicular joints derive exactly as without fits, and
+ * rounding noise of imported geometry gives no saw angle. 0.05° is 0.09 mm over a
+ * 100 mm section, and below the 0.05° the shop texts already print as 90°.
+ */
+export const FIT_SQUARE_TOL = 0.05;
+
+/**
+ * An end cut on the facing side of another member without a user end
+ * preparation: from a connection's cut-back (Trim.fit) or the project auto-cut.
+ * `plane` (world point and outward normal, out of the member's material) is
+ * absent when the joint is square: the cut-back alone sets that end.
+ */
+export interface EndFit {
+  /** The member whose face the end follows. */
+  to: Id;
+  /** What set it, for messages: the connection's label, or 'auto-cut'. */
+  by: string;
+  /** Set by the project auto-cut (no connection at that end). */
+  auto?: true;
+  plane?: { p: Vec3; n: Vec3 };
+}
 
 export interface Cope {
   side: 'top' | 'bottom';
@@ -129,6 +158,39 @@ export function centreLine(p: Project, m: Member): CentreLine | null {
   return { origin: toWorld({ origin: a, ...ax }, 0, sh.x, sh.y), ...ax, w, h, shape: prof?.shape };
 }
 
+/**
+ * The face of a member's section envelope that a line along `dir` meets, as
+ * the connections measure it (`faceDistance`, the same choice and order):
+ * - rectangular envelopes: the bounding-box face (±y at w/2, ±z at h/2) whose
+ *   outward normal is closest to `dir`; none when that is below 0.2 (the line
+ *   runs almost parallel to the faces);
+ * - round sections (CHS, RD): the tangent plane square to `dir`'s component
+ *   across the axis (none when that component is below 0.2).
+ * `f` is the member's frame on its section centre line. Returns the outward
+ * face normal (pointing towards the member coming in) and a point of the face.
+ */
+export function envelopeFace(f: Frame, w: number, h: number, shape: Shape | undefined, dir: Vec3): { n: Vec3; at: Vec3 } | null {
+  if (!(w > 0 && h > 0)) return null;
+  if (shape?.type === 'CHS' || shape?.type === 'RD') {
+    const e = sub(dir, scale(f.x, dot(dir, f.x)));
+    if (len(e) < 0.2) return null;
+    const n = normalize(e);
+    return { n, at: madd(f.origin, n, w / 2) };
+  }
+  const faces: [Vec3, number][] = [
+    [f.y, w / 2],
+    [scale(f.y, -1), w / 2],
+    [f.z, h / 2],
+    [scale(f.z, -1), h / 2],
+  ];
+  const best = faces.reduce((b, x) => (dot(x[0], dir) > dot(b[0], dir) ? x : b), faces[0]);
+  if (dot(best[0], dir) < 0.2) return null;
+  return { n: best[0], at: madd(f.origin, best[0], best[1]) };
+}
+
+/** A cut plane with world normal `n` is square to a member axis `x` (within FIT_SQUARE_TOL). */
+export const isSquareTo = (x: Vec3, n: Vec3): boolean => Math.abs(dot(normalize(x), normalize(n))) >= Math.cos(FIT_SQUARE_TOL * DEG);
+
 /** Which end of `m` sits on node `nodeId` (or within 1 mm of it). */
 export function endOnNode(p: Project, m: Member, nodeId: string): End | null {
   if (m.start === nodeId) return 'start';
@@ -203,6 +265,8 @@ const OPEN: Shape['type'][] = ['I', 'U', 'C', 'Z', 'T', 'L'];
  * extensions and connection trims) and `length` the nominal centre-line length;
  * cut x values are relative to `f.origin`. Mitre and fit planes replace the
  * nominal end position (they override extensions and connection trims there).
+ * `fits` are the face fits of connections and the auto-cut (EndFit): applied
+ * where the end has no bevel, mitre or fit of its own (a cope is kept on top).
  */
 export function resolveEndCuts(
   p: Project,
@@ -210,34 +274,44 @@ export function resolveEndCuts(
   f: Frame,
   length: number,
   shape?: Shape,
+  fits?: { start?: EndFit; end?: EndFit },
 ): { start: EndCut; end: EndCut; prepared: boolean; warnings: string[] } {
   const warnings: string[] = [];
   const out = { start: squareCut('start', 0), end: squareCut('end', length), prepared: false, warnings };
   for (const end of ['start', 'end'] as const) {
     const prep: EndPrep | undefined = end === 'start' ? m.startPrep : m.endPrep;
-    if (!prep || prep.kind === 'square') continue;
+    const own = !!prep && prep.kind !== 'square' && prep.kind !== 'cope';
+    const fit = own ? undefined : fits?.[end]?.plane ? fits[end] : undefined;
+    if ((!prep || prep.kind === 'square') && !fit) continue;
     const nominal = end === 'start' ? 0 : length;
     const label = end === 'start' ? 'Start' : 'End';
     let cut: EndCut | null = null;
-    if (prep.kind === 'bevel') {
+    /** The cut on a world plane, or null (with a warning) when it would be steeper than MAX_CUT_ANGLE. */
+    const planeCut = (wp: { p: Vec3; n: Vec3 }, kind: EndPrepKind, steep: string): EndCut | null => {
+      const n = v3(dot(wp.n, f.x), dot(wp.n, f.y), dot(wp.n, f.z));
+      const s = end === 'start' ? -1 : 1;
+      if (s * n.x < Math.cos(MAX_CUT_ANGLE * DEG)) {
+        warnings.push(`${label}: ${steep}`);
+        return null;
+      }
+      const x = dot(sub(wp.p, f.origin), wp.n) / dot(f.x, wp.n);
+      return { kind, n, x, ...anglesFromNormal(end, n), copes: [] };
+    };
+    if (prep?.kind === 'bevel') {
       const n = normalFromAngles(end, prep.angleWeb, prep.angleFlange);
       cut = { kind: 'bevel', n, x: nominal, ...anglesFromNormal(end, n), copes: [] };
-    } else if (prep.kind === 'mitre' || prep.kind === 'fit') {
+    } else if (prep && (prep.kind === 'mitre' || prep.kind === 'fit')) {
       const other = prep.to ? p.members[prep.to] : undefined;
       const wp = prep.kind === 'mitre' ? mitrePlane(p, m, end, other, prep.gap) : fitPlane(p, m, end, other, prep.gap);
       if ('error' in wp) warnings.push(`${label}: ${wp.error}`);
-      else {
-        const n = v3(dot(wp.n, f.x), dot(wp.n, f.y), dot(wp.n, f.z));
-        const s = end === 'start' ? -1 : 1;
-        if (s * n.x < Math.cos(MAX_CUT_ANGLE * DEG)) warnings.push(`${label}: the cut would be steeper than ${MAX_CUT_ANGLE}° — end left square.`);
-        else {
-          const x = dot(sub(wp.p, f.origin), wp.n) / dot(f.x, wp.n);
-          cut = { kind: prep.kind, n, x, ...anglesFromNormal(end, n), copes: [] };
-        }
-      }
+      else cut = planeCut(wp, prep.kind, `the cut would be steeper than ${MAX_CUT_ANGLE}° — end left square.`);
+    } else if (fit?.plane) {
+      const to = p.members[fit.to];
+      const what = `${to?.name || to?.profile || 'the other member'}${fit.auto ? ' (auto-cut)' : ` (${fit.by})`}`;
+      cut = planeCut(fit.plane, 'fit', `the cut on the face of ${what} would be steeper than ${MAX_CUT_ANGLE}° — end left square at ${fit.auto ? 'the auto-cut' : 'the connection'} cut-back.`);
     }
-    cut ??= squareCut(end, nominal, prep.kind === 'cope' ? 'cope' : prep.kind);
-    if ((prep.kind === 'cope' || prep.kind === 'fit') && (prep.copeDepth ?? 0) > 0 && (prep.copeLength ?? 0) > 0) {
+    cut ??= squareCut(end, nominal, prep?.kind === 'cope' ? 'cope' : (prep?.kind ?? 'square'));
+    if (prep && (prep.kind === 'cope' || prep.kind === 'fit') && (prep.copeDepth ?? 0) > 0 && (prep.copeLength ?? 0) > 0) {
       if (shape && OPEN.includes(shape.type)) {
         const box = shapeBox(shape);
         const depth = Math.min(prep.copeDepth!, box.h * 0.45);

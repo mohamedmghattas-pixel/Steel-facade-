@@ -116,7 +116,8 @@ describe('end preparations', () => {
     const m2 = addLine(p, { x: 1500, y: 0, z: 0 }, { x: 1500, y: 0, z: 3000 }, { profile: 'SHS 100x100x5', role: 'mullion' })!;
     const t = addLine(p, { x: 0, y: 0, z: 1500 }, { x: 1500, y: 0, z: 1500 }, { profile: 'RHS 80x40x3', role: 'transom' })!;
     expect(fitEnd(p, t, 'auto', m2, 5).end).toBe('end');
-    expect(memberPart(deriveModel(p), t).length).toBeCloseTo(1500 - 50 - 5, 6);
+    // The other end has no preparation: the project auto-cut cuts it to the first mullion's face (gap 10).
+    expect(memberPart(deriveModel(p), t).length).toBeCloseTo(1500 - 50 - 5 - (50 + 10), 6);
     fitEnd(p, t, 'auto', m1, 5);
     const pt = memberPart(deriveModel(p), t);
     expect(pt.length).toBeCloseTo(1500 - 2 * 55, 6);
@@ -139,6 +140,8 @@ describe('end preparations', () => {
     const g = addLine(p, { x: 0, y: -2000, z: 0 }, { x: 0, y: 2000, z: 0 }, { profile: 'IPE 300', role: 'beam' })!;
     const bm = addLine(p, { x: 0, y: 0, z: 0 }, { x: 3000, y: 0, z: 0 }, { profile: 'IPE 200', role: 'beam' })!;
     const ipe200 = getProfile('IPE 200')!;
+    // The cope mass is checked on the drawn length: no auto-cut of the start end on the girder.
+    p.settings.autoCut!.enabled = false;
     setCope(p, bm, 'end', { depth: 30, length: 80, side: 'top' });
     const pt = memberPart(deriveModel(p), bm);
     expect(pt.ends!.end.copes).toHaveLength(1);

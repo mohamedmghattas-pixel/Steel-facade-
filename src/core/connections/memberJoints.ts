@@ -4,7 +4,9 @@
  */
 import { boltLength, getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
-import { cross, madd, scale } from '../model/geometry';
+import { cross, dot, madd, normalize, scale, sub } from '../model/geometry';
+import type { Vec3 } from '../model/types';
+import { envelopeFace, isSquareTo } from '../geometry/endPrep';
 import type { MemberGeom } from '../derive/memberGeom';
 import { throughHole } from './kit';
 import { jointMovement } from '../movement/provisions';
@@ -13,6 +15,7 @@ import {
   emptyOut,
   endSlot,
   faceDistance,
+  faceTrim,
   halfExtent,
   inward,
   num,
@@ -106,7 +109,7 @@ export const finPlate: ConnectionDef = {
   ],
   trims(ctx) {
     const j = joint(ctx);
-    return j ? [{ member: j.sec.member.id, end: j.end, amount: j.face + num(ctx.v.gap, 10) }] : [];
+    return j ? [faceTrim(j.main, j.sec, j.end, j.dIn, j.face, num(ctx.v.gap, 10))] : [];
   },
   build(ctx) {
     const out = emptyOut();
@@ -185,7 +188,7 @@ export const angleCleat: ConnectionDef = {
   ],
   trims(ctx) {
     const j = joint(ctx);
-    return j ? [{ member: j.sec.member.id, end: j.end, amount: j.face + num(ctx.v.gap, 10) }] : [];
+    return j ? [faceTrim(j.main, j.sec, j.end, j.dIn, j.face, num(ctx.v.gap, 10))] : [];
   },
   build(ctx) {
     const out = emptyOut();
@@ -275,7 +278,7 @@ export const endPlate: ConnectionDef = {
   ],
   trims(ctx) {
     const j = joint(ctx);
-    return j ? [{ member: j.sec.member.id, end: j.end, amount: j.face + num(ctx.v.t, 10) }] : [];
+    return j ? [faceTrim(j.main, j.sec, j.end, j.dIn, j.face, num(ctx.v.t, 10))] : [];
   },
   build(ctx) {
     const out = emptyOut();
@@ -294,6 +297,9 @@ export const endPlate: ConnectionDef = {
     const zs = sec.frame.z;
     const Cs = centreAt(sec, node);
     const faceCentre = madd(Cs, dIn, face);
+    // A skewed, raking or folded joint: the plate lies flat on the main face and the secondary is cut to it.
+    const onFace = skewFace(main, sec, dIn);
+    if (onFace) return endPlateOnFace(ctx, j, onFace, out);
     const origin = madd(madd(faceCentre, ys, -W / 2), zs, -H / 2);
     const frame = plateOn(origin, dIn, ys, zs, t);
     const cols = [-(sec.w / 2 + ed), sec.w / 2 + ed];
@@ -326,6 +332,81 @@ export const endPlate: ConnectionDef = {
   },
 };
 
+/** The main member's face a skewed secondary meets (outward normal and a point on it); null for a square joint. */
+function skewFace(main: MemberGeom, sec: MemberGeom, dIn: Vec3): { n: Vec3; at: Vec3 } | null {
+  const f = envelopeFace(main.frame, main.w, main.h, main.profile?.shape, dIn);
+  return f && !isSquareTo(sec.frame.x, f.n) ? f : null;
+}
+
+/**
+ * End plate of a joint that is not square: the plate lies on the main member's
+ * face (contact face on it, thickness t towards the secondary), its sides along
+ * the secondary's section axes projected onto the face; it covers the
+ * secondary's footprint on the face (the section box projected along the
+ * secondary's axis) plus the bolt columns either side; the bolts run square to
+ * the face through the main member (grip t + its depth across that face). The
+ * secondary is cut to the plate's outer face (faceTrim with clearance t) and
+ * welded to it.
+ */
+function endPlateOnFace(ctx: ConnCtx, j: Joint, f: { n: Vec3; at: Vec3 }, out: ConnectionOut): ConnectionOut {
+  const { v, node } = ctx;
+  const { sec, main, dIn, face } = j;
+  const t = num(v.t, 10);
+  const ed = num(v.edge, 20);
+  const m = num(v.margin, 25);
+  const bolt = getBolt(str(v.bolt, 'M12'));
+  const pitch = num(v.pitch, 60);
+  const rows = boltOffsets(Math.round(num(v.rows, 1)), pitch);
+  const n = f.n;
+  const ys = sec.frame.y;
+  const zs = sec.frame.z;
+  const Cs = centreAt(sec, node);
+  const faceCentre = madd(Cs, dIn, face);
+  // Plate axes in the face plane: the secondary's y and z projected onto it.
+  const u = normalize(sub(ys, scale(n, dot(ys, n))));
+  const w0 = sub(zs, scale(n, dot(zs, n)));
+  const w = normalize(sub(w0, scale(u, dot(w0, u))));
+  // Footprint of the secondary's section box on the face plane, in (u, w) from faceCentre.
+  const cosN = dot(dIn, n);
+  let u0 = Infinity;
+  let u1 = -Infinity;
+  let v0 = Infinity;
+  let v1 = -Infinity;
+  for (const cy of [-sec.w / 2, sec.w / 2]) {
+    for (const cz of [-sec.h / 2, sec.h / 2]) {
+      const q = madd(madd(Cs, ys, cy), zs, cz);
+      const onPlane = madd(q, dIn, dot(sub(f.at, q), n) / cosN);
+      const d = sub(onPlane, faceCentre);
+      u0 = Math.min(u0, dot(d, u));
+      u1 = Math.max(u1, dot(d, u));
+      v0 = Math.min(v0, dot(d, w));
+      v1 = Math.max(v1, dot(d, w));
+    }
+  }
+  const uc = (u0 + u1) / 2;
+  const vc = (v0 + v1) / 2;
+  const W = Math.ceil((u1 - u0 + 2 * (ed + m)) / 5) * 5;
+  const H = Math.ceil(Math.max(v1 - v0, (rows.length - 1) * pitch + 2 * m) / 5) * 5;
+  const corner = madd(madd(faceCentre, u, uc - W / 2), w, vc - H / 2);
+  const frame = plateOn(corner, n, u, w, t);
+  const cols = [u0 - ed, u1 + ed];
+  const holes: Hole2D[] = [];
+  const positions = [];
+  const mainDepth = 2 * halfExtent(main, n);
+  for (const bu of cols) {
+    for (const bz of rows) {
+      holes.push({ x: W / 2 + bu - uc, y: H / 2 + bz, d: bolt.hole });
+      const onFace = madd(madd(faceCentre, u, bu), w, vc + bz);
+      positions.push(madd(onFace, n, t));
+      out.memberHoles.push({ member: main.member.id, hole: { pos: throughHole(main, onFace, n, mainDepth), dir: n, d: bolt.hole } });
+    }
+  }
+  out.plates.push({ key: 'plate', name: 'End plate', t, outline: rect(W, H), holes, frame, weldedTo: `m:${sec.member.id}` });
+  const grip = t + mainDepth;
+  out.bolts.push({ key: 'bolts', size: bolt.name, grade: str(v.grade, '8.8'), kind: 'bolt', grip, length: boltLength(bolt, grip), dir: scale(n, -1), positions });
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 
 export const welded: ConnectionDef = {
@@ -337,7 +418,7 @@ export const welded: ConnectionDef = {
   params: [{ key: 'gap', label: 'Gap', kind: 'number', default: 0, unit: 'mm' }],
   trims(ctx) {
     const j = joint(ctx);
-    return j ? [{ member: j.sec.member.id, end: j.end, amount: j.face + num(ctx.v.gap, 0) }] : [];
+    return j ? [faceTrim(j.main, j.sec, j.end, j.dIn, j.face, num(ctx.v.gap, 0))] : [];
   },
   build(ctx) {
     const out = emptyOut();

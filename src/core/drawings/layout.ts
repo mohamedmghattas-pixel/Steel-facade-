@@ -107,14 +107,22 @@ export function drawRevisionTable(s: Sheet, size: SheetSize, revisions: DrawingR
   const W = s.tb.w;
   const x0 = f.x1 - W;
   const y0 = f.y0 + s.tb.h;
-  const cols = [
-    { head: 'Rev', w: 12 },
-    { head: 'Description', w: Math.max(20, W - 106) },
-    { head: 'Date', w: 22 },
-    { head: 'Drawn', w: 24 },
-    { head: 'Checked', w: 24 },
-    { head: 'Approved', w: 24 },
-  ];
+  // Narrow title blocks (company templates under 126 mm) keep rev, description and date.
+  const narrow = W < 126;
+  const cols = narrow
+    ? [
+        { head: 'Rev', w: 10 },
+        { head: 'Description', w: Math.max(4, W - 30) },
+        { head: 'Date', w: 20 },
+      ]
+    : [
+        { head: 'Rev', w: 12 },
+        { head: 'Description', w: Math.max(20, W - 106) },
+        { head: 'Date', w: 22 },
+        { head: 'Drawn', w: 24 },
+        { head: 'Checked', w: 24 },
+        { head: 'Approved', w: 24 },
+      ];
   s.rect(x0, y0, W, REV_H, 'medium');
   for (let r = 1; r <= REV_ROWS; r++) s.line({ x: x0, y: y0 + r * 5 }, { x: x0 + W, y: y0 + r * 5 }, r === 1 ? 'medium' : 'thin');
   let cx = x0;
@@ -136,7 +144,7 @@ export function drawRevisionTable(s: Sheet, size: SheetSize, revisions: DrawingR
     0,
     true,
   );
-  revisions.slice(-REV_ROWS).forEach((rv, i) => row([rv.rev, rv.description, rv.date, rv.drawn, rv.checked, rv.approved], i + 1, false));
+  revisions.slice(-REV_ROWS).forEach((rv, i) => row([rv.rev, rv.description, rv.date, rv.drawn, rv.checked, rv.approved].slice(0, cols.length), i + 1, false));
 }
 
 

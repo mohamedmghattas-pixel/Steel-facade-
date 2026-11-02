@@ -4,6 +4,7 @@ import { defaultDrawingSet, defaultSettings, defaultWireframeSettings } from '..
 import { zip } from '../core/io/zip';
 import { sanitizeProfileAssemblies } from '../core/library/profileAssembly';
 import { defaultPackageSettings, exportTemplates, migrateExportTemplates } from '../core/export/template';
+import { migrateSheetTemplates } from '../core/drawings/template';
 import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
 
 const KEY = 'facadesteel.autosave.v1';
@@ -103,6 +104,8 @@ export function migrateProject(p: Project | null): Project | null {
     settings: { ...dd.settings, ...(p.drawings?.settings ?? {}), zoning: { ...dd.settings.zoning!, ...(p.drawings?.settings?.zoning ?? {}) } },
     revisions: p.drawings?.revisions ?? {},
   };
+  // Sheet templates: free content (imported / drawn title blocks) is optional, older templates load unchanged.
+  p.drawings.templates = migrateSheetTemplates(p.drawings.templates);
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [], profileAssemblies: sanitizeProfileAssemblies(p.library?.profileAssemblies) };
   migrateTemplates(p);
   p.workPlanes ??= [];

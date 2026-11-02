@@ -1,0 +1,143 @@
+/* Sheet template designer and the title block import (TemplateDesigner.tsx) */
+.tpl-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.tpl-toolbar .secondary-btn.on,
+.tb-logo .secondary-btn.on {
+  color: var(--accent);
+  border-color: rgb(242 165 65 / 0.6);
+}
+.tpl-toolbar .muted {
+  margin-left: 6px;
+  font-size: 12px;
+}
+.tpl-canvas {
+  background: #f4f4f4;
+  border-radius: 4px;
+  outline: none;
+  margin-bottom: 8px;
+  border: 1px solid transparent;
+}
+.tpl-canvas:focus-visible {
+  border-color: rgb(242 165 65 / 0.6);
+}
+.tpl-canvas svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 340px;
+  touch-action: none;
+  user-select: none;
+}
+.tpl-canvas.picking svg {
+  cursor: crosshair;
+}
+.tpl-sel {
+  fill: rgb(26 115 232 / 0.06);
+  stroke: #1a73e8;
+  stroke-width: 1.5px;
+  stroke-dasharray: 4 3;
+  pointer-events: none;
+}
+.tpl-handle {
+  fill: #fff;
+  stroke: #1a73e8;
+  stroke-width: 1.5px;
+}
+.tpl-rubber {
+  fill: rgb(26 115 232 / 0.08);
+  stroke: #1a73e8;
+  stroke-width: 1.5px;
+  pointer-events: none;
+}
+.tpl-logo-slot rect {
+  fill: rgb(224 132 26 / 0.08);
+  stroke: #e0841a;
+  stroke-width: 0.3;
+  stroke-dasharray: 1.5 1;
+}
+.tpl-logo-slot text {
+  fill: #e0841a;
+}
+.tb-hl {
+  fill: none;
+  stroke: #1a73e8;
+  stroke-width: 2px;
+  pointer-events: none;
+}
+.tpl-props {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 6px 10px;
+  align-items: end;
+  margin-bottom: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.tpl-props .row-inline .num-input {
+  min-width: 52px;
+  flex: 1;
+}
+.tpl-props-slot {
+  min-height: 150px;
+}
+.tpl-hint {
+  margin: 0 0 8px;
+}
+.tpl-check {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+  white-space: nowrap;
+}
+.tpl-table {
+  margin: 4px 0 8px;
+}
+.tpl-table summary {
+  cursor: pointer;
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+.tb-notes {
+  margin: 0 0 6px;
+  padding-left: 18px;
+  color: var(--warn, #e0a030);
+  font-size: 12px;
+}
+.tb-logo {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.tb-texts td.tb-text {
+  max-width: 340px;
+  overflow-wrap: anywhere;
+}
+.tb-texts tr.live td.tb-text {
+  color: var(--accent);
+}
+.tb-texts tr.out td.tb-text {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+.tb-tag {
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--line-2);
+  color: var(--text-3);
+}
+/* The designer and the import review need room for the block at a workable scale. */
+.modal.wide:has(.tpl-designer),
+.modal.wide:has(.tb-texts) {
+  width: min(1180px, calc(100vw - 32px));
+}

@@ -896,7 +896,7 @@ export interface SheetTemplate {
    * the field sources in core/drawings/template.ts, or "text:<fixed text>". Optional value
    * style: lettering height (ISO 3098), bold, baseline above the cell bottom (mm).
    */
-  fields: { label: string; source: string; col: number; row: number; w: number; h: number; textH?: number; bold?: boolean; dy?: number }[];
+  fields: { label: string; source: string; col: number; row: number; w: number; h: number; textH?: number; bold?: boolean; dy?: number; align?: 'start' | 'middle' | 'end' }[];
   /** Title block width / height, mm. */
   width: number;
   height: number;
@@ -905,6 +905,47 @@ export interface SheetTemplate {
   /** Logo as data URL (PNG/SVG), placed in the title block. */
   logo?: string;
   notes: string[];
+  /** Fixed linework (imported from DXF or drawn in the designer), mm from the block's bottom-left corner. */
+  graphics?: TemplateGraphic[];
+  /** Texts placed freely: fixed, or filled per sheet from a field source (see TemplateText). */
+  texts?: TemplateText[];
+  /** Logo rectangle, mm from the block's bottom-left corner (absent: the cell of a "logo" field). */
+  logoRect?: { x: number; y: number; w: number; h: number };
+  /** Outer border 0.7 mm (default true). */
+  border?: boolean;
+  /** Imported title block: source file, units and scale (mm per drawing unit). */
+  imported?: { file: string; units: string; unitScale: number; date: string };
+}
+
+/** Line weight of template linework (ISO 128-2): thin 0.25, medium 0.35, wide 0.5, frame 0.7 mm. */
+export type TemplateLineWeight = 'thin' | 'medium' | 'wide' | 'frame';
+
+/** Fixed linework of a sheet template, mm from the bottom-left corner of the title block. */
+export type TemplateGraphic =
+  | { t: 'line'; a: Vec2; b: Vec2; lw?: TemplateLineWeight }
+  | { t: 'rect'; x: number; y: number; w: number; h: number; lw?: TemplateLineWeight; fill?: boolean }
+  | { t: 'poly'; pts: Vec2[]; closed: boolean; lw?: TemplateLineWeight; fill?: boolean }
+  | { t: 'circle'; c: Vec2; r: number; lw?: TemplateLineWeight; fill?: boolean };
+
+/**
+ * A text placed freely in a sheet template: baseline point (x, y) in mm from the block's
+ * bottom-left corner. `source` as for grid fields: a field source (filled per sheet),
+ * "text:<fixed text>", or "fmt:<text with {PLACEHOLDERS}>" (each placeholder filled per sheet).
+ */
+export interface TemplateText {
+  x: number;
+  y: number;
+  /** Lettering height, mm (ISO 3098). */
+  h: number;
+  source: string;
+  anchor?: 'start' | 'middle' | 'end';
+  /** Rotation, degrees counter-clockwise. */
+  rot?: number;
+  bold?: boolean;
+  /** Longest value, mm; longer values are shortened with "…" (absent or 0: no limit). */
+  maxW?: number;
+  /** Imported texts: the text or attribute tag in the DXF. */
+  origin?: string;
 }
 
 export interface ProjectInfo {

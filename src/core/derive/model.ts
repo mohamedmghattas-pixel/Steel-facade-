@@ -3,9 +3,11 @@
  * marks. Every output (3D, IFC, drawings, reports, NC, nesting) reads from the
  * `DerivedModel` so they always agree with each other.
  */
-import type { AssemblyGroup, ComponentLengthRule, Connection, Finish, Id, Member, MemberRole, PlateBend, ProfileComponentKind, Project, Vec2, Vec3 } from '../model/types';
+import type { AssemblyGroup, ComponentLengthRule, Connection, EndPrep, Finish, Id, Member, MemberRole, PlateBend, ProfileComponentKind, Project, Vec2, Vec3 } from '../model/types';
 import { cross, dot, len, madd, normalize, pointSegment, scale, toLocal, type Frame } from '../model/geometry';
-import { anglesFromNormal, cutAngle, massLength, type EndCut } from '../geometry/endPrep';
+import { anglesFromNormal, cutAngle, massLength, type EndCut, type EndFit } from '../geometry/endPrep';
+import { autoCutSettings } from '../model/ops';
+import { autoCutEnds } from './autoCut';
 import { getProfile } from '../library/profiles';
 import { getMaterial, densityFactor } from '../library/materials';
 import { CONNECTIONS, resolveParams } from '../connections/registry';
@@ -299,6 +301,9 @@ export function deriveModel(p: Project): DerivedModel {
     if (!node) return null;
     return { p, c, node: node.p, v: resolveParams(c, p), geom: (id) => geoms.get(id) };
   };
+  const endFit = autoCutSettings(p);
+  /** The governing trim of each member end that follows the main face (settings.autoCut.connections). */
+  const fitAt = new Map<string, { amount: number; fit?: EndFit }>();
   for (const c of Object.values(p.connections)) {
     const def = CONNECTIONS[c.type];
     const ctx = ctxFor(c.id, raw);
@@ -311,6 +316,27 @@ export function deriveModel(p: Project): DerivedModel {
       const k = `${t.member}|${t.end}`;
       trimsAt.set(k, [...(trimsAt.get(k) ?? []), { cid: c.id, amount: t.amount }]);
       govern(t.member, t.end, c.id);
+      // The governing trim's face fit (a joint that is not square) sets that end instead of the square cut-back.
+      const g0 = fitAt.get(k);
+      if (!g0 || t.amount > g0.amount) fitAt.set(k, { amount: t.amount, fit: endFit.connections && t.fit ? { to: t.fit.to, by: def.label, plane: { p: t.fit.p, n: t.fit.n } } : undefined });
+    }
+  }
+  for (const [k, g0] of fitAt) {
+    if (!g0.fit) continue;
+    const [id, end] = k.split('|') as [Id, 'start' | 'end'];
+    const cur = trims.get(id)!;
+    if (g0.amount < cur[end]) continue;
+    (cur.fit ??= {})[end] = g0.fit;
+  }
+  // Auto-cut: ends meeting another member's side with no connection there and no end preparation of their own.
+  if (endFit.enabled) {
+    const own = (prep: EndPrep | undefined) => !!prep && prep.kind !== 'square' && prep.kind !== 'cope';
+    const skip = (id: Id, end: 'start' | 'end') => !!governed.get(id)?.[end] || own(end === 'start' ? p.members[id].startPrep : p.members[id].endPrep);
+    for (const a of autoCutEnds(p, raw, skip, endFit.gap, (memberId, text) => warnings.push({ memberId, text: `Auto-cut — ${text}` }))) {
+      const cur = trims.get(a.member) ?? { start: 0, end: 0 };
+      cur[a.end] = a.amount;
+      (cur.fit ??= {})[a.end] = a.fit;
+      trims.set(a.member, cur);
     }
   }
   const labelOf = (cid: Id) => CONNECTIONS[p.connections[cid].type]?.label ?? p.connections[cid].type;
@@ -758,7 +784,9 @@ export function linearPart(
   centroid: { y: number; z: number },
 ): { frame: Frame; length: number; massLength: number; ends?: Part['ends']; sig?: string } {
   if (!cuts || !shape) return { frame, length, massLength: length };
-  const x0 = cuts.xMin;
+  // A fitted start keeps its extreme point at x ≥ 0 after rounding (1e-9 mm margin): the cut planes of face fits
+  // come from world geometry, and a silhouette at x = −1e-16 would fall outside an interrupted drawing view.
+  const x0 = cuts.xMin - (cuts.start.kind === 'fit' && cutAngle(cuts.start) > 1e-6 ? 1e-9 : 0);
   const start = { ...cuts.start, x: cuts.start.x - x0 };
   const end = { ...cuts.end, x: cuts.end.x - x0 };
   const ml = massLength(shape, area, centroid, start, end);

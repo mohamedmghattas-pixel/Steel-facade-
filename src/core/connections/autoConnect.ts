@@ -163,7 +163,7 @@ export interface AutoPlan {
 // ---------------------------------------------------------------------------
 // Member kinds
 
-type Kind = 'main' | 'secondary' | 'stub' | 'brace';
+export type Kind = 'main' | 'secondary' | 'stub' | 'brace';
 
 const BRACE_SHAPES = new Set(['FL', 'L', 'CHS', 'RHS']);
 const PARALLEL = Math.cos((1 * Math.PI) / 180);
@@ -184,9 +184,11 @@ const otherEnd = (m: Member, node: Id): Id => (m.start === node ? m.end : m.star
 /**
  * What a member does in a joint: by role (mullion / post = main, transom / rail
  * = secondary, bracket = stub, brace), and for unclassified lines (other,
- * beam, outrigger) by direction: vertical = main, else secondary.
+ * beam, outrigger) by direction: vertical = main, else secondary. Shared with
+ * the auto-cut (derive/autoCut.ts), so a cut and the joint placed later
+ * choose the same main member.
  */
-function kindOf(p: Project, m: Member): Kind {
+export function memberKind(p: Project, m: Member): Kind {
   switch (m.role) {
     case 'mullion':
     case 'post':
@@ -217,7 +219,7 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
   const kinds = new Map<Id, Kind>();
   const kind = (m: Member) => {
     let k = kinds.get(m.id);
-    if (!k) kinds.set(m.id, (k = kindOf(p, m)));
+    if (!k) kinds.set(m.id, (k = memberKind(p, m)));
     return k;
   };
   const at = (node: Id) => membersAt(node).filter((x) => inScope(x.member));
@@ -478,7 +480,11 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
     // (without levels: stack nodes where no other member meets). A transom junction where the
     // mullion is cut is not a support.
     if (o.mullionBrackets) {
-      const ms = vertical.filter((x) => x.member.role === 'mullion' && x.at !== 'through' && !inStackPair.has(`${node.id}|${x.member.id}`) && !supportedBy.has(lengthOf(x.member.id) ?? ''));
+      const ms0 = vertical.filter((x) => x.member.role === 'mullion' && x.at !== 'through' && !inStackPair.has(`${node.id}|${x.member.id}`) && !supportedBy.has(lengthOf(x.member.id) ?? ''));
+      // A chain end landing on a member that passes through the node (a sill, head or edge member) gets the
+      // joint to that member (mullion ends rule), so its end is fitted to it — not a slab bracket.
+      const onEdge = o.joint !== 'none' && ms0.length === 1 && here.some((y) => y.at === 'through' && !isCollinear(p, ms0[0].member, y.member));
+      const ms = onEdge ? [] : ms0;
       const below = ms.find((x) => otherZ(x.member) < z);
       const above = ms.find((x) => otherZ(x.member) > z);
       const real = !(below && above) || (levels.length ? atLevel(z) : !here.some((x) => !isCollinear(p, x.member, below.member)));
@@ -506,9 +512,10 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
       if (k === 'secondary' && cands.some((y) => kind(y.member) === 'main')) tee = true;
       if (isCovered(node.id, x.member.id)) continue;
       if (k === 'main') {
-        // A mullion end on an edge member that passes through the node (nothing continues the mullion).
-        if (o.joint === 'none' || here.some((y) => y.member.id !== x.member.id && kind(y.member) === 'main')) continue;
-        const thru = cands.find((y) => y.at === 'through');
+        // A mullion end on an edge member that passes through the node (nothing continues the mullion): a sill,
+        // head or raking edge, whatever its role — two mullions ending there at a kink (a V) both land on it.
+        if (o.joint === 'none' || here.some((y) => y.member.id !== x.member.id && isCollinear(p, x.member, y.member))) continue;
+        const thru = cands.find((y) => y.at === 'through' && kind(y.member) !== 'main') ?? cands.find((y) => y.at === 'through');
         if (thru) push(make('mullionEnd', o.joint, node.id, thru.member.id, [x.member.id], sideParams(p, x, thru, node.id)));
         continue;
       }

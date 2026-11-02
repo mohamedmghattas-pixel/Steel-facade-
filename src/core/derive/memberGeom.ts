@@ -2,7 +2,7 @@ import type { Id, Member, Project, Vec2, Vec3 } from '../model/types';
 import { dist, madd, memberAxes, sectionShift, toWorld, type Frame } from '../model/geometry';
 import { getProfile, type Profile } from '../library/profiles';
 import { shapeOutline } from '../library/shapes';
-import { resolveEndCuts, cutEnvelope, type EndCut } from '../geometry/endPrep';
+import { resolveEndCuts, cutEnvelope, type EndCut, type EndFit } from '../geometry/endPrep';
 import { componentShift, memberComposite } from '../library/profileAssembly';
 
 /** Resolved physical geometry of a member, after extensions and connection trims. */
@@ -32,9 +32,19 @@ export interface MemberGeom {
   cuts?: { start: EndCut; end: EndCut; xMin: number; xMax: number };
   /** Problems resolving the end preparations. */
   prepWarnings?: string[];
+  /**
+   * Ends that follow another member's face without a user end preparation
+   * (a connection's fit on a skewed joint, or the project auto-cut); absent
+   * when there are none. A fit without `plane` is a square cut-back.
+   */
+  fits?: { start?: EndFit; end?: EndFit };
 }
 
-export type Trims = Map<Id, { start: number; end: number }>;
+/**
+ * Cut-back of each member end (connections and auto-cut, positive = shorter)
+ * and the face fits that set the end instead where the joint is not square.
+ */
+export type Trims = Map<Id, { start: number; end: number; fit?: { start?: EndFit; end?: EndFit } }>;
 
 /** Member ends set by a connection (see deriveModel): the user extension there is not applied. */
 export type GovernedEnds = Map<Id, { start: boolean; end: boolean }>;
@@ -79,8 +89,10 @@ export function memberGeom(p: Project, m: Member, trims?: Trims, governed?: Gove
     trimStart: t.start,
     trimEnd: t.end,
   };
-  if (profile && (m.startPrep || m.endPrep)) {
-    const r = resolveEndCuts(p, m, g.frame, length, profile.shape);
+  if (t.fit) g.fits = t.fit;
+  const planes = !!(t.fit?.start?.plane || t.fit?.end?.plane);
+  if (profile && (m.startPrep || m.endPrep || planes)) {
+    const r = resolveEndCuts(p, m, g.frame, length, profile.shape, t.fit);
     if (r.warnings.length) g.prepWarnings = r.warnings;
     if (r.prepared) {
       const x0 = r.start.x;

@@ -8,7 +8,7 @@ import { getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
 import type { Connection, ParamValue, Project, Vec3 } from '../model/types';
 import { memberAxes } from '../model/geometry';
-import { centreAt, emptyOut, endSlot, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ProfilePartOut, type Trim } from './common';
+import { centreAt, emptyOut, endSlot, faceTrim, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ProfilePartOut, type Trim } from './common';
 import {
   P,
   addBolts,
@@ -48,9 +48,17 @@ import {
   throughHole,
 } from './kit';
 
-const jointTrim = (ctx: ConnCtx, extra: (j: Joint) => number): Trim[] => {
+/**
+ * Cut-back of the supported member: `face + extra` along its axis. With `fit`
+ * (its end faces the main member, `extra` the clearance to the face) a joint
+ * that is not square cuts the end to the main face plus that clearance
+ * (faceTrim); without (tee cleat, stub bracket: the end bears on a part square
+ * to its axis) it stays square.
+ */
+const jointTrim = (ctx: ConnCtx, extra: (j: Joint) => number, fit = true): Trim[] => {
   const j = jointOf(ctx);
-  return j ? [{ member: j.sec.member.id, end: j.end, amount: j.face + extra(j) }] : [];
+  if (!j) return [];
+  return [fit ? faceTrim(j.main, j.sec, j.end, j.dIn, j.face, extra(j)) : { member: j.sec.member.id, end: j.end, amount: j.face + extra(j) }];
 };
 
 // ---------------------------------------------------------------------------
@@ -271,7 +279,7 @@ export const teeCleat: ConnectionDef = {
     P.count('bolts', 'Bolts per row', 1),
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
   ],
-  trims: (ctx) => jointTrim(ctx, () => (teeOf(str(ctx.v.tee, 'T 120x120x13'))?.tf ?? 0) + num(ctx.v.gap, 10)),
+  trims: (ctx) => jointTrim(ctx, () => (teeOf(str(ctx.v.tee, 'T 120x120x13'))?.tf ?? 0) + num(ctx.v.gap, 10), false),
   build(ctx) {
     const out = emptyOut();
     const j = jointOf(ctx, out, 'Tee cleat');
@@ -502,7 +510,7 @@ export const stubBracket: ConnectionDef = {
     P.count('rows', 'Bolt rows', 1),
     P.num('pitch', 'Row pitch (0 = auto)', 0),
   ],
-  trims: (ctx) => jointTrim(ctx, () => num(ctx.v.stubLength, 150) + 2 * num(ctx.v.t, 12)),
+  trims: (ctx) => jointTrim(ctx, () => num(ctx.v.stubLength, 150) + 2 * num(ctx.v.t, 12), false),
   build(ctx) {
     const out = emptyOut();
     const j = jointOf(ctx, out, 'Stub bracket');

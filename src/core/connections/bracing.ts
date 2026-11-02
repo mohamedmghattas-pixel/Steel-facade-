@@ -7,9 +7,10 @@
  */
 import { getBolt } from '../library/bolts';
 import { membersAtNode } from '../model/ops';
+import { envelopeFace } from '../geometry/endPrep';
 import type { Id, Vec2, Vec3 } from '../model/types';
 import type { MemberGeom } from '../derive/memberGeom';
-import { centreAt, emptyOut, endSlot, halfExtent, inward, num, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
+import { centreAt, emptyOut, endSlot, fitAt, halfExtent, inward, num, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type Trim } from './common';
 import { P, addBolts, addPlate, capsuleBox, cross, dot, edgeDist, holeAt, hull, intOf, jointOf, madd, memberHole, normalize, pitchFor, scale, sideOf, sub, type Joint } from './kit';
 
 type BraceKind = 'flat' | 'angle' | 'tube' | 'other';
@@ -150,7 +151,12 @@ export const gussetPlate: ConnectionDef = {
   ],
   trims(ctx) {
     const g = gussetGeom(ctx);
-    return g ? [{ member: g.j.sec.member.id, end: g.j.end, amount: g.trim }] : [];
+    if (!g) return [];
+    const t: Trim = { member: g.j.sec.member.id, end: g.j.end, amount: g.trim };
+    // Flat and angle braces end at the main face: cut parallel to it with the clearance (tubes end on the knife, square).
+    const fit = g.kind !== 'tube' ? fitAt(g.j.sec, g.j.main.member.id, madd(g.O, g.n, num(ctx.v.gap, 20)), scale(g.n, -1)) : undefined;
+    if (fit) t.fit = fit;
+    return [t];
   },
   build(ctx) {
     const out = emptyOut();
@@ -282,7 +288,12 @@ function crossLayout(ctx: ConnCtx) {
       const tHalf = halfExtent(thr.g, nt);
       trim = sinT > 0.2 ? (tHalf + gap + half * Math.abs(dot(wdir, nt))) / sinT : trim;
     }
-    trims.push({ member: m.g.member.id, end: m.end!, amount: trim });
+    const t: Trim = { member: m.g.member.id, end: m.end!, amount: trim };
+    // A split brace ends at the through brace: cut parallel to its face with the clearance.
+    const f = thr ? envelopeFace(thr.g.frame, thr.g.w, thr.g.h, thr.g.profile?.shape, d) : null;
+    const fit = thr && f ? fitAt(m.g, thr.g.member.id, madd(f.at, f.n, gap), scale(f.n, -1)) : undefined;
+    if (fit) t.fit = fit;
+    trims.push(t);
     groups.push({ m, d, ss: Array.from({ length: n }, (_, i) => trim + e + i * pitch) });
   }
   return { list, nG, groups, trims, bolt, e };

@@ -18,7 +18,9 @@ import {
   mitreMembers,
   planeArc,
   setEndPrep,
+  autoCutSettings,
 } from '../../core/model/ops';
+import { endFitCounts } from '../../core/derive/autoCut';
 import { customWorkPlane, dist } from '../../core/model/geometry';
 import { arcFrom3Points, arcPoints } from '../../core/geometry/arc';
 import { flatLength } from '../../core/geometry/bentPlate';
@@ -89,12 +91,18 @@ export const modellingModule: ToolModule = {
     {
       name: 'fit_member_end',
       description:
-        'Cut a member end to the facing side of another member (web face of I/U sections, else the section envelope), leaving a gap (mm, default 10). end: start, end or auto (the end nearer the other member). cope: also cope flanges that would clash with an I/U member\'s flanges.',
+        'Cut a member end to the facing side of another member (web face of I/U sections, else the section envelope), leaving a gap (mm, default 10), in any direction: a transom to a mullion, a mullion to a sill / head / beam, on sloped, raking or folded geometry (saw angles follow). end: start, end or auto (the end nearer the other member). cope: also cope flanges that would clash with an I/U member\'s flanges.',
       input_schema: {
         type: 'object',
         properties: { member: str, to: str, end: { type: 'string', enum: ['start', 'end', 'auto'] }, gap: num, cope: { type: 'boolean' } },
         required: ['member', 'to'],
       },
+    },
+    {
+      name: 'set_end_fitting',
+      description:
+        "Project end fitting. autoCut: member ends meeting another member's side with no connection there and no end preparation or extension (transoms / rails / braces on mullions or posts, a mullion end on a member passing through) are cut to that member's face less gap (mm, default 10); new projects on, older ones off. connections: connection cut-backs follow the main member's face on skewed, raking, sloped or folded joints (square joints unchanged). A Fit / Mitre / Bevel on an end wins. Omit a value to keep it. Returns the settings and how many ends each cuts.",
+      input_schema: { type: 'object', properties: { autoCut: { type: 'boolean' }, gap: num, connections: { type: 'boolean' } } },
     },
     {
       name: 'add_stiffeners',
@@ -206,7 +214,7 @@ export const modellingModule: ToolModule = {
     },
     {
       name: 'get_modelling_info',
-      description: 'End preparations (kind, saw angles, cut length) of the given or selected members, plus every free / bent plate and stiffener and the named work planes.',
+      description: 'End preparations (kind, saw angles, cut length, face fits by connections or the auto-cut) of the given or selected members, the project end fitting, plus every free / bent plate and stiffener and the named work planes.',
       input_schema: { type: 'object', properties: { members: memberIds } },
     },
   ],
@@ -253,6 +261,22 @@ export const modellingModule: ToolModule = {
         r = fitEnd(p, String(input.member), (input.end as 'start' | 'end' | 'auto') ?? 'auto', String(input.to), Number(input.gap ?? 10), Boolean(input.cope));
       });
       return { end: r.end, cope: r.cope ?? null, members: prepSummary([String(input.member)]), warnings: prepWarnings([String(input.member)]) };
+    },
+    set_end_fitting: (input) => {
+      st().apply('End fitting', (p) => {
+        const a = autoCutSettings(p);
+        if (typeof input.autoCut === 'boolean') a.enabled = input.autoCut;
+        if (input.gap !== undefined) {
+          const g = Number(input.gap);
+          if (!Number.isFinite(g) || g < 0) throw new Error('gap must be a number ≥ 0 (mm).');
+          a.gap = g;
+        }
+        if (typeof input.connections === 'boolean') a.connections = input.connections;
+        p.settings.autoCut = a;
+      });
+      const p = st().project;
+      const n = endFitCounts(derived(p));
+      return { ...autoCutSettings(p), autoCutEnds: n.auto, autoCutAtAngle: n.autoAngled, connectionEndsAtAngle: n.connection };
     },
     add_stiffeners: (input) => {
       const ids = pickMembers(input);
@@ -385,7 +409,12 @@ export const modellingModule: ToolModule = {
       return {
         members: ids
           .filter((id) => p.members[id])
-          .map((id) => ({ ...prepSummary([id])[0], startPrep: p.members[id].startPrep ?? { kind: 'square' }, endPrep: p.members[id].endPrep ?? { kind: 'square' } })),
+          .map((id) => {
+            const f = dm.geoms.get(id)?.fits;
+            const fit = (e?: { to: Id; by: string; auto?: true; plane?: unknown }) => (e ? { to: e.to, by: e.by, angled: !!e.plane } : null);
+            return { ...prepSummary([id])[0], startPrep: p.members[id].startPrep ?? { kind: 'square' }, endPrep: p.members[id].endPrep ?? { kind: 'square' }, faceFit: { start: fit(f?.start), end: fit(f?.end) } };
+          }),
+        endFitting: { ...autoCutSettings(p), ...endFitCounts(dm) },
         plates: Object.values(p.plates ?? {}).map((pl) => {
           const pt = dm.partByRef.get(`p:${pl.id}`);
           return { id: pl.id, name: pl.name, kind: pl.kind, t: pl.t, mark: pt?.mark, assembly: pt?.assembly, weldedTo: pl.weldedTo ?? null, mass: pt ? Math.round(pt.mass * 100) / 100 : null, bends: pl.bends.length, holes: pl.holes.length };

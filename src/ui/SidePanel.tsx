@@ -28,6 +28,7 @@ import { clearMemberNormals, openOrientDialog } from './surfaceActions';
 import { FlipSideButtons, ModifyOpsSection } from './ModifyPanels';
 import { AssemblyProps } from './AssemblyPanels';
 import { changeProfile } from '../core/model/modify';
+import { EndFittingSection } from './EndFittingSection';
 
 export function SidePanel() {
   const panel = useStore((s) => s.sidePanel);
@@ -479,6 +480,7 @@ function ProjectProps() {
           <Select<Finish> value={s.defaultFinish} options={FINISHES} onChange={(v) => apply('Default finish', (p) => void (p.settings.defaultFinish = v))} />
         </Field>
       </div>
+      <EndFittingSection />
       <h4>Auto-assign rules</h4>
       <p className="muted">Applied by Members → Auto-assign. Layer rules win over role rules, role rules over direction rules.</p>
       {s.autoRules.map((r, i) => (

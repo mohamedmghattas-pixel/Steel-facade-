@@ -84,9 +84,12 @@ export async function loadIdbAutosave(): Promise<Project | null> {
 export function migrateProject(p: Project | null): Project | null {
   if (!p || typeof p !== 'object' || !p.nodes || !p.members) return null;
   const d = defaultSettings();
+  // End fitting: projects saved before it existed keep their member ends (auto-cut off); connection fits follow the main face.
+  const autoCut = p.settings?.autoCut ? { ...d.autoCut!, ...p.settings.autoCut } : { ...d.autoCut!, enabled: false };
   p.settings = {
     ...d,
     ...(p.settings ?? {}),
+    autoCut,
     assemblyPrefix: { ...d.assemblyPrefix, ...(p.settings?.assemblyPrefix ?? {}) },
     movement: { ...d.movement, ...(p.settings?.movement ?? {}) },
     galvBath: { ...d.galvBath, ...(p.settings?.galvBath ?? {}) },

@@ -6,6 +6,7 @@
 import type { EndPrep, Project } from '../model/types';
 import { polygonPerimeter } from '../model/geometry';
 import { uniqueAssemblies, uniqueParts, type DerivedModel, type Part } from '../derive/model';
+import type { EndCut } from '../geometry/endPrep';
 import { toCsv, type Row } from '../reports/bom';
 import { assemblyBatchId, assemblyPhaseId, batchName, connectionBatchId, partBatchId, phaseName } from './batches';
 import { assemblyDims, partDims, weldJoints, type Dims } from './geometry';
@@ -123,6 +124,17 @@ export interface MisExport {
 const r1 = (v: number) => Math.round(v * 10) / 10;
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
+/** A part's resolved end cut (end preparations, connection fits, auto-cut): kind, saw angles and the first cope. */
+function fromCut(c: EndCut): MisCut {
+  const r2 = (v: number) => Math.round(v * 100) / 100 || 0;
+  const out: MisCut = { kind: c.kind, angleWeb: r2(c.angleWeb), angleFlange: r2(c.angleFlange) };
+  if (c.copes[0]) {
+    out.copeDepth = Math.round(c.copes[0].depth * 10) / 10;
+    out.copeLength = Math.round(c.copes[0].length * 10) / 10;
+  }
+  return out;
+}
+
 function cutOf(prep: EndPrep | undefined): MisCut {
   if (!prep) return { kind: 'square', angleWeb: 0, angleFlange: 0 };
   const c: MisCut = { kind: prep.kind, angleWeb: prep.angleWeb ?? 0, angleFlange: prep.angleFlange ?? 0 };
@@ -189,11 +201,12 @@ export function misExport(p: Project, dm: DerivedModel): MisExport {
       mp.contourLength = r1(polygonPerimeter(part.outline ?? []));
       op({ op: 'thermal-cut', qty: 1, length: mp.contourLength, detail: `PL${part.thickness} ${Math.round(part.length)}×${Math.round(part.width)} contour` });
     } else {
-      mp.cuts = { start: cutOf(member?.startPrep), end: cutOf(member?.endPrep) };
+      // The cuts as derived (they include connection fits and the auto-cut); else the member's own preparations.
+      mp.cuts = part.ends ? { start: fromCut(part.ends.start), end: fromCut(part.ends.end) } : { start: cutOf(member?.startPrep), end: cutOf(member?.endPrep) };
       for (const end of ['start', 'end'] as const) {
         const c = mp.cuts[end];
         op({ op: 'saw', qty: 1, end, angleWeb: c.angleWeb, angleFlange: c.angleFlange, length: mp.length, detail: `${end} ${c.kind}${c.angleWeb || c.angleFlange ? ` web ${c.angleWeb}°, flange ${c.angleFlange}°` : ' 90°'}` });
-        if (c.kind === 'cope') op({ op: 'cope', qty: 1, end, length: c.copeLength, d: c.copeDepth, detail: `cope ${c.copeDepth ?? 0} deep × ${c.copeLength ?? 0} long` });
+        if (c.kind === 'cope' || c.copeDepth) op({ op: 'cope', qty: 1, end, length: c.copeLength, d: c.copeDepth, detail: `cope ${c.copeDepth ?? 0} deep × ${c.copeLength ?? 0} long` });
       }
     }
     for (const h of holes.round) op({ op: 'drill', qty: h.qty, d: h.d, detail: `Ø${h.d}` });

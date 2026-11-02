@@ -103,6 +103,8 @@ export function migrateProject(p: Project | null): Project | null {
     settings: { ...dd.settings, ...(p.drawings?.settings ?? {}), zoning: { ...dd.settings.zoning!, ...(p.drawings?.settings?.zoning ?? {}) } },
     revisions: p.drawings?.revisions ?? {},
   };
+  // Unfolded elevation of folded facades (added with the unfolded drawings): on unless switched off.
+  if (typeof p.drawings.settings.unfolded !== 'boolean') p.drawings.settings.unfolded = true;
   p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [], profileAssemblies: sanitizeProfileAssemblies(p.library?.profileAssemblies) };
   migrateTemplates(p);
   p.workPlanes ??= [];

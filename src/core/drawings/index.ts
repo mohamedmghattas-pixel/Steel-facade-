@@ -43,6 +43,19 @@ export {
   ERECTION_KINDS,
 } from './erection';
 export { cutDrawings, cutLetter, nextCutLetter, sectionFrame, GA_AXES } from './cuts';
+export {
+  UNFOLDED_ID,
+  development,
+  unfoldedDrawings,
+  unfoldedEnabled,
+  unfoldedItems,
+  unfoldedPlan,
+  type DevFold,
+  type DevSegment,
+  type Development,
+  type UnfoldedPlan,
+  type UnfoldedZone,
+} from './unfolded';
 export * from './edits';
 export { checkSheetLayout, MIN_TEXT, type LayoutIssue, type LayoutIssueKind } from './layoutCheck';
 export {

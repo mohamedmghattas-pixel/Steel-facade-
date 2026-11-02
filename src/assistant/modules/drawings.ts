@@ -25,6 +25,9 @@ import {
   resetEdits,
   sanitizeTemplate,
   sheetLabel,
+  UNFOLDED_ID,
+  unfoldedEnabled,
+  unfoldedPlan,
   unhideItem,
   zonePlanFor,
   zoningSettings,
@@ -139,6 +142,16 @@ export const drawingsModule: ToolModule = {
       input_schema: {
         type: 'object',
         properties: { action: { type: 'string', enum: ['list', 'anchor_schedule', 'export_csv', 'enable', 'disable'] }, limit: num },
+        required: ['action'],
+      },
+    },
+    {
+      name: 'unfolded_elevation',
+      description:
+        'Unfolded (developed) elevation of a folded, V-shaped, faceted or curved facade (GA sheet -GA-04, zoned like the GA when long): the facade planes laid out flat side by side in plan order, true lengths, fold lines with their angles. Actions: info (facade planes with developed widths, folds with angle / included angle / ridge or valley / developed position, developed length, scale, zones and sheets; planar facades have none), enable / disable (include it in the drawing set; default on).',
+      input_schema: {
+        type: 'object',
+        properties: { action: { type: 'string', enum: ['info', 'enable', 'disable'] } },
         required: ['action'],
       },
     },
@@ -311,6 +324,30 @@ export const drawingsModule: ToolModule = {
         return { exported: anchorRows(p, dm).length };
       }
       throw new Error(`Unknown action ${action}.`);
+    },
+
+    unfolded_elevation(input: Json) {
+      const action = String(input.action);
+      if (action === 'enable' || action === 'disable') {
+        st().apply(`Assistant: ${action} unfolded elevation`, (q) => void (q.drawings.settings.unfolded = action === 'enable'));
+      } else if (action !== 'info') throw new Error(`Unknown action ${action}.`);
+      const p = st().project;
+      const plan = unfoldedPlan(makeCtx(p, derived(p)));
+      const on = unfoldedEnabled(p);
+      if (!plan) return { enabled: on, sheets: [], note: on ? 'The facade is planar (one facade plane): no unfolded elevation.' : 'Switched off.' };
+      const dev = plan.dev;
+      const r = (v: number) => Math.round(v);
+      return {
+        enabled: on,
+        developedLength: r(dev.length),
+        looking: dev.looking,
+        facadePlanes: dev.segments.map((sg) => ({ name: sg.name, developedWidth: r(sg.width), tiltFromVertical: Math.round(sg.tilt * 10) / 10, assemblies: sg.source.assemblies.length })),
+        folds: dev.folds.map((f) => ({ fold: `F${f.index}`, between: `${dev.segments[f.left].name}–${dev.segments[f.right].name}`, at: r(f.station), angle: Math.round(f.angle * 10) / 10, included: Math.round(f.included * 10) / 10, seenAs: f.ridge ? 'ridge' : 'valley' })),
+        divided: plan.zones.length > 0,
+        zoneScale: plan.zones.length ? `1:${plan.den}` : null,
+        reason: plan.reason,
+        sheets: sheetIndex().filter((d) => d.id === UNFOLDED_ID || d.id.startsWith(`${UNFOLDED_ID}-z`)).map(summary),
+      };
     },
 
     drawing_layout(input: Json) {

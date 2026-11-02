@@ -48,7 +48,7 @@ export function clipPolyRect(poly: Vec2[], r: Rect): Vec2[] {
 }
 
 /** Segment a–b clipped to a rectangle, or null. */
-function clipSeg(a: Vec2, b: Vec2, r: Rect): [Vec2, Vec2] | null {
+export function clipSeg(a: Vec2, b: Vec2, r: Rect): [Vec2, Vec2] | null {
   let t0 = 0;
   let t1 = 1;
   const dx = b.x - a.x;

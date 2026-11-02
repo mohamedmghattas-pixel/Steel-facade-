@@ -11,6 +11,7 @@ import { closedByWelding, depHash, type DrawCtx, type PlanItem } from './compose
 import { cutItems } from './cuts';
 import { anchorItems, anchorRowsFor, sequenceItems, setoutGroupsFor, setoutItems } from './erection';
 import { zonePlanForSteps } from './zoning';
+import { UNFOLDED_ID, unfoldedItems, unfoldedPlanSteps } from './unfolded';
 
 /** What an assembly drawing shows: the assembly, its parts, its quantity and the shop bolts of its joints. */
 function assemblyDep(ctx: DrawCtx, a: Assembly, qty: number): string {
@@ -32,11 +33,14 @@ export interface DrawingFamily {
   prepare?: () => Generator<unknown, unknown>;
   /** Its drawings show the whole model (no dependency signature of their own): made again after every model edit. */
   whole?: boolean;
+  /** Its drawings are as slow to make as the GA's (large views), though keyed by what they show: made last in background checks. */
+  heavy?: boolean;
 }
 
 /**
  * The drawing families of the set except the register, in register order: GA
- * front and plan (with their zone sheets), section and detail sheets of the GA
+ * front and plan (with their zone sheets), the unfolded elevation of a folded
+ * facade (with its zone sheets), section and detail sheets of the GA
  * cuts, erection drawings (bracket setting-out plans, anchor schedules, erection
  * sequences), one drawing per unique assembly and one per unique part.
  */
@@ -53,6 +57,8 @@ export function drawingFamilies(ctx: DrawCtx): DrawingFamily[] {
   return [
     ga('front'),
     ga('plan'),
+    // Unfolded (developed) elevation of a folded facade (none for planar facades or when switched off).
+    { name: 'unfolded', has: (id) => id === UNFOLDED_ID || id.startsWith(`${UNFOLDED_ID}-z`), items: () => unfoldedItems(ctx), prepare: () => unfoldedPlanSteps(ctx), heavy: true },
     { name: 'cuts', has: (id) => id.startsWith('cut-'), items: () => cutItems(ctx), whole: true },
     { name: 'setout', has: (id) => id.startsWith('setout-'), items: () => (erection ? setoutItems(ctx) : []), prepare: () => (erection ? setoutGroupsFor(ctx) : [][Symbol.iterator]()) as Generator<unknown, unknown> },
     { name: 'anchors', has: (id) => id.startsWith('anchors-'), items: () => (erection ? anchorItems(ctx) : []), prepare: () => (erection ? anchorRowsFor(ctx) : [][Symbol.iterator]()) as Generator<unknown, unknown> },

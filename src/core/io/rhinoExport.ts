@@ -189,7 +189,7 @@ export function exportRhino3dm(rhino: RhinoModule, p: Project, dm: DerivedModel,
     // Wire lines.
     if (o.wireframe !== false) {
       const partOfMember = new Map<string, Part>();
-      for (const part of dm.parts) if (part.kind === 'member' && part.memberId) partOfMember.set(part.memberId, part);
+      for (const part of dm.parts) if (part.kind === 'member' && part.memberId && (!part.component || part.component.main)) partOfMember.set(part.memberId, part);
       for (const m of Object.values(p.members)) {
         const a = p.nodes[m.start];
         const b = p.nodes[m.end];

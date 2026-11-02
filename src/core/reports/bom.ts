@@ -3,7 +3,7 @@
  * or a small multi-sheet XLSX workbook.
  */
 import type { Project } from '../model/types';
-import { uniqueAssemblies, uniqueParts, type DerivedModel } from '../derive/model';
+import { uniqueAssemblies, uniqueParts, type AccessoryItem, type DerivedModel } from '../derive/model';
 import { zip } from '../io/zip';
 
 export type Row = (string | number)[];
@@ -13,6 +13,13 @@ export interface BomTables {
   assemblies: Row[];
   profiles: Row[];
   bolts: Row[];
+  /**
+   * Listed-only components of composite members (gaskets in metres, packers in
+   * pieces): per assembly mark, and totals per profile (the gasket list).
+   * Header only when the model has none.
+   */
+  accessories: Row[];
+  accessoryTotals: Row[];
   totals: { weight: number; surface: number; parts: number; assemblies: number; bolts: number };
 }
 
@@ -76,11 +83,14 @@ export function buildBom(p: Project, dm: DerivedModel): BomTables {
     bolts.push([b.size, b.grade, b.kind === 'anchor' ? 'Anchor' : 'Bolt + nut + 2 washers', b.length, b.qty]);
   }
 
+  const { accessories, accessoryTotals } = accessoryTables(dm);
   return {
     parts,
     assemblies,
     profiles,
     bolts,
+    accessories,
+    accessoryTotals,
     totals: {
       weight: dm.parts.reduce((s, pt) => s + pt.mass, 0),
       surface: dm.parts.reduce((s, pt) => s + pt.surface, 0),
@@ -90,6 +100,39 @@ export function buildBom(p: Project, dm: DerivedModel): BomTables {
     },
   };
 }
+
+const RULE = (r: AccessoryItem['rule']) =>
+  r.kind === 'percent' ? `L ${r.percent >= 0 ? '+' : ''}${r.percent} %` : r.kind === 'pieces' ? (r.at === 'nodes' ? `${r.length} mm at nodes` : `${r.length} mm @ ${r.spacing ?? 600}`) : `L ${r.start ?? 0} / ${r.end ?? 0}`;
+
+/** Accessories per assembly mark (one row per component) and totals per profile and material. */
+export function accessoryTables(dm: DerivedModel): { accessories: Row[]; accessoryTotals: Row[] } {
+  const accessories: Row[] = [['Assembly', 'Assemblies', 'Item', 'Kind', 'Profile', 'Material', 'Unit', 'Qty per assembly', 'Total qty', 'Length rule', 'Total weight (kg)']];
+  const accessoryTotals: Row[] = [['Profile', 'Kind', 'Material', 'Unit', 'Total qty', 'Total weight (kg)']];
+  const list = dm.accessories ?? [];
+  if (!list.length) return { accessories, accessoryTotals };
+  const asmQty = new Map(uniqueAssemblies(dm).map((u) => [u.assembly.mark, u.qty]));
+  // One instance per mark stands for every identical assembly (same signature).
+  const firstMain = new Map<string, string>();
+  for (const a of dm.assemblies) if (!firstMain.has(a.mark)) firstMain.set(a.mark, a.main);
+  const rows = list.filter((x) => firstMain.get(x.assembly) === x.main).sort((a, b) => byNum(a.assembly, b.assembly) || a.key.localeCompare(b.key, undefined, { numeric: true }));
+  for (const x of rows) {
+    const n = asmQty.get(x.assembly) ?? 1;
+    const q = x.unit === 'm' ? r2(x.qty) : x.qty;
+    accessories.push([x.assembly, n, x.name, x.kind, x.profile, x.material, x.unit, q, x.unit === 'm' ? r2(x.qty * n) : x.qty * n, RULE(x.rule), r2(x.mass * n)]);
+  }
+  const tot = new Map<string, { profile: string; kind: string; material: string; unit: string; qty: number; kg: number }>();
+  for (const x of list) {
+    const k = `${x.profile}|${x.material}|${x.unit}`;
+    const e = tot.get(k) ?? { profile: x.profile, kind: x.kind, material: x.material, unit: x.unit, qty: 0, kg: 0 };
+    e.qty += x.qty;
+    e.kg += x.mass;
+    tot.set(k, e);
+  }
+  for (const e of [...tot.values()].sort((a, b) => a.kind.localeCompare(b.kind) || byNum(a.profile, b.profile))) accessoryTotals.push([e.profile, e.kind, e.material, e.unit, e.unit === 'm' ? r2(e.qty) : e.qty, r2(e.kg)]);
+  return { accessories, accessoryTotals };
+}
+
+const byNum = (a: string, b: string) => a.localeCompare(b, undefined, { numeric: true });
 
 /** RFC 4180 CSV. */
 export function toCsv(rows: Row[]): string {
@@ -223,6 +266,13 @@ export function bomToXlsx(b: BomTables, p: Project): Uint8Array {
     { name: 'Assemblies', rows: b.assemblies },
     { name: 'Profiles', rows: b.profiles },
     { name: 'Bolts', rows: b.bolts },
+    // Composite members only: gaskets, packers (per assembly and totals).
+    ...(b.accessories.length > 1
+      ? [
+          { name: 'Accessories', rows: b.accessories },
+          { name: 'Gasket list', rows: b.accessoryTotals },
+        ]
+      : []),
   ]);
 }
 

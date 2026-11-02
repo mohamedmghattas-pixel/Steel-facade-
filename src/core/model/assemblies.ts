@@ -166,7 +166,8 @@ export function renameAssembly(p: Project, groupId: Id, name: string | null) {
 export function groupForAssembly(p: Project, dm: DerivedModel, a: Assembly): Id {
   if (a.group && groupById(p, a.group)) return a.group;
   const parts = a.parts.map((r) => dm.partByRef.get(r)).filter((pt) => !!pt);
-  const members = parts.filter((pt) => pt.kind === 'member').map((pt) => pt.memberId!);
+  // One entry per member (a composite member has a part per component).
+  const members = [...new Set(parts.filter((pt) => pt.kind === 'member').map((pt) => pt.memberId!))];
   const plates = parts.filter((pt) => pt.plateId).map((pt) => pt.plateId!);
   const main = dm.partByRef.get(a.main);
   if (!members.length && !plates.length) fail(`Assembly ${a.mark} has no member or plate to group (connection parts only) — add it to a member's assembly instead.`);

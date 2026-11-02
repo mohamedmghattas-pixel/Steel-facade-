@@ -324,6 +324,9 @@ downloads the current profile.
 
 ## 6. Profiles by role (mullions vs transoms)
 
+A role can also carry a **profile assembly** (a composite section: several profiles on one base
+point, uploaded from an assembly detail DXF); see [PROFILE_ASSEMBLIES.md](PROFILE_ASSEMBLIES.md).
+
 `ProjectSettings.roleProfiles: Partial<Record<MemberRole, RoleProfile>>`:
 
 ```ts

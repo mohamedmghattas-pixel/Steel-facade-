@@ -25,7 +25,9 @@ joint*, a bracket's plates welded together. Derivation unions parts over the
 shop welds (`weldedTo` and connection `welds`), see
 [CONNECTION_GEOMETRY.md §8](CONNECTION_GEOMETRY.md). Bolted parts stay separate
 assemblies: a transom on angle cleats is three assemblies (the transom and two
-loose cleats). Nothing changes for projects that never group by hand.
+loose cleats). Nothing changes for projects that never group by hand. A member carrying a
+profile assembly (composite section) is one assembly of its component parts, the
+main component its main part ([PROFILE_ASSEMBLIES.md](PROFILE_ASSEMBLIES.md)).
 
 **Manual.** You can also group members, free plates and connections into one
 shipping assembly (a ladder of a mullion with its transoms, a pre-assembled

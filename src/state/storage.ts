@@ -2,6 +2,7 @@ import type { Project } from '../core/model/types';
 import { defaultDrawingSet, defaultSettings, defaultWireframeSettings } from '../core/model/ops';
 
 import { zip } from '../core/io/zip';
+import { sanitizeProfileAssemblies } from '../core/library/profileAssembly';
 import { defaultPackageSettings, exportTemplates, migrateExportTemplates } from '../core/export/template';
 import { extensionOf, hostCapability, HOST_SAVE_EXTENSIONS, inClaudeHost, type HostDownloads } from '../platform/claudeHost';
 
@@ -102,7 +103,7 @@ export function migrateProject(p: Project | null): Project | null {
     settings: { ...dd.settings, ...(p.drawings?.settings ?? {}), zoning: { ...dd.settings.zoning!, ...(p.drawings?.settings?.zoning ?? {}) } },
     revisions: p.drawings?.revisions ?? {},
   };
-  p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [] };
+  p.library = { presets: p.library?.presets ?? [], templates: p.library?.templates ?? [], profiles: p.library?.profiles ?? [], profileAssemblies: sanitizeProfileAssemblies(p.library?.profileAssemblies) };
   migrateTemplates(p);
   p.workPlanes ??= [];
   p.plates ??= {};

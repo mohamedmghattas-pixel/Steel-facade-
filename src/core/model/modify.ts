@@ -1449,6 +1449,8 @@ export function changeProfile(p: Project, memberIds: Id[], profile: string | nul
       warnings.push(`${label(p, m)}: ${prof?.name ?? 'the new profile'} has no insertion point — the wire line sits on the nearest grid point.`);
     }
     m.profile = prof?.name ?? null;
+    // A single profile replaces a composite section (profile assembly).
+    delete m.profileAssembly;
     if (prof?.material) m.material = prof.material;
   }
   return result(ids, `${prof ? `Profile ${prof.name}` : 'No profile'} on ${ids.length} member${ids.length === 1 ? '' : 's'}.`, uniq(warnings));
@@ -1552,7 +1554,11 @@ export function matchProperties(p: Project, sourceId: Id, targetIds: Id[], field
   let skipped = 0;
   for (const id of ids) {
     const m = p.members[id];
-    if (f.has('profile')) m.profile = src.profile;
+    if (f.has('profile')) {
+      m.profile = src.profile;
+      if (src.profileAssembly) m.profileAssembly = src.profileAssembly;
+      else delete m.profileAssembly;
+    }
     if (f.has('material')) m.material = src.material;
     if (f.has('finish')) m.finish = src.finish;
     if (f.has('rotation')) m.rotation = src.rotation;

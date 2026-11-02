@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import type { Id, Project, Vec3, WorkPlane } from '../core/model/types';
-import type { DerivedModel, Part } from '../core/derive/model';
+import { accessorySolids, type DerivedModel, type Part } from '../core/derive/model';
+import { materialClass } from '../core/library/profileAssembly';
 import { planeAxes, planeToWorld, worldToPlane, lerp, dist, add, sub, scale, normalize, madd } from '../core/model/geometry';
 import type { Selection, SnapSettings, Tool, ViewName } from '../state/store';
 import {
@@ -82,6 +83,8 @@ export interface PickHit {
 
 /** Parts of selected assemblies (Selection.assemblies), and their main parts. */
 export const ASSEMBLY_COLOR = 0xff5aa8;
+/** Components of composite members (profile assemblies) by material class; steel keeps the role colour. */
+const COMPONENT_COLORS: Record<'stainless' | 'aluminium' | 'rubber' | 'plastic', number> = { stainless: 0x9fb0c2, aluminium: 0xc3ccd6, rubber: 0x34383e, plastic: 0xe2a63c };
 export const ASSEMBLY_MAIN_COLOR = 0xd61f7a;
 
 export interface Display {
@@ -172,6 +175,8 @@ export class Viewer {
   private connItems = new Map<Id, SolidItem[]>();
   /** Free / bent plates and stiffeners (Project.plates): modelled objects drawn with the members. */
   private plateItems = new Map<Id, SolidItem[]>();
+  /** Accessory solids (gaskets …) of each composite member, by its main part ref. */
+  private accRefs = new Map<string, string[]>();
   /** Every drawn part by part ref (assembly highlight, isolation, focus). */
   private refItems = new Map<string, SolidItem[]>();
   /** Parts of the selected assemblies and their main parts (painted in the assembly colours). */
@@ -440,7 +445,14 @@ export class Viewer {
     const edgesOn = dm.parts.length <= EDGE_PART_LIMIT;
     const coarse = dm.parts.length > COARSE_PART_LIMIT;
     const groups = new Map<string, { key: string; parts: Part[] }>();
-    for (const part of dm.parts) {
+    // Accessories of composite members (gaskets, packers) are drawn with their member.
+    const acc = accessorySolids(dm);
+    this.accRefs = new Map();
+    for (const a of dm.accessories ?? []) {
+      const refs = a.pieces.map((_, i) => `${a.ref}:${i + 1}`);
+      this.accRefs.set(a.main, [...(this.accRefs.get(a.main) ?? []), ...refs]);
+    }
+    for (const part of acc.length ? [...dm.parts, ...acc] : dm.parts) {
       if (part.kind === 'plate' ? !part.outline?.length : !part.shape) continue;
       const key = partGeometryKey(part, part.memberId ? p.members[part.memberId] : undefined);
       const g = groups.get(key);
@@ -625,7 +637,7 @@ export class Viewer {
     }
     this.labelsBuilt = true;
     if (!this.dm || !this.display.labels) return;
-    const members = this.dm.parts.filter((pt) => pt.kind === 'member');
+    const members = this.dm.parts.filter((pt) => pt.kind === 'member' && (!pt.component || pt.component.main));
     const sel = new Set(this.selection.members);
     const list = members.length <= LABEL_LIMIT ? members : members.filter((pt) => sel.has(pt.memberId!));
     for (const part of list) {
@@ -652,7 +664,12 @@ export class Viewer {
     this.asmMains = new Set(sel.assemblies ?? []);
     const out = new Set<string>();
     if (!this.asmMains.size || !this.dm) return out;
-    for (const a of this.dm.assemblies) if (this.asmMains.has(a.main)) for (const r of a.parts) out.add(r);
+    for (const a of this.dm.assemblies)
+      if (this.asmMains.has(a.main))
+        for (const r of a.parts) {
+          out.add(r);
+          for (const x of this.accRefs.get(r) ?? []) out.add(x);
+        }
     return out;
   }
 
@@ -673,6 +690,9 @@ export class Viewer {
       const key = mode === 'phase' ? it.part.phase : mode === 'batch' ? it.part.batch : it.part.zone;
       return this.groupColor(key);
     }
+    // Components of composite members by material: steel keeps the role colour.
+    const k = it.part.component ? materialClass(it.part.material) : 'steel';
+    if (k !== 'steel') return COMPONENT_COLORS[k];
     return ROLE_COLORS[it.role] ?? 0x8899aa;
   }
 
@@ -778,7 +798,7 @@ export class Viewer {
       o.matrixWorldNeedsUpdate = true;
       this.isoGroup.add(o);
     };
-    for (const r of iso) {
+    for (const r of [...iso].flatMap((x) => [x, ...(this.accRefs.get(x) ?? [])])) {
       for (const it of this.refItems.get(r) ?? []) {
         (it.kind === 'member' ? owners.members : it.kind === 'plate' ? owners.plates : owners.connections).add(it.id);
         place(new THREE.Mesh(it.geometry, matFor(this.colorOf(it))), it.matrix);

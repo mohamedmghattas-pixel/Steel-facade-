@@ -10,11 +10,18 @@ import type { Id, Member, MemberRole, Project, RoleProfile } from './types';
 import { MEMBER_ROLES } from './types';
 import { getProfile } from '../library/profiles';
 import { findMaterial } from '../library/materials';
+import { findProfileAssembly, mainComponent } from '../library/profileAssembly';
 
 /** The role profile of a role, when one is set and its profile exists in the catalogue. */
 export function roleProfile(p: Project, role: MemberRole): RoleProfile | undefined {
   const rp = p.settings.roleProfiles?.[role];
-  return rp && getProfile(rp.profile) ? rp : undefined;
+  if (!rp || !getProfile(rp.profile)) return undefined;
+  // A profile assembly that no longer exists leaves the main profile.
+  if (rp.assembly && !findProfileAssembly(p, rp.assembly)) {
+    const { assembly: _a, ...rest } = rp;
+    return rest;
+  }
+  return rp;
 }
 
 /**
@@ -24,6 +31,8 @@ export function roleProfile(p: Project, role: MemberRole): RoleProfile | undefin
 export function roleProfilePatch(rp: RoleProfile): Partial<Member> {
   const prof = getProfile(rp.profile);
   const patch: Partial<Member> = { profile: prof?.name ?? rp.profile };
+  // A profile assembly (composite section) rides on its main profile.
+  if (rp.assembly) patch.profileAssembly = rp.assembly;
   if (rp.rotation !== undefined && Number.isFinite(rp.rotation)) patch.rotation = rp.rotation;
   if (rp.alignMode) patch.alignMode = rp.alignMode;
   const mat = findMaterial(rp.material ?? prof?.material);
@@ -56,9 +65,10 @@ export function assignProfilesByRole(p: Project, memberIds?: Iterable<Id>, roles
     if (!m) continue;
     const patch = patches.get(m.role);
     if (!patch) continue;
-    const before = JSON.stringify([m.profile, m.rotation, m.alignMode, m.material]);
+    const before = JSON.stringify([m.profile, m.rotation, m.alignMode, m.material, m.profileAssembly]);
     Object.assign(m, patch);
-    if (JSON.stringify([m.profile, m.rotation, m.alignMode, m.material]) !== before) changed++;
+    if (!patch.profileAssembly) delete m.profileAssembly;
+    if (JSON.stringify([m.profile, m.rotation, m.alignMode, m.material, m.profileAssembly]) !== before) changed++;
   }
   return changed;
 }
@@ -70,10 +80,15 @@ export function setRoleProfile(p: Project, role: MemberRole, rp: RoleProfile | n
     delete p.settings.roleProfiles[role];
     return;
   }
-  const prof = getProfile(rp.profile);
-  if (!prof) throw new Error(`Unknown profile "${rp.profile}"`);
+  let profile = rp.profile;
+  const asm = rp.assembly ? findProfileAssembly(p, rp.assembly) : undefined;
+  if (rp.assembly && !asm) throw new Error(`Unknown profile assembly "${rp.assembly}"`);
+  if (asm) profile = mainComponent(asm)?.profile ?? profile;
+  const prof = getProfile(profile);
+  if (!prof) throw new Error(`Unknown profile "${profile}"`);
   if (rp.material !== undefined && !findMaterial(rp.material)) throw new Error(`Unknown material "${rp.material}"`);
   const out: RoleProfile = { profile: prof.name };
+  if (asm) out.assembly = asm.id;
   if (rp.rotation !== undefined) out.rotation = rp.rotation;
   if (rp.alignMode) out.alignMode = rp.alignMode;
   if (rp.material) out.material = findMaterial(rp.material)!.name;
@@ -113,6 +128,6 @@ export function membersOffRoleProfile(p: Project, role: MemberRole): Id[] {
   if (!rp) return [];
   const patch = roleProfilePatch(rp);
   return Object.values(p.members)
-    .filter((m) => m.role === role && (Object.keys(patch) as (keyof Member)[]).some((k) => m[k] !== patch[k]))
+    .filter((m) => m.role === role && ((Object.keys(patch) as (keyof Member)[]).some((k) => m[k] !== patch[k]) || (!patch.profileAssembly && !!m.profileAssembly)))
     .map((m) => m.id);
 }

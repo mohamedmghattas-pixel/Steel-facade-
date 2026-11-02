@@ -78,9 +78,11 @@ const scaleOf = (M: M2) => Math.sqrt(Math.abs(det2(M)));
 
 const INSERT_LAYER = /^(ins|ref$|reference$)/i;
 
-interface Piece {
+export interface Piece {
   pts: PolyVertex[];
   layer: string;
+  /** Top-level block (INSERT) the entity came from. */
+  block?: string;
 }
 interface Text {
   p: Vec2;
@@ -107,7 +109,8 @@ function ocs(e: DxfEntity): M2 | null {
   const nz = gNum(e, 230, 1);
   const nx = gNum(e, 210, 0);
   const ny = gNum(e, 220, 0);
-  if (Math.abs(nx) > 1e-6 || Math.abs(ny) > 1e-6) return null;
+  // Extrusions within 1e-4 of ±Z (CAD noise, e.g. 2·10⁻⁶ on mirrored block inserts) are planar.
+  if (Math.abs(nx) > 1e-4 || Math.abs(ny) > 1e-4) return null;
   return nz < 0 ? [-1, 0, 0, 0, 1, 0] : I2;
 }
 
@@ -135,17 +138,28 @@ function mapLoop(pts: PolyVertex[], M: M2): PolyVertex[] {
   });
 }
 
-interface Collected {
+/** Planar 2D geometry of a DXF (model space, blocks exploded), in millimetres. */
+export interface Collected {
   closed: Piece[];
   open: Piece[];
-  circles: { c: Vec2; r: number; layer: string }[];
-  points: { p: Vec2; layer: string }[];
-  lines: { a: Vec2; b: Vec2; layer: string }[];
+  circles: { c: Vec2; r: number; layer: string; block?: string }[];
+  points: { p: Vec2; layer: string; block?: string }[];
+  lines: { a: Vec2; b: Vec2; layer: string; block?: string }[];
   texts: Text[];
+  /** Every INSERT (nested ones too): block name, insertion point, layer, rotation (deg), scale; `parent` = the top-level block it sits in. */
+  inserts: { name: string; p: Vec2; layer: string; rot: number; sx: number; sy: number; parent?: string }[];
   skipped: Record<string, number>;
 }
 
-function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string | null, depth: number, out: Collected) {
+/** Collect the planar geometry of a DXF document (millimetres per drawing unit `k`). */
+export function collectDxf2d(doc: DxfDocument, k: number): Collected {
+  const col: Collected = { closed: [], open: [], circles: [], points: [], lines: [], texts: [], inserts: [], skipped: {} };
+  collect(doc, doc.entities, [k, 0, 0, 0, k, 0], null, 0, col);
+  return col;
+}
+
+function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string | null, depth: number, out: Collected, blockTag?: string) {
+  const block = blockTag;
   const skip = (t: string) => (out.skipped[t] = (out.skipped[t] ?? 0) + 1);
   for (const e of ents) {
     if (gNum(e, 67, 0) === 1) continue; // paper space
@@ -162,7 +176,7 @@ function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string
         const pts = mapLoop(lwVertices(e), W);
         if (pts.length < 2) break;
         const closed = (gNum(e, 70) & 1) === 1;
-        (closed ? out.closed : out.open).push({ pts, layer });
+        (closed ? out.closed : out.open).push({ pts, layer, block });
         break;
       }
       case 'POLYLINE': {
@@ -179,14 +193,14 @@ function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string
           });
         const pts = mapLoop(raw, W);
         if (pts.length < 2) break;
-        ((flags & 1) === 1 ? out.closed : out.open).push({ pts, layer });
+        ((flags & 1) === 1 ? out.closed : out.open).push({ pts, layer, block });
         break;
       }
       case 'LINE': {
         const a = ap2(W, gNum(e, 10), gNum(e, 20));
         const b = ap2(W, gNum(e, 11), gNum(e, 21));
-        out.lines.push({ a, b, layer });
-        out.open.push({ pts: [a, b], layer });
+        out.lines.push({ a, b, layer, block });
+        out.open.push({ pts: [a, b], layer, block });
         break;
       }
       case 'ARC': {
@@ -200,19 +214,19 @@ function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string
         const p0 = { x: c.x + r * Math.cos(a0), y: c.y + r * Math.sin(a0) };
         const p1 = { x: c.x + r * Math.cos(a1), y: c.y + r * Math.sin(a1) };
         if (sw > 2 * Math.PI - 1e-9) {
-          out.circles.push({ c: ap2(W, c.x, c.y), r: r * scaleOf(W), layer });
+          out.circles.push({ c: ap2(W, c.x, c.y), r: r * scaleOf(W), layer, block });
           break;
         }
-        out.open.push({ pts: mapLoop([{ ...p0, b: Math.tan(sw / 4) }, p1], W), layer });
+        out.open.push({ pts: mapLoop([{ ...p0, b: Math.tan(sw / 4) }, p1], W), layer, block });
         break;
       }
       case 'CIRCLE': {
         const r = gNum(e, 40);
-        if (r > 0) out.circles.push({ c: ap2(W, gNum(e, 10), gNum(e, 20)), r: r * scaleOf(W), layer });
+        if (r > 0) out.circles.push({ c: ap2(W, gNum(e, 10), gNum(e, 20)), r: r * scaleOf(W), layer, block });
         break;
       }
       case 'POINT':
-        out.points.push({ p: ap2(W, gNum(e, 10), gNum(e, 20)), layer });
+        out.points.push({ p: ap2(W, gNum(e, 10), gNum(e, 20)), layer, block });
         break;
       case 'TEXT':
       case 'MTEXT': {
@@ -237,7 +251,8 @@ function collect(doc: DxfDocument, ents: DxfEntity[], M: M2, parentLayer: string
         const rot = (gNum(e, 50) * Math.PI) / 180;
         const [c, s] = [Math.cos(rot), Math.sin(rot)];
         const local: M2 = mul2(mul2([c, -s, ins.x, s, c, ins.y], [sx, 0, 0, 0, sy, 0]), [1, 0, -block.base.x, 0, 1, -block.base.y]);
-        collect(doc, block.entities, mul2(W, local), layer, depth + 1, out);
+        out.inserts.push({ name: block.name, p: ap2(W, ins.x, ins.y), layer, rot: gNum(e, 50), sx: sx * (det2(W) < 0 ? -1 : 1), sy, ...(blockTag ? { parent: blockTag } : {}) });
+        collect(doc, block.entities, mul2(W, local), layer, depth + 1, out, blockTag ?? block.name);
         break;
       }
       case 'SPLINE':
@@ -269,7 +284,7 @@ function reverseOpen(pts: PolyVertex[]): PolyVertex[] {
 }
 
 /** Join open pieces end to end into closed loops (tolerance in drawing units). Returns loops and the number left open. */
-function chain(pieces: Piece[], tol: number): { loops: Piece[]; open: number } {
+export function chain(pieces: Piece[], tol: number): { loops: Piece[]; open: number } {
   const left = pieces.map((p) => ({ ...p, pts: p.pts.map((v) => ({ ...v })) }));
   const loops: Piece[] = [];
   let open = 0;
@@ -288,7 +303,7 @@ function chain(pieces: Piece[], tol: number): { loops: Piece[]; open: number } {
       pts = [...pts.slice(0, -1), next[0], ...next.slice(1)];
       closed = near(pts[0], pts[pts.length - 1], tol) && pts.length > 2;
     }
-    if (closed) loops.push({ pts: pts.slice(0, -1), layer: cur.layer });
+    if (closed) loops.push({ pts: pts.slice(0, -1), layer: cur.layer, ...(cur.block ? { block: cur.block } : {}) });
     else open++;
   }
   return { loops, open };
@@ -309,8 +324,7 @@ export function parseProfileDxf(text: string, opts: DxfProfileOptions = {}): Dxf
   const sug = suggestedUnitScale(doc.insunits, doc.measurement);
   const k = opts.unitScale && opts.unitScale > 0 ? opts.unitScale : sug.scale;
   const notes: string[] = [];
-  const col: Collected = { closed: [], open: [], circles: [], points: [], lines: [], texts: [], skipped: {} };
-  collect(doc, doc.entities, [k, 0, 0, 0, k, 0], null, 0, col);
+  const col = collectDxf2d(doc, k);
   for (const [t, n] of Object.entries(col.skipped)) notes.push(`${n} ${t} entit${n === 1 ? 'y' : 'ies'} not read.`);
 
   // Insertion markers on INSERT / INS / REF layers.
@@ -429,7 +443,7 @@ export function parseProfileDxf(text: string, opts: DxfProfileOptions = {}): Dxf
   return { profiles: found, notes, unitScale: k, unitSource: opts.unitScale && opts.unitScale > 0 ? 'user' : sug.source };
 }
 
-function crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | null {
+export function crossing(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 | null {
   const r = { x: b.x - a.x, y: b.y - a.y };
   const s = { x: d.x - c.x, y: d.y - c.y };
   const den = r.x * s.y - r.y * s.x;

@@ -93,13 +93,16 @@ export function flattenLoop(pts: readonly PolyVertex[], maxStepDeg = 6): Vec2[] 
     const ts = new Set<number>();
     const k = Math.max(1, Math.ceil(S / step - 1e-9));
     for (let j = 1; j < k; j++) ts.add((S * j) / k);
-    // Quadrant crossings: a0 + dir·t = m·π/2.
+    // Quadrant crossings: a0 + dir·t = m·π/2. A crossing within 0.1 µm of an arc end
+    // (drawing noise: a fillet starting at 269.99999°) is the end itself, so no
+    // sub-micron edge is created next to it.
     const half = Math.PI / 2;
+    const tEnd = Math.max(1e-9, 1e-4 / a.r);
     const first = dir > 0 ? Math.floor(a.a0 / half) + 1 : Math.ceil(a.a0 / half) - 1;
     for (let m = first; ; m += dir) {
       const t = (m * half - a.a0) * dir;
-      if (t >= S - 1e-9) break;
-      if (t > 1e-9) ts.add(t);
+      if (t >= S - tEnd) break;
+      if (t > tEnd) ts.add(t);
       if (Math.abs(m) > 1e6) break;
     }
     for (const t of [...ts].sort((u, v) => u - v)) {

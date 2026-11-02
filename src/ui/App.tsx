@@ -12,6 +12,7 @@ import { Dialogs } from './dialogs/Dialogs';
 import { AskDialog } from './ask';
 import { ProfileSketcherHost } from './ProfileSketcher';
 import { ProfileImportHost } from './ProfileImportDialog';
+import { ProfileAssemblyHost } from './ProfileAssemblyDialog';
 import { deleteSelection, setTool } from './actions';
 import { escapeTool, toolEnter } from './modifyTools';
 import { ModifyContextMenu, closeModifyMenu, useModifyMenu } from './ModifyPanels';
@@ -45,6 +46,7 @@ export function App() {
       <StatusBar />
       <Dialogs />
       <ProfileImportHost />
+      <ProfileAssemblyHost />
       <ProfileSketcherHost />
       <ModifyContextMenu />
       <PartContextMenu />

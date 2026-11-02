@@ -181,7 +181,7 @@ export function createProject(name = 'New facade project'): Project {
     underlays: [],
     settings: defaultSettings(),
     drawings: defaultDrawingSet(),
-    library: { presets: [], templates: [], profiles: [] },
+    library: { presets: [], templates: [], profiles: [], profileAssemblies: [] },
     workPlanes: [],
     plates: {},
     survey: { points: [], matchRadius: 300 },

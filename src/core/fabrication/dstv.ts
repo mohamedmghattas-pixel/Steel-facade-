@@ -44,6 +44,7 @@ import { shapeBox, shapeOutline, type Shape } from '../library/shapes';
 import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
 import { flatPlate, markPosition } from './plateDxf';
 import { fabSettings } from './settings';
+import { isNonSteelComponent } from './extrusions';
 
 const f = (n: number, w = 10) => n.toFixed(2).padStart(w);
 /** DSTV saw angle range. */
@@ -288,9 +289,20 @@ export function notchedRect(L: number, H: number, notches: { x0: number; x1: num
   return pts.filter((q, i) => i === 0 || Math.hypot(q.x - pts[i - 1].x, q.y - pts[i - 1].y) > 1e-6);
 }
 
-/** One NC1 file per unique part mark. */
+/**
+ * Whether a part gets an NC1 file: every part, except aluminium / non-steel
+ * components of composite members unless the fabrication setting
+ * `dstvAluminium` is on (they get the extrusion cutting list instead).
+ */
+export function hasDstv(p: Project, part: Part): boolean {
+  return !isNonSteelComponent(part) || !!fabSettings(p).dstvAluminium;
+}
+
+/** One NC1 file per unique part mark (see hasDstv). */
 export function exportDstvAll(p: Project, dm: DerivedModel, opts: DstvOptions = {}): { name: string; content: string }[] {
-  return uniqueParts(dm).map(({ part, qty }) => ({ name: `${part.mark}.nc1`, content: partToDstv(part, qty, p, opts) }));
+  return uniqueParts(dm)
+    .filter(({ part }) => hasDstv(p, part))
+    .map(({ part, qty }) => ({ name: `${part.mark}.nc1`, content: partToDstv(part, qty, p, opts) }));
 }
 
 /** NC1 files for plate parts only (profile code B, AK contour, BO holes/slots, SI marking), one per unique mark. */

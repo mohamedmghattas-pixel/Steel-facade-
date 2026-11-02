@@ -35,7 +35,7 @@ function miniProject(base?: Project): Project {
   if (base) {
     p.settings = structuredClone(base.settings);
     p.drawings.settings = structuredClone(base.drawings.settings);
-    p.library = { presets: [], templates: structuredClone(base.library.templates), profiles: structuredClone(base.library.profiles) };
+    p.library = { presets: [], templates: structuredClone(base.library.templates), profiles: structuredClone(base.library.profiles), profileAssemblies: structuredClone(base.library.profileAssemblies ?? []) };
   }
   return p;
 }

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import type { Sketch } from '../core/library/sketch';
 import type { ProfileDef } from '../core/library/profiles';
+import type { AsmDxfImport, DetailChoice } from '../core/library/profileAssemblyDxf';
 
 /** What the sketcher page opens with. */
 export interface SketcherOpen {
@@ -34,4 +35,25 @@ export interface ImportReview {
   unitSource?: string;
 }
 
-export const useProfileUi = create<{ sketcher: SketcherOpen | null; review: ImportReview | null }>(() => ({ sketcher: null, review: null }));
+/** A reviewed detail of an assembly-detail upload: what to do with it and the choices made. */
+export interface AsmDetailReview {
+  /** 'save': its own assembly; 'merge': another orientation of `into`; 'skip'. */
+  action: 'save' | 'merge' | 'skip';
+  into?: number;
+  choice: DetailChoice;
+}
+
+/** An uploaded assembly-detail DXF waiting for review (profileAssemblyActions). */
+export interface AssemblyReview {
+  fileName: string;
+  text: string;
+  imp: AsmDxfImport;
+  /** Blocks used as base-point markers (null: detected). */
+  markers: string[] | null;
+  unitScale?: number;
+  details: AsmDetailReview[];
+  /** Detail shown. */
+  current: number;
+}
+
+export const useProfileUi = create<{ sketcher: SketcherOpen | null; review: ImportReview | null; assemblyReview: AssemblyReview | null }>(() => ({ sketcher: null, review: null, assemblyReview: null }));

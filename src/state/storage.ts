@@ -235,7 +235,27 @@ export async function deleteBlob(key: string): Promise<void> {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * A file name browsers and file systems accept: at most `max` UTF-8 bytes (255 is the usual
+ * limit; a longer name makes Chrome save the file as "download", without its extension),
+ * shortened before the extension. Names from long project names with accents or CJK need this.
+ */
+export function downloadName(name: string, max = 200): string {
+  const bytes = (s: string) => new TextEncoder().encode(s).length;
+  if (bytes(name) <= max) return name;
+  const ext = name.match(/\.[A-Za-z0-9]{1,10}$/)?.[0] ?? '';
+  let out = '';
+  let n = bytes(ext);
+  for (const ch of name.slice(0, name.length - ext.length)) {
+    n += bytes(ch);
+    if (n > max) break;
+    out += ch;
+  }
+  return out.replace(/[\s._-]+$/, '') + ext;
+}
+
 export function download(name: string, data: string | Uint8Array | Blob, mime = 'application/octet-stream') {
+  name = downloadName(name);
   if (inClaudeHost()) {
     void hostDownload(name, data, mime);
     return;

@@ -222,3 +222,17 @@ describe('wireframe check after an import', () => {
     expect(viaSelection).toBe(Object.keys(whole.connections).length);
   });
 });
+
+describe('download names from very long project names', () => {
+  it('stay within what browsers and file systems accept, extension kept', async () => {
+    const { downloadName } = await import('../src/state/storage');
+    const long = `Façade _Ω_West_ ${'x'.repeat(260)} 東京-FWR-001-R00.zip`;
+    const n = downloadName(long);
+    expect(new TextEncoder().encode(n).length).toBeLessThanOrEqual(200);
+    expect(n.endsWith('.zip')).toBe(true);
+    expect(n.startsWith('Façade _Ω_West_ xxx')).toBe(true);
+    // Ordinary names are untouched.
+    expect(downloadName('FS-001-FWR-001-R00.zip')).toBe('FS-001-FWR-001-R00.zip');
+    expect(downloadName(`${'a'.repeat(190)}.ifc`)).toBe(`${'a'.repeat(190)}.ifc`);
+  });
+});

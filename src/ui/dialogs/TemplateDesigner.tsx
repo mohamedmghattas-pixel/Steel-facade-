@@ -16,10 +16,12 @@ import {
   DEFAULT_TEMPLATE,
   DEFAULT_TEMPLATE_ID,
   FIELD_SOURCES,
+  FREE_TEMPLATE_MAX,
   TEMPLATE_TEXT_HEIGHTS,
   TITLE_BLOCK_UNITS,
   drawTitleBlockAt,
   entitiesToSvg,
+  hasFreeContent,
   importScale,
   newTemplate,
   parseTemplates,
@@ -791,6 +793,8 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
       />
     );
   const g = t.grid ?? 1;
+  // Size limits (as sanitizeTemplate): free content (imported / drawn blocks) or a grid of fields.
+  const lim = hasFreeContent(t) ? { w0: 40, w1: FREE_TEMPLATE_MAX.w, h0: 5, h1: FREE_TEMPLATE_MAX.h } : { w0: 60, w1: 400, h0: 10, h1: 150 };
   const tools: { id: Tool; label: string; title: string; icon?: string }[] = [
     { id: 'select', label: 'Select', title: 'Select, move (drag) and resize (corner handles); arrow keys nudge 1 mm, Delete removes', icon: 'select' },
     { id: 'line', label: 'Line', title: 'Drag to draw a line', icon: 'line' },
@@ -879,8 +883,8 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
                 </Field>
                 <Field label="Size (width × height)" hint="Bottom right of the frame; the revision table sits on top">
                   <span className="row-inline">
-                    <NumberInput value={t.width} unit="mm" min={40} onChange={(v) => edit('width', (x) => void (x.width = Math.min(380, v)))} />
-                    <NumberInput value={t.height} unit="mm" min={5} onChange={(v) => edit('height', (x) => void (x.height = Math.min(240, v)))} />
+                    <NumberInput value={t.width} unit="mm" min={lim.w0} onChange={(v) => edit('width', (x) => void (x.width = Math.min(lim.w1, v)))} />
+                    <NumberInput value={t.height} unit="mm" min={lim.h0} onChange={(v) => edit('height', (x) => void (x.height = Math.min(lim.h1, v)))} />
                   </span>
                 </Field>
                 <Field label="Grid cell · border · logo" hint="Field cells are in grid cells; row 0 is the bottom edge">

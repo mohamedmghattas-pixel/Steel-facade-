@@ -225,13 +225,42 @@ Marks, balloons, list rows and part outlines also carry navigation data (the ass
 
 ## Sheet templates
 
-The title block can follow a company template (*Drawing settings → Sheet template → Design…*). The built-in default is the ISO 7200 title block described above and reproduces it exactly.
+The title block can follow a company template (*Drawing settings → Sheet template → Design…*): the client's own title block imported from DXF, a block drawn in the template designer, or a grid of fields. The built-in default is the ISO 7200 title block described above and reproduces it exactly. The active template is used for every sheet of the set (A0–A4, ISO and ASME profiles) in the preview, PDF, DXF and SVG.
 
-- A template is a grid of fields (grid cell size in mm; column 0 at the left, row 0 at the bottom edge). Each field has a label (1.8 mm lettering, top left of the cell) and a value: a project field (name, number, client, designer, legal owner), a drawing field (title, supplementary title, identification number, revision index, date of issue, scale, sheet n/N, document type, document status, created / checked / approved by, drawing standard), the projection symbol with the scale, the logo, or fixed text. Values can use the ISO 3098 heights 1.8 – 7 mm and bold.
-- Cell divisions are drawn 0.35 mm, the outer border 0.7 mm (as the ISO 7200 block). The block sits at the bottom right of the ISO 5457 frame; the revision table above it takes its width, and the sheet layout keeps clear of both.
-- **Logo**: a PNG, JPEG or SVG image embedded in the sheet (SVG and PDF). DXF has no embedded images, so a frame marks where the logo sits.
-- **Fixed notes** are printed after the general notes on every sheet.
-- Templates import and export as JSON. Keep the ISO 7200 identification fields (identification number, revision index, date of issue, title, document status, legal owner) in a company template if the drawings must conform to ISO 7200.
+### What a template holds
+
+- **Field cells** (the grid template): a grid of cells (grid cell size in mm; column 0 at the left, row 0 at the bottom edge), each with a label (1.8 mm lettering, top left of the cell) and a value. Cell divisions are drawn 0.35 mm.
+- **Linework**: lines, rectangles, polylines and circles, with an ISO 128-2 line weight (0.25, 0.35, 0.5 or 0.7 mm) and optionally filled.
+- **Texts** placed anywhere (baseline point, ISO 3098 height 1.8 – 10 mm, left / centre / right, bold, rotation). A text shows fixed text, a field, or text with **placeholders** filled per sheet, e.g. `Sheet {SHEET_N} of {SHEETS}`. A field value longer than its room (up to the next cell line or text) is shortened with "…".
+- **Values**: a project field (name, number, client, designer, legal owner), a drawing field (title, supplementary title, identification number, revision index, date of issue, scale, sheet n/N, sheet number n, number of sheets N, document type, document status, created / checked / approved by, drawing standard), the ISO 5456-2 projection symbol (with the scale in a field cell), the logo, or fixed text.
+- **Logo**: a PNG, JPEG or SVG image (up to 400 KB) embedded in the sheet (SVG and PDF), fitted into a logo cell or a logo rectangle. DXF has no embedded images, so a frame marks where the logo sits.
+- **Outer border** 0.7 mm (as the ISO 7200 block; can be switched off), **fixed notes** printed after the general notes on every sheet.
+
+The block sits at the bottom right of the ISO 5457 frame, at its actual size; a block wider than the frame of a sheet (or too tall for the revision table above it) is scaled down to fit that sheet. The revision table sits directly above it and takes its width (rev, description and date only on blocks narrower than 126 mm). The sheet layout keeps views, tables and notes clear of both (*Sheet layout*). The title block is not part of a sheet's fingerprint, so changing the template does not mark sheets as changed. Continuation sheets show the drawing's identification number, *sheet n/N*, scale, their own revision and status.
+
+### Your own title block from DXF
+
+*Sheet templates → Import title block (DXF)* reads an ASCII DXF of the title block alone (no sheet frame). The extents of the drawing become the block size.
+
+| DXF content | Imported as |
+|---|---|
+| LINE, LWPOLYLINE, 2D POLYLINE (with arcs), ARC, CIRCLE, ELLIPSE, SPLINE | Linework; curves as chords within 0.02 mm. Line weights from the entity (0.25 / 0.35 / 0.5 / 0.7 mm), else 0.35 mm |
+| SOLID, TRACE, solid-fill HATCH | Filled areas (hatches with islands are drawn as outlines) |
+| TEXT, MTEXT | Texts at their alignment point, height and rotation; MTEXT formatting codes are stripped and each paragraph becomes a line; `\f…\|b1` gives bold |
+| INSERT | Blocks exploded with insertion point, scale, rotation, mirror (texts stay readable), arrays and nesting |
+| ATTDEF, ATTRIB | Texts with their tag; the attribute values of an insert replace its definitions (constant attributes stay); invisible attributes are left out |
+| IMAGE | Not imported (DXF images are external files): its frame is offered as the logo rectangle |
+| Pattern hatches, dimensions, leaders, points, 3D entities, external references | Left out and listed in the review |
+
+- **Units**: $INSUNITS, else $MEASUREMENT; a file without units is guessed from its size (mm, inches or metres) and the review offers the choice. Everything is converted to mm.
+- **Fields**: a text that is a placeholder — `{PROJECT}`, `{DRAWING_NO}`, `{TITLE}`, `{SCALE}`, `{DATE}`, `{REV}`, `{SHEET}`, `{DRAWN}`, `{CHECKED}`, `{CLIENT}` …, also written `<…>` or `[…]` — becomes that field, filled per sheet; a text containing placeholders keeps its other words (`Scale {SCALE}`); an attribute whose tag names a field (`DWG_NO`, `DRAWN_BY`, `REV` …) becomes that field. Names are matched without regard to case, spaces, dots, dashes and underscores, and also as the field names of the template (`drawing.number`, *Drawing title*). Every other text and all linework stay fixed.
+- **Review**: a preview with sample data, every text with what it shows on the sheets (a field, fixed text, its placeholders filled, or left out), the units, the size (scale it by its width), the outer border, and the logo (upload a PNG / SVG and drag its rectangle on the preview). *Save template* adds it to the project; *Use for all sheets* makes it active.
+- **Not carried over**: CAD fonts (texts are drawn in ISO 3098 type B lettering, Arial in SVG / PDF, the standard DXF font), text width factors and oblique angles, colours and line types (all lines continuous), pattern hatches, images (upload the logo), fields (AutoCAD FIELD codes show their last value as fixed text).
+- The assistant can import a title block from DXF text and change what each text shows (*sheet_templates*: `import_dxf`, `map_texts`).
+
+### Template designer
+
+The designer shows the block at full size with sample data. Tools: *Select* (drag to move, corner handles resize, arrow keys nudge 1 mm, Shift 5 mm, Delete removes), *Line*, *Rectangle*, *Text* (click to place), *Field cell* and *Logo area* (drag). Positions snap to 1 mm (field cells to the template grid). The properties of the selection set the text value, height, alignment, bold, rotation and position, line weight and fill, cell label and value, logo rectangle. Every change is one undo step (Ctrl+Z). Templates can be duplicated, deleted, set active for all sheets, and imported and exported as JSON (older template files load unchanged; free content is kept). Keep the ISO 7200 identification fields (identification number, revision index, date of issue, title, document status, legal owner) in a company template if the drawings must conform to ISO 7200.
 
 ## Drawing numbers
 

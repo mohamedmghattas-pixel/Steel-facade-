@@ -371,10 +371,10 @@ export function templateTextValue(p: Project, source: string, d: TitleData): str
 // ---------------------------------------------------------------------------
 // Drawing
 
-/** Fits a text into `maxW` mm (estimated ISO 3098 type B advance), shortening it with "…". */
-function fitText(v: string, h: number, maxW: number | undefined): string {
+/** Fits a text into `maxW` mm (estimated ISO 3098 type B advance, bold a little wider), shortening it with "…". */
+function fitText(v: string, h: number, maxW: number | undefined, bold = false): string {
   if (!maxW || maxW <= 0) return v;
-  const max = Math.max(2, Math.floor(maxW / (h * 0.72)));
+  const max = Math.max(2, Math.floor(maxW / (h * (bold ? 0.8 : 0.72))));
   return v.length > max ? `${v.slice(0, max - 1)}…` : v;
 }
 
@@ -507,7 +507,7 @@ export function drawTitleBlockAt(s: Sheet, x0: number, y0: number, p: Project, t
     }
     const raw = templateTextValue(p, tx.source, d);
     const v = raw || (PLACEHOLDER.has(tx.source) ? '—' : '');
-    s.text(at, fitText(v, tx.h, tx.maxW), tx.h, tx.anchor ?? 'start', 'text', tx.rot ?? 0, !!tx.bold);
+    s.text(at, fitText(v, tx.h, tx.maxW, tx.bold), tx.h, tx.anchor ?? 'start', 'text', tx.rot ?? 0, !!tx.bold);
   }
 
   // Logo rectangle (free placement).

@@ -8,7 +8,7 @@ review, maintain or extend FacadeSteel. It explains:
 
 For the geometry of members and connection parts (frames, points, planes),
 see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
-commit `f40691b` (2026-10-31).
+2026-11-02 (after the close-out QA; iterations 1–20 in §2.2).
 
 ## 1. System at a glance
 
@@ -18,32 +18,34 @@ commit `f40691b` (2026-10-31).
 | Runtime | Browser only: no server and no account. Delivered three ways (§3.12). |
 | Language / stack | TypeScript 5.9 (strict), React 19, Three.js 0.187, Zustand 5, Vite 8, Vitest 5 |
 | Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), rhino3dm 8.35.0 (Rhino .3dm, MIT, loaded on demand), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
-| History | 29 commits over two days on `main` (feature branch `claude/brave-euler-eo03km`) |
-| Tests | 414 Vitest tests in 32 files; strict type-check; production build; CI on every push |
+| History | 20 iterations, 2026-10-30 → 2026-11-02, on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
+| Tests | 2,242 Vitest tests in 50 files (14.7k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
-| Connections | 30 parametric types plus user templates with formula parameters |
+| Connections | 30 parametric types plus user templates with formula parameters; auto-connect by roles and topology |
 | Detailing rules | 46 catalogued rules (AISC 360-22, EN 1993-1-8, EN 1090-2, EN ISO 1461, ASTM A123) plus 8 movement rules |
-| Assistant | 54 tools: 23 core tools plus 6 feature modules |
+| Assistant | 92 tools: core tools plus 13 feature modules |
 
 Source size by area (TypeScript lines):
 
 | Area | Lines | Responsibility |
 | --- | ---: | --- |
-| `src/core/model` | 1,971 | Types, geometry helpers, wireframe operations, facade grid |
-| `src/core/library` | 2,932 | Profiles, section properties, materials, bolts, fasteners, standards |
-| `src/core/connections` | 5,587 | Connection framework, 30 types, registry, templates, catalogue |
-| `src/core/derive` | 733 | Wireframe + connections → parts, holes, bolts, assemblies, marks |
-| `src/core/geometry` | 901 | End preparations, bent plates, stiffeners, arcs |
-| `src/core/codes` | 2,120 | Detailing-rule engine and tables |
-| `src/core/movement`, `survey` | 1,982 | Thermal / deflection / tolerance stack, slot sizing, survey matching |
-| `src/core/drawings` | 6,213 | ISO drawing set, edits, templates, erection sheets, cuts, SVG/DXF |
-| `src/core/io` | 2,608 | IFC4 writer and reader, DXF reader and writer, BCF, DWG detection, ZIP, GUIDs |
-| `src/core/fabrication`, `optimize`, `reports` | 2,984 | DSTV, plate CNC, labels, packing, galvanizing, paint, MIS, nesting, BOM |
-| `src/core/clash`, `management` | 1,398 | Clash detection, phases/batches, marks |
-| `src/viewer` | 2,492 | Three.js scene, instancing, spatial index, picking, snapping, previews |
-| `src/state` | 446 | Store, undo/redo, autosave, IndexedDB blobs |
-| `src/ui` | 8,976 | React panels, dialogs, drawing editor, connection library |
-| `src/assistant` | 2,894 | Chat sessions, tool definitions, feature tool modules |
+| `src/core/model` | 5,102 | Types, geometry helpers, wireframe operations, facade grid, modify toolkit, profiles by role |
+| `src/core/wireframe` | 3,102 | Wireframe check: roles from topology, cuts, surfaces and normals, client confirmation |
+| `src/core/library` | 5,706 | Profiles (incl. POLY outlines, insertion points, sketcher, profile assemblies), sections, materials, bolts, standards |
+| `src/core/connections` | 6,936 | Connection framework, 30 types, registry, templates, catalogue, transforms, follow, auto-connect |
+| `src/core/derive` | 1,327 | Wireframe + connections → parts, holes, bolts, assemblies, accessories, marks |
+| `src/core/geometry` | 947 | End preparations, bent plates, stiffeners, arcs |
+| `src/core/codes` | 2,128 | Detailing-rule engine and tables |
+| `src/core/movement`, `survey` | 2,015 | Thermal / deflection / tolerance stack, slot sizing, survey matching |
+| `src/core/drawings` | 10,612 | ISO drawing set, layout engine, zoning, on-demand set, edits, templates, erection sheets, cuts, navigation, SVG/DXF |
+| `src/core/io` | 6,685 | DXF reader (3D), IFC4 writer and reader, Rhino 3dm, wire import, BCF, DWG detection, ZIP read/write, XLSX templates, GUIDs |
+| `src/core/export` | 4,315 | Export package: catalogue, templates, planning, building, PDF books and pages, STEP / OBJ, QA forms |
+| `src/core/fabrication`, `optimize`, `reports` | 3,350 | DSTV, extrusions, plate CNC, labels, packing, galvanizing, paint, MIS, nesting, BOM |
+| `src/core/clash`, `management` | 1,489 | Clash detection, phases/batches, marks |
+| `src/viewer` | 3,068 | Three.js scene, instancing, spatial index, picking, snapping, previews, outline LOD |
+| `src/state` | 733 | Store, undo/redo with memory budget, derived-model LRU, autosave, IndexedDB blobs |
+| `src/ui` (+ `dialogs`) | 18,964 | React panels, dialogs, drawing editor, connection library, sketcher, export dialog |
+| `src/assistant` | 4,885 | Chat sessions, tool definitions, 13 feature tool modules |
 | `src/platform` | 79 | claude.ai host bridge |
 
 ## 2. Process cycle
@@ -94,6 +96,18 @@ Feedback from the user then starts the next cycle.
 | 6 | P1–P2 roadmap list + richer connection library with a live viewer | Foundation contracts, six parallel workstreams, sequential merges | `e0828b2` … `cb6712d`, `d0e158a` |
 | 7 | Run on my PC instead of GitHub | Offline single-file build | `c1edbfd` |
 | 8 | Docs on positioning (points, planes) | Connection geometry reference with real-output worked example | `f40691b` |
+| 9 | Architecture and decision docs | This document | `51b1e5d` |
+| 10 | Fix the geometry caveats; 3D wireframe DXF not read correctly | 14 placement fixes; DXF reader with blocks, OCS, arcs, meshes; robust joining | `ef061c3`, `15ab4a2` |
+| 11 | Mega-project wireframe cut into pieces; verify and take client confirmation | Wireframe check: whole lines, cuts only at mullion–transom junctions, roles from topology, confirmation against a fingerprint | `f40ffed`, `a90b777` |
+| 12 | Custom profiles, insertion points, sketcher, mullion vs transom profiles | POLY outlines, insertion points, upload, sketcher, profiles by role | `93d4a06` |
+| 13 | Profiles perpendicular to surfaces; keep 30 mm stack joints | Surface normals from the wireframe topology (`Member.normal`, `memberAxes`) | `6b6b0a7` |
+| 14 | Join, split, extend and every operation on profiles | Modify toolkit (join, split, extend, trim, break, stretch, rotate, mirror, offset, section operations) | `4df7bb2` |
+| 15 | Drawings clash and are too small on big facades | Layout engine, continuation sheets, zoning with key plans and match lines | `729054a` |
+| 16 | Export like the client's folder tree, combined PDF, QAF / VCF | Template-driven export package (11 folders), combined PDF, forms filled into the client's workbooks | `5d4bf8b` |
+| 17 | Connections follow member operations; mirror / flip | Connection follow and parameter transforms for every type | `02605eb` |
+| 18 | 3D ↔ drawings; assemblies; Rhino .3dm | Manual assemblies, part / assembly selection, navigation tags; rhino3dm import / export | `3cc56b4`, `7271a2b` |
+| 19 | Heavy-load QA | Quadratic hot spots removed, large DXF / autosave / PDF fixes (client facade, 24k members) | `0a8ea40` … `976e766` |
+| 20 | Auto-connect sloped facades; drawings on demand; Esc closes menus; assembly profiles from DXF; close-out QA | Auto-connect by roles and topology; drawing index without drawing; composite profile assemblies; memory budgets, balloon spacing, extrusions in the package, sliced STEP | `9483671` … `19f2820` |
 
 ### 2.3 Parallel milestone method (iteration 6)
 
@@ -181,7 +195,7 @@ Numbers and claims in docs come from running code, not from memory.
                          ▼
                  Project (plain JSON) ──► autosave (localStorage) / .json file
                          │
-                         ▼  derived(p): WeakMap cache by project identity
+                         ▼  derived(p): LRU cache by project identity (D40)
                  deriveModel(p) → DerivedModel { parts, assemblies, bolts, holes, marks, warnings }
                          │
    ┌──────────┬──────────┼───────────┬────────────┬────────────┬────────────┐
@@ -215,8 +229,9 @@ lists and NC files cannot disagree.
 - Undo and redo swap snapshots.
 - Custom profiles are re-registered after every replace, undo and redo, so the
   catalogue always matches the project.
-- `derived(p)` caches the derived model per project object. Because edits
-  always produce a new object, the cache never goes stale.
+- `derived(p)` caches the derived model per project object (an LRU of the
+  latest states, D40). Because edits always produce a new object, the cache
+  never goes stale.
 
 ### 3.4 Derivation pipeline (`src/core/derive/model.ts`)
 
@@ -427,6 +442,15 @@ lists and NC files cannot disagree.
 - **Shop data:** DSTV saw-angle signs and plate marking blocks must be
   verified on the target machines. Galvanizing dip rules are typical and must
   be confirmed with the galvanizer.
+- **Large models:** the derived model is recomputed in full on every edit
+  (not incremental): about 0.3 s on the client facade, 5–7 s at 24,000
+  members / 88,000 parts, where undo keeps about 17 steps (D40). A ZIP over
+  about 1 GB is assembled in memory and still pauses the page once for up to
+  about 20 s; *Export to folder* writes file by file instead. Composite
+  sections are heavy to draw in 3D (the client facade with composite mullions
+  and transoms: 1.1 million triangles in its fabricated parts after the
+  outline simplification, plus gaskets); use Solids off or Isolate on low-end
+  graphics.
 - **Platform:** no cloud projects, sharing or approval workflow; GitHub Pages
   needs one repository setting.
 

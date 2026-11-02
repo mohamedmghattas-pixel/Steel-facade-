@@ -20,7 +20,8 @@ import { useStore } from '../state/store';
 import { pickFile } from '../state/storage';
 import { askConfirm } from './askState';
 import { useProfileUi, type AssemblyReview } from './profileUiState';
-import { setRoleProfileUi } from './profileActions';
+import { divisionNote, insertWithJunctions, setRoleProfileUi } from './profileActions';
+import type { DivideResult } from '../core/model/junctions';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -136,8 +137,10 @@ export function assignAssemblyToSelection(id: Id | null, rotation?: number) {
   const sel = st().selection.members;
   if (!sel.length) return notify('Select members first.', 'error');
   let n = 0;
-  if (run(id ? 'Assign profile assembly' : 'Single profile', (d) => void (n = assignProfileAssembly(d, sel, id, rotation === undefined ? {} : { rotation }))))
-    notify(id ? `Profile assembly on ${n} member${n === 1 ? '' : 's'}.` : `${n} member${n === 1 ? '' : 's'} back to a single profile.`);
+  let division: DivideResult | null = null;
+  // Transoms crossing the touched mullions are divided there in the same step (mullions stay continuous).
+  if (run(id ? 'Assign profile assembly' : 'Single profile', (d) => void ({ changed: n, division } = insertWithJunctions(d, sel, () => assignProfileAssembly(d, sel, id, rotation === undefined ? {} : { rotation })))))
+    notify((id ? `Profile assembly on ${n} member${n === 1 ? '' : 's'}.` : `${n} member${n === 1 ? '' : 's'} back to a single profile.`) + (id ? divisionNote(division) : ''));
 }
 
 /** Profiles by role: the role's members carry this assembly (rotation from the chosen orientation). */

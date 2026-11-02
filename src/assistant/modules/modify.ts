@@ -9,7 +9,7 @@
  */
 import type { ToolModule, Json } from './types';
 import { derived, useStore } from '../../state/store';
-import { applyStockSplit, planStockSplit, type StockJointAt, type StockSplitOptions, type StockSplitPlan } from '../../core/model/stockSplit';
+import { applyStockSplit, planStockSplit, STOCK_SPLIT_CLEARANCE, type StockJointAt, type StockSplitOptions, type StockSplitPlan } from '../../core/model/stockSplit';
 import type { Id, MemberRole, Project, Vec3 } from '../../core/model/types';
 import { MEMBER_ROLES } from '../../core/model/types';
 import { memberDirection } from '../../core/model/ops';
@@ -264,7 +264,7 @@ export const modifyModule: ToolModule = {
     {
       name: 'modify_stock_split',
       description:
-        'Split at stock length: members (default every mullion; filter for others, only mullions / posts are divided) longer than the longest stock bar of their profile (stock on hand, else the standard lengths; or stockLength) are divided into pieces that fit (bar − 2 × end trim − kerf), each cut at the transom junction nearest below the limit from the lower end, as a stack joint of `gap` (default the project stack-joint size, 30 mm): at "top" (just above the transom and its cleats, default), "bottom" (just below) or "centre" (on its axis; the transom ends move gap/2 down onto the lower piece and their joints are removed for auto_connect to place again), plus clearance. Members with no transom in range are left and reported. One undo step; dryRun: counts only. Run auto_connect afterwards for the splices.',
+        'Split at stock length: members (default every mullion; filter for others, only mullions / posts are divided) longer than the longest stock bar of their profile (stock on hand, else the standard lengths; or stockLength) are divided into pieces that fit (bar − 2 × end trim − kerf), each cut at the transom junction nearest below the limit from the lower end, as a stack joint of `gap` (default the project stack-joint size, 30 mm): at "top" (just above the transom and its cleats, default), "bottom" (just below) or "centre" (on its axis; the transom ends move gap/2 down onto the lower piece and their joints are removed for auto_connect to place again), plus clearance (default 150 mm, which keeps the splice bolts clear of the cleat bolts). Members with no transom in range are left and reported. One undo step; dryRun: counts only. Run auto_connect afterwards for the splices.',
       input_schema: {
         type: 'object',
         properties: {
@@ -448,7 +448,7 @@ export const modifyModule: ToolModule = {
         ...(typeof input.stockLength === 'number' && input.stockLength > 0 ? { stockLength: input.stockLength } : {}),
         ...(input.at === 'top' || input.at === 'bottom' || input.at === 'centre' ? { at: input.at as StockJointAt } : {}),
         ...(typeof input.gap === 'number' ? { gap: Math.max(0, input.gap) } : {}),
-        ...(typeof input.clearance === 'number' ? { clearance: Math.max(0, input.clearance) } : {}),
+        clearance: typeof input.clearance === 'number' ? Math.max(0, input.clearance) : STOCK_SPLIT_CLEARANCE,
       };
       const dm = derived(p);
       const report = (plan: StockSplitPlan) => ({

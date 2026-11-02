@@ -29,7 +29,7 @@
  * places it. Pure: no DOM.
  */
 import type { Connection, ConnectionType, Id, Member, ParamValue, Project, Vec3 } from '../model/types';
-import { addConnection, memberDirection, membersAtNodeIndex, type MemberAtNode } from '../model/ops';
+import { addConnection, addNode, memberDirection, membersAtNodeIndex, type MemberAtNode } from '../model/ops';
 import { add, dist, dot, len, memberAxes, normalize, scale, sub } from '../model/geometry';
 import { getProfile } from '../library/profiles';
 import { Bvh } from '../clash/bvh';
@@ -134,7 +134,15 @@ export interface AutoItem {
   /** Marker point (preview) and, for structure brackets, the structure point it reaches. */
   at: Vec3;
   to?: Vec3;
+  /**
+   * A node made when the plan is applied: a point on the supported member's span (a bracket on a
+   * continuous mullion far from its ends). `node` is then a placeholder key, not a node id.
+   */
+  newNode?: Vec3;
 }
+
+/** A bracket may hang off a member end this far from its support; further away it gets a node of its own on the span, mm. */
+export const BRACKET_NODE_REACH = 1000;
 
 export interface AutoPlan {
   items: AutoItem[];
@@ -223,10 +231,28 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
     return k;
   };
   const at = (node: Id) => membersAt(node).filter((x) => inScope(x.member));
-  const make = (rule: AutoRule, type: ConnectionType, node: Id, main: Id | null, secondary: Id[], params: Record<string, ParamValue> = {}, mark?: Vec3, to?: Vec3): AutoItem | null => {
+  const make = (rule: AutoRule, type: ConnectionType, node: Id, main: Id | null, secondary: Id[], params: Record<string, ParamValue> = {}, mark?: Vec3, to?: Vec3, newNode?: Vec3): AutoItem | null => {
     if (isCovered(node, secondary[0])) return null;
     covered.add(`${node}|${secondary[0]}`);
-    return { rule, type, node, main, secondary, params, at: mark ?? pos(node), to };
+    return { rule, type, node, main, secondary, params, at: mark ?? (newNode ?? pos(node)), to, ...(newNode ? { newNode } : {}) };
+  };
+  /**
+   * Where a bracket supporting member `m` at point P attaches: the end of the piece nearest to P when it is
+   * free and within BRACKET_NODE_REACH (as cut mullions always were), else a new node on the span at P's foot
+   * on the axis (a continuous mullion passing several slabs gets one bracket per slab).
+   */
+  const bracketAt = (m: Member, P: Vec3): { node: Id; newNode?: Vec3 } | null => {
+    const ends = [m.start, m.end].sort((a, b) => dist(pos(a), P) - dist(pos(b), P));
+    const near = ends.find((n) => !isCovered(n, m.id) && dist(pos(n), P) <= BRACKET_NODE_REACH);
+    if (near) return { node: near };
+    const a = pos(m.start);
+    const b = pos(m.end);
+    const L = dist(a, b);
+    if (L < 1) return null;
+    const t = Math.max(0, Math.min(1, dot(sub(P, a), sub(b, a)) / (L * L)));
+    const Q = { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, z: a.z + (b.z - a.z) * t };
+    const key = `+${m.id}@${Math.round(t * L)}`;
+    return isCovered(key, m.id) ? null : { node: key, newNode: Q };
   };
 
   // Mullion lengths: collinear mullions joined at shared nodes (a stack joint gap separates two lengths).
@@ -371,6 +397,11 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
   if (structure.length && bracketType !== 'none' && lengths.size) {
     const tri = buildTriangles(structure);
     const stackEnds = new Set(stackPairs.flatMap((sp) => [sp.lower.node, sp.upper.node]));
+    // Joints on a piece's span (transoms meeting a continuous mullion at a through-node), per piece.
+    const throughOn = new Map<Id, Id[]>();
+    for (const n of Object.keys(p.nodes)) {
+      for (const x of at(n)) if (x.at === 'through' && x.member.role === 'mullion') throughOn.set(x.member.id, [...(throughOn.get(x.member.id) ?? []), n]);
+    }
     for (const [root, list] of lengths) {
       if (supportedBy.has(root) || existing.has(root)) continue;
       const line = lengthLine(p, list);
@@ -388,6 +419,13 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
           const interior = s0 > line.s0 + 1 && s0 < line.s1 - 1;
           const c = stackEnds.has(n) ? 240 : others ? 150 : interior ? 90 : 0;
           if (c) zones.push([s0 - c, s0 + c]);
+        }
+        // Transom joints at through-nodes on the span: 150 mm clear as at a joint node.
+        const a = pos(pc.m.start);
+        const L = dist(a, pos(pc.m.end));
+        for (const n of throughOn.get(pc.m.id) ?? []) {
+          const s0 = pc.s0 + (pc.s1 - pc.s0) * (L > 0 ? dist(a, pos(n)) / L : 0);
+          zones.push([s0 - 150, s0 + 150]);
         }
       }
       let placed = 0;
@@ -411,11 +449,10 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
           continue;
         }
         const side = vz >= 0 ? 1 : -1;
-        // Node: the end of the piece nearest to the support point, else its other end.
-        const ends = [h.m.start, h.m.end].sort((a, b) => dist(pos(a), h.P) - dist(pos(b), h.P));
-        const node = ends.find((n) => !isCovered(n, h.m.id));
-        if (!node) continue;
-        const it = make('structureBracket', bracketType, node, null, [h.m.id], bracketParams(p, bracketType, h.m, node, h.P, side, Math.abs(vz)), h.P, h.q);
+        // Node: the end of the piece nearest to the support point when close, else a node on the span there.
+        const at = bracketAt(h.m, h.P);
+        if (!at) continue;
+        const it = make('structureBracket', bracketType, at.node, null, [h.m.id], bracketParams(p, bracketType, h.m, at.newNode ?? at.node, h.P, side, Math.abs(vz)), h.P, h.q, at.newNode);
         if (!it) continue;
         structItems.push(it);
         placed++;
@@ -557,11 +594,17 @@ export function planAutoConnect(p: Project, options: AutoConnectOptions = AUTO_D
         if (l.z <= z0 + LEVEL_TOL || l.z >= z1 - LEVEL_TOL || zs.some((z) => Math.abs(z - l.z) <= LEVEL_TOL)) continue;
         const m = list.find((q) => Math.min(pos(q.start).z, pos(q.end).z) < l.z && Math.max(pos(q.start).z, pos(q.end).z) > l.z);
         if (!m) continue;
-        const ends = [m.start, m.end].sort((a, b) => Math.abs(pos(a).z - l.z) - Math.abs(pos(b).z - l.z));
-        const node = ends.find((n) => !isCovered(n, m.id));
-        if (!node) continue;
         const x = exactAxis(memberAxes(pos(m.start), pos(m.end), m).x);
-        const it = make('levelBracket', 'slabBracket', node, null, [m.id], { mount: 'edge', side: o.slabSide, standoff: o.standoff, dz: Math.round((l.z - 100 - pos(node).z) * 10) / 10, upSign: String(worldUpSign(x)) }, { ...pos(node), z: l.z - 100 });
+        // The axis point at the level: a bracket there sits as at a level node (fin centre 100 mm below).
+        const a = pos(m.start);
+        const b = pos(m.end);
+        const tz = (l.z - a.z) / (b.z - a.z);
+        const atLevelPt = { x: a.x + (b.x - a.x) * tz, y: a.y + (b.y - a.y) * tz, z: l.z };
+        const at = bracketAt(m, atLevelPt);
+        if (!at) continue;
+        const it = at.newNode
+          ? make('levelBracket', 'slabBracket', at.node, null, [m.id], { mount: 'edge', side: o.slabSide, standoff: o.standoff, upSign: String(worldUpSign(x)) }, { ...at.newNode, z: l.z - 100 }, undefined, at.newNode)
+          : make('levelBracket', 'slabBracket', at.node, null, [m.id], { mount: 'edge', side: o.slabSide, standoff: o.standoff, dz: Math.round((l.z - 100 - pos(at.node).z) * 10) / 10, upSign: String(worldUpSign(x)) }, { ...pos(at.node), z: l.z - 100 });
         if (it) crossItems.push(it);
       }
     }
@@ -640,11 +683,14 @@ export function applyAutoPlan(p: Project, plan: AutoPlan, rules?: ReadonlySet<Au
   const have = new Set(Object.values(p.connections).map((c) => `${c.node}|${c.secondary[0]}`));
   for (const it of plan.items) {
     if (rules && !rules.has(it.rule)) continue;
-    if (!p.nodes[it.node] || it.secondary.some((id) => !p.members[id]) || (it.main && !p.members[it.main])) continue;
-    const k = `${it.node}|${it.secondary[0]}`;
+    if (it.secondary.some((id) => !p.members[id]) || (it.main && !p.members[it.main])) continue;
+    // A bracket on a member's span gets its node now (an existing node within tolerance is reused).
+    const node = it.newNode ? addNode(p, it.newNode) : it.node;
+    if (!p.nodes[node]) continue;
+    const k = `${node}|${it.secondary[0]}`;
     if (have.has(k)) continue;
     have.add(k);
-    const id = addConnection(p, it.type, it.node, it.main, [...it.secondary], { ...it.params });
+    const id = addConnection(p, it.type, node, it.main, [...it.secondary], { ...it.params });
     pinConnection(p, p.connections[id] as Connection);
     created.push(id);
   }
@@ -745,11 +791,12 @@ interface SupportHit {
 }
 
 /** Bracket parameters for a support at P (on the wire of member m), the structure `standoff` mm away on `side` of its local z. */
-function bracketParams(p: Project, type: StructureBracketType, m: Member, node: Id, P: Vec3, side: 1 | -1, standoff: number): Record<string, ParamValue> {
+function bracketParams(p: Project, type: StructureBracketType, m: Member, node: Id | Vec3, P: Vec3, side: 1 | -1, standoff: number): Record<string, ParamValue> {
   const x = exactAxis(memberAxes(p.nodes[m.start].p, p.nodes[m.end].p, m).x);
   const dIn = node === m.start ? x : scale(x, -1);
   const up = scale(x, worldUpSign(x));
-  const N = p.nodes[node].p;
+  // A node on the member's span (a new node at the support's foot): the offsets are measured from it.
+  const N = typeof node === 'string' ? p.nodes[node].p : node;
   const r1 = (n: number) => Math.round(n * 10) / 10;
   if (type === 'slabBracket') return { mount: 'edge', side, standoff: r1(standoff), dz: r1(dot(sub(P, N), up)), upSign: String(worldUpSign(x)) };
   return {

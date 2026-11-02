@@ -122,7 +122,7 @@ export function slopedV(): SlopedV {
 }
 
 /** Triangles of an axis box given by a corner and three edge vectors. */
-function boxTris(o: Vec3, a: Vec3, b: Vec3, c: Vec3): number[] {
+export function boxTris(o: Vec3, a: Vec3, b: Vec3, c: Vec3): number[] {
   const P = (i: number, j: number, k: number) => add(add(add(o, scale(a, i)), scale(b, j)), scale(c, k));
   const quads: Vec3[][] = [
     [P(0, 0, 0), P(1, 0, 0), P(1, 1, 0), P(0, 1, 0)],

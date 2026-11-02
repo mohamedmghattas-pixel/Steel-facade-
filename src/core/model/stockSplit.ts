@@ -37,6 +37,13 @@ import type { DerivedModel, Part } from '../derive/model';
 
 export type StockJointAt = 'centre' | 'bottom' | 'top';
 
+/**
+ * Clearance the dialog and the assistant start from, mm: with the default sleeve splice and angle
+ * cleats, 0 mm leaves the sleeve's bolts 8–10 mm from the cleat bolts (hole-spacing errors); 150 mm
+ * clears them on the client facade with 6 m and 12 m bars.
+ */
+export const STOCK_SPLIT_CLEARANCE = 150;
+
 export const STOCK_JOINT_LABEL: Record<StockJointAt, string> = {
   top: 'just above the transom (top face)',
   bottom: 'just below the transom (bottom face)',

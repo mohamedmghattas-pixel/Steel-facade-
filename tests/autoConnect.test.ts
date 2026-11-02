@@ -20,7 +20,7 @@ import { mirrorMembers } from '../src/core/model/modify';
 import { closestOnTriangle } from '../src/core/clash/geom';
 import type { Connection, Project } from '../src/core/model/types';
 import { catalogCases, connectionGeometryHash, facadeCases } from './geometryHash';
-import { Builder, slabStructure, slopedV, STACK_GAP } from './autoConnectFixtures';
+import { Builder, boxTris, slabStructure, slopedV, STACK_GAP } from './autoConnectFixtures';
 import { sampleFacade } from './helpers';
 
 const fixture: Record<string, { hash: string; connections: number }> = JSON.parse(readFileSync(new URL('./fixtures/vertical-geometry.json', import.meta.url), 'utf8'));
@@ -102,8 +102,9 @@ describe('bug fix: a wireframe-checked vertical facade gets slab brackets only a
       const [, z, mount] = h.split(' ');
       expect(levels.map((l) => (mount === 'top' ? l : l - 100))).toContain(Number(z));
     }
-    // The level between the chain ends has no node any more: its bracket sits on the piece across it.
-    expect(plan.items.filter((i) => i.rule === 'levelBracket' && i.params.dz !== undefined)).toHaveLength(5);
+    // The level between the chain ends has no node any more: its bracket gets a node on the piece across it
+    // (more than BRACKET_NODE_REACH from either end of that piece), placed as at a level node.
+    expect(plan.items.filter((i) => i.rule === 'levelBracket' && (i.newNode || i.params.dz !== undefined))).toHaveLength(5);
     // The uncut facade places the same brackets.
     const q = grid(false);
     autoConnect(q);
@@ -123,11 +124,10 @@ describe('bug fix: a wireframe-checked vertical facade gets slab brackets only a
     autoConnect(q);
     expect(byType(p, 'angleCleat')).toHaveLength(byType(q, 'angleCleat').length);
     for (const c of byType(p, 'angleCleat')) expect(membersAtNode(p, c.node).some((x) => x.member.id === c.main && x.at === 'through')).toBe(true);
-    // Level brackets at both chain ends of every mullion, at the same places as on the uncut facade. Known limit
-    // (auto-connect, docs/WIREFRAME_CHECK.md §13): the intermediate floor a continuous mullion passes gets no
-    // fallback level bracket (it is placed from a free end node of the piece across the level).
-    const ends = heights(q).filter((h) => !/ 3400 /.test(h));
-    expect(heights(p)).toEqual(ends);
+    // Level brackets at both chain ends and at the floor the continuous mullion passes (a node made on its span),
+    // at the same places as on the uncut facade.
+    expect(heights(p)).toEqual(heights(q));
+    expect(byType(p, 'slabBracket').filter((c) => membersAtNode(p, c.node).some((x) => x.at === 'through'))).toHaveLength(5);
     expect(errorsOf(p)).toEqual([]);
   });
 
@@ -413,5 +413,36 @@ describe('the plan on an already connected facade', () => {
     expect(plan.items).toEqual([]);
     expect(plan.stats).toMatchObject({ lengths: 4, byExisting: 4, unsupported: 0 });
     expect(plan.notes).toEqual([]);
+  });
+});
+
+describe('continuous mullions and structure brackets', () => {
+  it('a mullion passing three slabs gets a bracket at each, on a node of its own, clear of the transom joints', () => {
+    const b = new Builder();
+    const mullion = { role: 'mullion' as const, profile: 'SHS 100x100x5' };
+    const transom = { role: 'transom' as const, profile: 'RHS 100x50x4' };
+    const H = 10500;
+    const ms = [0, 1500].map((x) => b.line(v3(x, 0, 0), v3(x, 0, H), mullion));
+    // Transoms meet the continuous mullions at through-nodes; one row sits right at the first slab.
+    for (const z of [1000, 3500, 6600, 9600]) b.line(v3(0, 0, z), v3(1500, 0, z), transom);
+    // Slab edges 180 mm behind the mullion axes (+y), 250 mm thick, tops at 3500, 7000 and 10300.
+    const slabs = [3500, 7000, 10300].map((z) => ({ key: `slab:${z}`, type: 'IfcSlab', name: `Slab ${z}`, tris: boxTris(v3(-500, 180, z - 250), v3(2500, 0, 0), v3(0, 4000, 0), v3(0, 0, 250)) }));
+    const plan = planAutoConnect(b.p, AUTO_DEFAULTS, undefined, slabs);
+    const brackets = plan.items.filter((i) => i.rule === 'structureBracket');
+    expect(brackets).toHaveLength(6);
+    // Far from both mullion ends: a new node on the span; the top slab is near the end node and uses it.
+    expect(brackets.filter((i) => i.newNode)).toHaveLength(4);
+    applyAutoPlan(b.p, plan);
+    const placed = byType(b.p, 'slabBracket');
+    expect(placed).toHaveLength(6);
+    const transomZ = [1000, 3500, 6600, 9600];
+    for (const c of placed) {
+      expect(ms).toContain(c.secondary[0]);
+      const z = b.p.nodes[c.node].p.z;
+      // The bracket node lies on the mullion (a through-node or its end), 150 mm clear of every transom joint.
+      expect(membersAtNode(b.p, c.node).some((x) => x.member.id === c.secondary[0])).toBe(true);
+      for (const t of transomZ) expect(Math.abs(z - t)).toBeGreaterThanOrEqual(150 - 1e-6);
+    }
+    expect(errorsOf(b.p)).toEqual([]);
   });
 });

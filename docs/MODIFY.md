@@ -202,9 +202,9 @@ each fit a bar, at transoms, with a stack joint (`planStockSplit`,
 
   | Option | Piece below ends | Piece above starts | The transom |
   | --- | --- | --- | --- |
-  | *Above* (`top`, default) | just above the transom's top face (and its joint parts) + clearance | one gap higher | stays on the piece below (a through-node) |
-  | *Below* (`bottom`) | one gap lower | just below the transom's bottom face (and its joint parts) − clearance | stays on the piece above |
-  | *Centre line* (`centre`) | gap / 2 below the transom axis | gap / 2 above it | its ends move gap / 2 down onto the top of the piece below, so it connects to the lower piece (the length the sleeve is fixed to); its transom joints there are removed for Auto-connect to place again on the lower piece |
+  | *Top* (`top`, default) | just above the transom's top face (and its joint parts) + clearance | one gap higher | stays on the piece below (a through-node) |
+  | *Bottom* (`bottom`) | one gap lower | just below the transom's bottom face (and its joint parts) − clearance | stays on the piece above |
+  | *Middle* (`centre`, on the transom's centre line) | gap / 2 below the transom axis | gap / 2 above it | its ends move gap / 2 down onto the top of the piece below, so it connects to the lower piece (the length the sleeve is fixed to); its transom joints there are removed for Auto-connect to place again on the lower piece |
 
   The transom's faces come from its profile: the section's extent along the
   member axis, with its rotation, surface normal and alignment (an RHS 100×50
@@ -241,11 +241,12 @@ On the client facade (119 continuous mullions up to 12 m, profiles and
 auto-connect first): a 12 m bar (11,977 mm pieces) divides 29 mullions into
 58 pieces; 6 m bars divide 89 into 216 pieces. The check then lists 97 (or
 195) stack joints and Auto-connect adds the 29 (or 127) sleeves, with no
-other change. With *Above* or *Below* and no clearance, the default sleeve's
+other change. With *Top* or *Bottom* and no clearance, the default sleeve's
 bolts (up to about 100 mm into each piece) come within 8–10 mm of the transom
 cleat bolts in the same faces: the checks report the hole spacing. A clearance
-of 100 mm (12 m bars) or 150 mm (6 m bars) clears them, with no code-check
-error left.
+of 100 mm (12 m bars) or 150 mm (6 m bars) clears them, so the dialog and the
+assistant start at 150 mm (`STOCK_SPLIT_CLEARANCE`); the core function's own
+default stays 0 ("just above / below the face").
 
 ## 6. Stretch (move an end)
 
@@ -439,8 +440,8 @@ Two single helpers in `modify.ts` are the place for stored directions (a surface
 - **Mirror section:** members only. Connection profile parts (cleats, tees) have no mirror flag; they are placed through their own frames, so the angle of a mirrored joint is still the mirror image of the original one.
 - **Measure:** angles are between axes (wire lines), not section faces.
 - **Split at stock length:**
-  - *Centre line* joints move the transom ends half the gap off their drawn axis (reported), and the transom joint there sits at the end of the lower piece; use *Above* / *Below* to keep the transoms where they are drawn.
-  - The joint clears the transom and the connection parts at that junction, not the splice that Auto-connect adds afterwards: give a clearance (about 100 mm with the default sleeve) where the checks report the hole spacing.
+  - *Middle* joints move the transom ends half the gap off their drawn axis (reported), and the transom joint there sits at the end of the lower piece; use *Top* / *Bottom* to keep the transoms where they are drawn.
+  - The joint clears the transom and the connection parts at that junction; the splice that Auto-connect adds afterwards is cleared by the clearance, 150 mm by default (0 mm puts the default sleeve's bolts 8–10 mm from the cleat bolts).
   - Run Auto-connect before the split so the joints also clear the cleats; without connections only the transom sections are cleared.
   - Lengths are measured on the wire line plus extensions, not the derived cut length (connection trims only shorten it).
   - Brackets that Auto-connect placed with an offset from a member end node (structure brackets, level brackets on the piece across a level) stay on the piece at that node; when the split puts the bracket's position on another piece, delete them and run Auto-connect again.

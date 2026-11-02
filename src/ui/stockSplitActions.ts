@@ -4,7 +4,7 @@
  */
 import { create } from 'zustand';
 import type { Id } from '../core/model/types';
-import { applyStockSplit, planStockSplit, type StockJointAt, type StockSplitOptions, type StockSplitPlan, type StockSplitResult } from '../core/model/stockSplit';
+import { applyStockSplit, planStockSplit, STOCK_SPLIT_CLEARANCE, type StockJointAt, type StockSplitOptions, type StockSplitPlan, type StockSplitResult } from '../core/model/stockSplit';
 import { derived, useStore } from '../state/store';
 
 export interface StockSplitUi {
@@ -19,7 +19,7 @@ export interface StockSplitUi {
   clearance: number;
 }
 
-export const useStockSplit = create<StockSplitUi>(() => ({ open: false, members: null, length: null, at: 'top', gap: null, clearance: 0 }));
+export const useStockSplit = create<StockSplitUi>(() => ({ open: false, members: null, length: null, at: 'top', gap: null, clearance: STOCK_SPLIT_CLEARANCE }));
 
 const st = () => useStore.getState();
 

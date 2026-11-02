@@ -134,9 +134,9 @@ export function StockSplitDialog() {
         <Segmented<StockJointAt>
           value={ui.at}
           options={[
-            { value: 'top', label: 'Above', title: `Joint ${STOCK_JOINT_LABEL.top}: the transom stays on the piece below` },
-            { value: 'bottom', label: 'Below', title: `Joint ${STOCK_JOINT_LABEL.bottom}: the transom stays on the piece above` },
-            { value: 'centre', label: 'Centre line', title: `Joint ${STOCK_JOINT_LABEL.centre}: the transom ends move half the gap down onto the piece below` },
+            { value: 'centre', label: 'Middle', title: `Joint ${STOCK_JOINT_LABEL.centre}: the transom ends move half the gap down onto the piece below` },
+            { value: 'bottom', label: 'Bottom', title: `Joint ${STOCK_JOINT_LABEL.bottom}: the transom stays on the piece above` },
+            { value: 'top', label: 'Top', title: `Joint ${STOCK_JOINT_LABEL.top}: the transom stays on the piece below` },
           ]}
           onChange={(at) => set({ at })}
         />
@@ -145,7 +145,7 @@ export function StockSplitDialog() {
         <Field label="Gap" hint={`Stack-joint gap (project: ${r0(gapDefault)} mm, Wireframe check → Rules)`}>
           <NumberInput value={ui.gap ?? gapDefault} unit="mm" min={0} onChange={(v) => set({ gap: v })} />
         </Field>
-        <Field label="Clearance" hint="Above / below: between the transom (and its cleats) and the joint. About 100 mm keeps sleeve bolts clear of the cleat bolts.">
+        <Field label="Clearance" hint="Top / Bottom: between the transom (and its cleats) and the joint. 150 mm keeps the splice bolts clear of the cleat bolts.">
           <NumberInput value={ui.clearance} unit="mm" min={0} onChange={(v) => set({ clearance: v })} />
         </Field>
       </div>

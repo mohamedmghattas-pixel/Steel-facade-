@@ -6,6 +6,7 @@ import { MEMBER_ROLES, type Align, type AlignMode, type Finish, type Member, typ
 import { ROLE_LABEL, updateMembers, newId } from '../core/model/ops';
 import { setMemberRole } from '../core/model/roleProfiles';
 import { assignProfileAssembly } from '../core/library/profileAssembly';
+import type { DivideResult } from '../core/model/junctions';
 import { alignModeOf } from '../core/model/geometry';
 import { MATERIALS } from '../core/library/materials';
 import { BOLT_SIZES } from '../core/library/bolts';
@@ -17,7 +18,7 @@ import { assignActiveProfile, removeReference } from './actions';
 import { SectionPreview } from './SectionPreview';
 import { RoleProfilesPanel } from './RoleProfilesPanel';
 import { ProfileAssembliesPanel } from './ProfileAssembliesPanel';
-import { deleteCustomProfile, exportProfileDxf, exportProfilesCsv, exportProfilesJson, openProfileImport, openSketcher } from './profileActions';
+import { deleteCustomProfile, divisionNote, exportProfileDxf, exportProfilesCsv, exportProfilesJson, insertWithJunctions, openProfileImport, openSketcher } from './profileActions';
 import { AssistantPanel } from './AssistantPanel';
 import { ConnectionPreviewView, openConnectionLibrary } from './ConnectionLibrary';
 import { askConfirm } from './askState';
@@ -128,11 +129,17 @@ function MemberProps({ ids }: { ids: string[] }) {
           mixed={profile.mixed}
           onChange={(v) => {
             // The wire line keeps its place on the section (modify.changeProfile); the profile's material comes along.
+            // Transoms crossing the touched mullions are divided there in the same step (mullions stay continuous).
             let warn = '';
+            let division: DivideResult | null = null;
             apply('Profile', (d) => {
-              warn = changeProfile(d, ids, v).warnings[0] ?? '';
+              ({ division } = insertWithJunctions(d, ids, () => {
+                warn = changeProfile(d, ids, v).warnings[0] ?? '';
+                return ids.length;
+              }));
             });
-            if (warn) useStore.getState().notify(warn);
+            const note = (warn ? `${warn}` : '') + (v ? divisionNote(division) : '');
+            if (note) useStore.getState().notify(note.trim());
           }}
         />
       </Field>
@@ -144,7 +151,12 @@ function MemberProps({ ids }: { ids: string[] }) {
             options={[{ value: '', label: 'None — single profile' }, ...assemblies.map((a) => ({ value: a.id, label: a.name }))]}
             onChange={(v) => {
               try {
-                apply(v ? 'Profile assembly' : 'Single profile', (d) => void assignProfileAssembly(d, ids, v || null));
+                let division: DivideResult | null = null;
+                apply(v ? 'Profile assembly' : 'Single profile', (d) => {
+                  ({ division } = insertWithJunctions(d, ids, () => assignProfileAssembly(d, ids, v || null)));
+                });
+                const note = v ? divisionNote(division) : '';
+                if (note) useStore.getState().notify(note.trim());
               } catch (e) {
                 useStore.getState().notify((e as Error).message, 'error');
               }

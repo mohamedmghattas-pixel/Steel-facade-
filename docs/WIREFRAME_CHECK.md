@@ -490,13 +490,12 @@ kerf (Split at stock length, [MODIFY.md §5a](MODIFY.md)).
   never fixed.** Collinear gaps (stack joints) are never closed.
 - **Continuous mullions and auto-connect brackets.** Transom joints go to the
   through-nodes (cleats, fin plates at folds) and stack joints get their
-  splices, but auto-connect's mullion brackets are placed from member end
-  nodes, one per node: a continuous mullion that passes an intermediate level
-  (vertical facades, no structure loaded) gets the fallback level brackets at
-  its chain ends only, and a structure bracket's 150 mm clearance from transom
-  joints is kept from piece end nodes, not from through-nodes. Check the
-  brackets on long continuous mullions, or use *Cut mullions at transoms*
-  (the fix belongs in `core/connections/autoConnect.ts`).
+  splices. A mullion bracket (level or structure) attaches to the end of the
+  piece when that end is within 1 m of the support; further along a continuous
+  mullion, auto-connect makes a node on the mullion's span at the support
+  (`AutoItem.newNode`, a through-node), so a mullion passing several floors or
+  slabs gets one bracket at each. Structure brackets keep 150 mm clear of the
+  transom joints at through-nodes as of those at piece ends.
 - **With *Cut mullions at transoms*,** every transom node is a mullion end,
   and a floor split with no transom is merged away. Auto-connect reads the
   result by role and topology ([CONNECTIONS.md "Auto-connect"](CONNECTIONS.md)):

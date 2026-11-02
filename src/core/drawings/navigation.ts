@@ -52,6 +52,46 @@ const KIND_RANK: Partial<Record<DrawingKind, number>> = { ga: 0, sequence: 1, se
 
 const isMarkEnt = (e: DEnt) => !!e.id && (e.id.startsWith('mark:') || e.id.startsWith('balloon:'));
 
+/** How a view sheet shows an assembly instance: its score and the box of its mark (or outlines). */
+export interface SheetHit {
+  score: number;
+  box?: BBox;
+}
+
+/**
+ * The assembly instances a GA / zone / erection / section sheet shows (by main part
+ * ref): 3 = its mark is placed, 2 = listed in the sheet's zone, 1 = only drawn.
+ * Empty for other sheets. `byId`: assemblies by id (zone lists name them by id).
+ */
+export function sheetHits(d: Drawing, byId: ReadonlyMap<string, Assembly>): Map<PartRef, SheetHit> {
+  const out = new Map<PartRef, SheetHit>();
+  if (!VIEW_KINDS.has(d.kind)) return out;
+  const hits = new Map<PartRef, { score: number; ents: DEnt[] }>();
+  const hit = (inst: PartRef, score: number, e?: DEnt) => {
+    const h = hits.get(inst);
+    if (!h) hits.set(inst, { score, ents: e ? [e] : [] });
+    else if (score > h.score) {
+      h.score = score;
+      h.ents = e ? [e] : [];
+    } else if (score === h.score && e) h.ents.push(e);
+  };
+  for (const e of d.entities) {
+    const inst = e.nav?.inst;
+    if (inst) hit(inst, isMarkEnt(e) ? 3 : 1, e);
+  }
+  for (const id of d.zone?.assemblies ?? []) {
+    const a = byId.get(id);
+    if (a) hit(a.main, 2);
+  }
+  for (const [inst, h] of hits) out.set(inst, { score: h.score, ...(h.ents.length ? { box: entsBox(h.ents) } : {}) });
+  return out;
+}
+
+/** Sheets showing an instance, best first: by score, then GA › sequence › setting-out › section, then register order. */
+export function sortNavSheets(list: NavSheet[], order: (id: string) => number) {
+  list.sort((a, b) => b.score - a.score || (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || order(a.id) - order(b.id));
+}
+
 /** Builds the index from a drawing set (allDrawings) and the derived model it was made from. */
 export function buildDrawingIndex(dm: DerivedModel, drawings: Drawing[]): DrawingIndex {
   const idx: DrawingIndex = { parts: new Map(), assemblies: new Map(), instances: new Map(), byId: new Map() };
@@ -62,32 +102,13 @@ export function buildDrawingIndex(dm: DerivedModel, drawings: Drawing[]): Drawin
     order.set(d.id, i);
     if (d.kind === 'part' && !idx.parts.has(d.mark)) idx.parts.set(d.mark, d.id);
     if (d.kind === 'assembly' && !idx.assemblies.has(d.mark)) idx.assemblies.set(d.mark, d.id);
-    if (!VIEW_KINDS.has(d.kind)) return;
-    const hits = new Map<PartRef, { score: number; ents: DEnt[] }>();
-    const hit = (inst: PartRef, score: number, e?: DEnt) => {
-      const h = hits.get(inst);
-      if (!h) hits.set(inst, { score, ents: e ? [e] : [] });
-      else if (score > h.score) {
-        h.score = score;
-        h.ents = e ? [e] : [];
-      } else if (score === h.score && e) h.ents.push(e);
-    };
-    for (const e of d.entities) {
-      const inst = e.nav?.inst;
-      if (inst) hit(inst, isMarkEnt(e) ? 3 : 1, e);
-    }
-    for (const id of d.zone?.assemblies ?? []) {
-      const a = byId.get(id);
-      if (a) hit(a.main, 2);
-    }
-    for (const [inst, h] of hits) {
+    for (const [inst, h] of sheetHits(d, byId)) {
       const list = idx.instances.get(inst) ?? [];
-      list.push({ id: d.id, number: d.number, label: sheetLabel(d), kind: d.kind, title: d.title, score: h.score, ...(h.ents.length ? { box: entsBox(h.ents) } : {}) });
+      list.push({ id: d.id, number: d.number, label: sheetLabel(d), kind: d.kind, title: d.title, score: h.score, ...(h.box ? { box: h.box } : {}) });
       idx.instances.set(inst, list);
     }
   });
-  for (const list of idx.instances.values())
-    list.sort((a, b) => b.score - a.score || (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || order.get(a.id)! - order.get(b.id)!);
+  for (const list of idx.instances.values()) sortNavSheets(list, (id) => order.get(id)!);
   return idx;
 }
 

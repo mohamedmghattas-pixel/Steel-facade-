@@ -21,7 +21,7 @@ import type { Drawing } from './types';
 import { balloon, dimLinear, Sheet } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Rect } from './layout';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
-import { designation, finalize, newSheet, type DrawCtx } from './compose';
+import { designation, finalize, newSheet, type DrawCtx, type PlanItem } from './compose';
 import { drawingNumber } from './register';
 import { HATCH_STYLES, cutPrism, cuttingPlane, drawCut, partPrism, projectPrism, viewLabel, type Poly, type ViewAxes } from './section';
 import { entsBox, blit, textExtent } from './viewLayout';
@@ -147,11 +147,17 @@ export function drawGaCuts(ctx: DrawCtx, s: Sheet, view: GaViewName, P: (v: Vec2
 /** One sheet per GA cut, in the order of the cut list. */
 export function cutDrawings(ctx: DrawCtx): Drawing[] {
   const out: Drawing[] = [];
-  for (const c of ctx.p.drawings.cuts ?? []) {
-    const d = c.kind === 'section' ? sectionDrawing(ctx, c) : detailDrawing(ctx, c);
+  for (const it of cutItems(ctx)) {
+    const d = it.make(ctx);
     if (d) out.push(d);
   }
   return out;
+}
+
+/** The section and detail sheets as plan items (a cut that shows nothing makes no sheet). Measured in full: their tables come from the geometry. */
+export function cutItems(ctx: DrawCtx): PlanItem[] {
+  // Navigation: section and detail balloons name assembly marks, not instances.
+  return (ctx.p.drawings.cuts ?? []).map((c) => ({ id: `cut-${c.id}`, full: true, bound: () => 0, make: (x: DrawCtx) => (c.kind === 'section' ? sectionDrawing(x, c) : detailDrawing(x, c)) }));
 }
 
 const gaNumber = (p: Project, c: GaCut) => drawingNumber(p, `ga-${cutView(c)}`);

@@ -53,9 +53,12 @@ export interface Placement {
 }
 
 /** Spatial index of occupied boxes on paper, with greedy label placement. */
+/** Key of a grid cell (numeric: placement runs for every mark candidate). */
+const cellKey = (x: number, y: number) => x * 16777216 + y;
+
 export class LabelPlacer {
   private cell = 5;
-  private grid = new Map<string, BBox[]>();
+  private grid = new Map<number, BBox[]>();
   private labels: BBox[] = [];
   placed = 0;
   omitted = 0;
@@ -75,7 +78,7 @@ export class LabelPlacer {
     const c = this.cell;
     for (let x = Math.floor(b.x0 / c); x <= Math.floor(b.x1 / c); x++)
       for (let y = Math.floor(b.y0 / c); y <= Math.floor(b.y1 / c); y++) {
-        const k = `${x},${y}`;
+        const k = cellKey(x, y);
         const l = this.grid.get(k);
         if (l) l.push(b);
         else this.grid.set(k, [b]);
@@ -90,7 +93,8 @@ export class LabelPlacer {
     const cl = this.clearance;
     for (let x = Math.floor((b.x0 - cl) / c); x <= Math.floor((b.x1 + cl) / c); x++)
       for (let y = Math.floor((b.y0 - cl) / c); y <= Math.floor((b.y1 + cl) / c); y++) {
-        for (const o of this.grid.get(`${x},${y}`) ?? []) if (overlaps(b, o, cl)) return false;
+        const cell = this.grid.get(cellKey(x, y));
+        if (cell) for (const o of cell) if (overlaps(b, o, cl)) return false;
       }
     return true;
   }
@@ -101,7 +105,8 @@ export class LabelPlacer {
     const c = this.cell;
     for (let x = Math.floor(box.x0 / c); x <= Math.floor(box.x1 / c); x++)
       for (let y = Math.floor(box.y0 / c); y <= Math.floor(box.y1 / c); y++) {
-        for (const o of this.grid.get(`${x},${y}`) ?? []) if (segHitsBox(a, b, o)) return false;
+        const cell = this.grid.get(cellKey(x, y));
+        if (cell) for (const o of cell) if (segHitsBox(a, b, o)) return false;
       }
     return true;
   }

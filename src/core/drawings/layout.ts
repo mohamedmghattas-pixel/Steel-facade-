@@ -283,6 +283,7 @@ function drawBlock(s: Sheet, b: Block, x: number, yTop: number, seen: Map<string
   const n = (seen.get(id) ?? 0) + 1;
   seen.set(id, n);
   const group = n > 1 ? `${id}-${n}` : id;
+  if (s.dry) return group;
   if (b.id) s.withTag({ group }, () => b.draw(s, x, yTop));
   else b.draw(s, x, yTop);
   return group;

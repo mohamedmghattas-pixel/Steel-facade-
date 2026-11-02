@@ -103,12 +103,15 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
   const areas = packBlocks(s, size, blocks);
   // A heading line at the top of the free area, the views below it.
   const free = [areas.full, areas.left].map((r) => ({ ...r, y1: r.y1 - 8 }));
-  s.text({ x: areas.full.x0 + 4, y: areas.full.y1 - 4 }, `Assembly ${asm.mark} – main part ${main.mark} ${designation(main)}`, TEXT.small, 'start');
-
-  const scale =
-    main.kind === 'plate' || !main.shape ? drawPlateAssembly(ctx, s, main, parts, welded, free, first) : drawLinearAssembly(ctx, s, main, parts, welded, free, first);
-  // Balloons name parts of this assembly.
-  for (const e of s.ents) if (e.nav?.part && !e.nav.asm) e.nav = { ...e.nav, asm: asm.mark };
+  let scale = '';
+  // Measuring (drawing index): the blocks decide the sheet count; the views are left out.
+  if (!ctx.measure) {
+    s.text({ x: areas.full.x0 + 4, y: areas.full.y1 - 4 }, `Assembly ${asm.mark} – main part ${main.mark} ${designation(main)}`, TEXT.small, 'start');
+    scale =
+      main.kind === 'plate' || !main.shape ? drawPlateAssembly(ctx, s, main, parts, welded, free, first) : drawLinearAssembly(ctx, s, main, parts, welded, free, first);
+    // Balloons name parts of this assembly.
+    for (const e of s.ents) if (e.nav?.part && !e.nav.asm) e.nav = { ...e.nav, asm: asm.mark };
+  }
 
   const desc = main.name === main.profile ? main.profile : `${main.name} ${main.profile}`;
   return finalize(ctx, s, size, {

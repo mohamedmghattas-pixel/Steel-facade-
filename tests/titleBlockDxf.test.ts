@@ -211,6 +211,8 @@ describe('title block import from DXF', () => {
     expect(by('project.name')!.maxW).toBeCloseTo(90 - 2 - 0.8, 3);
     expect(by('drawing.number')!.maxW).toBeCloseTo(120 - 62 - 0.8, 3);
     expect(by('drawing.title')).toMatchObject({ bold: true });
+    // …or to the next text on the same line (the client MTEXT at x 140).
+    expect(by('drawing.title')!.maxW).toBeCloseTo(140 - 62 - 0.8, 3);
     expect(by('drawing.drawn')).toMatchObject({ origin: 'DRAWN_BY' });
     expect(by('drawing.sheet')).toBeDefined();
     expect(by('fmt:Scale {SCALE}')).toMatchObject({ anchor: 'middle' });

@@ -931,12 +931,20 @@ export function importScale(imp: Pick<TitleBlockDxf, 'width' | 'height'>, scale 
   return k * Math.min(1, FREE_TEMPLATE_MAX.w / (imp.width * k), FREE_TEMPLATE_MAX.h / (imp.height * k));
 }
 
-/** Room from a horizontal text's anchor to the nearest vertical line (or the block edge), mm. */
-function roomFor(graphics: TemplateGraphic[], x: number, y: number, h: number, anchor: Anchor, W: number): number {
+/**
+ * Room from a horizontal text's anchor to the nearest vertical line, other text
+ * (`others`: boxes of the texts kept on the block) or the block edge, mm.
+ */
+function roomFor(graphics: TemplateGraphic[], others: Box[], x: number, y: number, h: number, anchor: Anchor, W: number): number {
   let left = 0;
   let right = W;
   const ya = y + 0.2 * h;
   const yb = y + 0.8 * h;
+  for (const b of others) {
+    if (b.y1 < ya || b.y0 > yb) continue;
+    if (b.x0 > x + 0.3) right = Math.min(right, b.x0);
+    else if (b.x1 < x - 0.3) left = Math.max(left, b.x1);
+  }
   const seg = (a: Vec2, b: Vec2) => {
     if (Math.abs(a.x - b.x) > 0.05 * Math.max(1e-9, Math.abs(a.y - b.y))) return;
     const lo = Math.min(a.y, b.y);
@@ -980,9 +988,21 @@ export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlock
   const border = c.border !== false;
   const graphics = imp.graphics.map((g) => shiftGraphic(g, 0, 0, k)).filter((g) => !border || !onOutline(g, W, H));
   const texts: TemplateText[] = [];
+  // Boxes of the texts kept on the block (as drawn in the DXF), per text: a field's value stops before its neighbours.
+  const boxes = imp.texts.map((t, i) => {
+    if (!(c.map?.[i] ?? t.suggested)) return [];
+    return t.lines
+      .filter((l) => l.text.trim())
+      .map((l) => {
+        const b = emptyBox();
+        for (const q of textCorners({ x: l.x * k, y: l.y * k }, l.text, t.h * k, t.anchor, t.rot)) grow(b, q);
+        return b;
+      });
+  });
   imp.texts.forEach((t, i) => {
     const src = c.map?.[i] ?? t.suggested;
     if (!src) return;
+    const others = boxes.filter((_, j) => j !== i).flat();
     const style = { h: rnd(t.h * k), ...(t.anchor !== 'start' ? { anchor: t.anchor } : {}), ...(t.rot ? { rot: t.rot } : {}), ...(t.bold ? { bold: true } : {}) };
     const origin = t.tag ?? t.lines.map((l) => l.text).join(' ');
     if (src === 'text:' || src === 'fmt:') {
@@ -991,7 +1011,7 @@ export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlock
         const live = src === 'fmt:' && textPlaceholders(l.text).length > 0;
         const x = rnd(l.x * k);
         const y = rnd(l.y * k);
-        const room = live && !t.rot ? roomFor(graphics, x, y, style.h, t.anchor, W) : 0;
+        const room = live && !t.rot ? roomFor(graphics, others, x, y, style.h, t.anchor, W) : 0;
         texts.push({ x, y, ...style, source: `${live ? 'fmt:' : 'text:'}${l.text}`, ...(room > 0 ? { maxW: rnd(room) } : {}), ...(live ? { origin } : {}) });
       }
       return;
@@ -999,7 +1019,7 @@ export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlock
     const l = t.lines[0];
     const x = rnd(l.x * k);
     const y = rnd(l.y * k);
-    const room = !t.rot && src !== 'projection' ? roomFor(graphics, x, y, style.h, t.anchor, W) : 0;
+    const room = !t.rot && src !== 'projection' ? roomFor(graphics, others, x, y, style.h, t.anchor, W) : 0;
     texts.push({ x, y, ...style, source: src, ...(room > 0 ? { maxW: rnd(room) } : {}), origin });
   });
   const lr = c.logoRect;

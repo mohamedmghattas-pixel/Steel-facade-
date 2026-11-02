@@ -236,3 +236,30 @@ describe('download names from very long project names', () => {
     expect(downloadName(`${'a'.repeat(190)}.ifc`)).toBe(`${'a'.repeat(190)}.ifc`);
   });
 });
+
+describe('long PDF books', () => {
+  it('give the page a turn between pages (progress, Cancel), whatever the painter does', async () => {
+    const { sheetsToPdf } = await import('../src/core/export/pdfBook');
+    let timer = false;
+    // A painter whose promise resolves at once, like svg2pdf when its module is already in the bundle.
+    const busy = async (doc: { text: (t: string, x: number, y: number) => unknown }) => {
+      const t = Date.now();
+      while (Date.now() - t < 15);
+      doc.text('x', 10, 10);
+    };
+    let timerRanBeforeLastPage = false;
+    const pdf = await sheetsToPdf(
+      Array.from({ length: 12 }, () => ({ svg: () => '<svg/>', w: 210, h: 297 })),
+      busy as never,
+      {
+        onPage: (i, n) => {
+          // Scheduled once the book is under way (after jsPDF has loaded).
+          if (i === 0) setTimeout(() => (timer = true), 0);
+          if (i === n - 1) timerRanBeforeLastPage = timer;
+        },
+      },
+    );
+    expect(timerRanBeforeLastPage).toBe(true);
+    expect(pdf.length).toBeGreaterThan(1000);
+  });
+});

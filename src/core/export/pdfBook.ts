@@ -42,6 +42,13 @@ export class PdfCancelled extends Error {
   }
 }
 
+/**
+ * A macrotask, so the page can repaint (progress) and take input (Cancel) during a long book.
+ * Awaiting the painter alone does not do it: its promises can all resolve as microtasks (the
+ * offline single-file build rendered a 528-page set in one 33 s task).
+ */
+const yieldToPage = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
 export async function sheetsToPdf(sheets: PdfSheet[], paint: SvgPainter, opts: PdfBookOptions = {}): Promise<Uint8Array> {
   const { jsPDF } = await import('jspdf');
   const first = sheets[0] ?? { w: 210, h: 297 };
@@ -49,6 +56,7 @@ export async function sheetsToPdf(sheets: PdfSheet[], paint: SvgPainter, opts: P
   if (opts.title) doc.setProperties({ title: opts.title, creator: 'FacadeSteel' });
   let group = null as { name: string; node: unknown } | null;
   let marked = false;
+  let lastYield = Date.now();
   for (const [i, s] of sheets.entries()) {
     if (i > 0) doc.addPage([s.w, s.h], orient(s));
     await paint(doc, s.svg(), s.w, s.h);
@@ -63,6 +71,10 @@ export async function sheetsToPdf(sheets: PdfSheet[], paint: SvgPainter, opts: P
       doc.outline.add(parent, bookmarkText(bm.title), { pageNumber: i + 1 });
     }
     if (opts.onPage?.(i, sheets.length) === false) throw new PdfCancelled();
+    if (Date.now() - lastYield > 50) {
+      await yieldToPage();
+      lastYield = Date.now();
+    }
   }
   if (marked) doc.setDisplayMode('fullpage', 'continuous', 'UseOutlines');
   return new Uint8Array(doc.output('arraybuffer'));

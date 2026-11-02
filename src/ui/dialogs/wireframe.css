@@ -220,3 +220,10 @@
   padding: 2px 8px;
   height: auto;
 }
+
+/* Split at stock length: stock per profile. */
+.ss-stock {
+  margin: 0 0 8px;
+  padding-left: 16px;
+  font-size: 12px;
+}

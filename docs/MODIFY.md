@@ -20,12 +20,13 @@ message for the user and leaves the model unchanged.
 | Selection commands (menu, keys, properties) | `src/ui/modifyActions.ts` |
 | Options bar, context menu, Operations section | `src/ui/ModifyPanels.tsx`, `src/ui/modify.css` |
 | Viewer hooks (hover, press / drag, click, right-click, preview overlay) | `src/viewer/Viewer.ts` |
+| Split at stock length, at transoms (pure, tested; §5a) | `src/core/model/stockSplit.ts`, `src/ui/stockSplitActions.ts`, `src/ui/dialogs/StockSplitDialog.tsx` |
 | Assistant tools | `src/assistant/modules/modify.ts` |
-| Tests | `tests/modify.test.ts`, `tests/connectionsFollow.test.ts` (connections, every type) |
+| Tests | `tests/modify.test.ts`, `tests/connectionsFollow.test.ts` (connections, every type), `tests/stockSplit.test.ts` |
 
 ## 1. Using the tools
 
-- **Tool rail → Modify:** Join, Split, Extend, Trim, Break, Stretch, Rotate, Mirror, Offset, Reverse, Match, Section ⟳.
+- **Tool rail → Modify:** Join, Split, Extend, Trim, Break, *Stock split* (§5a), Stretch, Rotate, Mirror, Offset, Reverse, Match, Section ⟳.
 - **While a tool is active:**
   - The status bar prompts for the next step.
   - The options bar at the bottom of the 3D view shows the tool's settings.
@@ -178,6 +179,74 @@ The two pieces copy the member. Close the gap with **Join** (collinear, max gap 
 
 **Break tool:** click the member where the gap goes. Type the gap (`50`), or `<` / `>` / `=` for the side.
 
+## 5a. Split at stock length, at transoms
+
+A mullion longer than the stock bar of its profile is divided into pieces that
+each fit a bar, at transoms, with a stack joint (`planStockSplit`,
+`applyStockSplit` in `core/model/stockSplit.ts`).
+
+- **Members:** the selection, or every mullion when nothing is selected. Only
+  mullions and posts are divided (they are divided at transoms / rails);
+  others are listed as not checked.
+- **Stock length:** the longest bar for the member's profile and material —
+  stock on hand with a quantity left (*Project settings → stock*), else the
+  longest standard stock length — or a length given in the dialog. The longest
+  piece is the bar less 2 × end trim and the kerf (the bar nesting's rule:
+  12,000 − 2 × 10 − 3 = 11,977 mm by default). The member's length is its wire
+  line plus its end extensions.
+- **Where:** measured from the member's lower end, each cut goes at the
+  transom junction (a node on the member's span where a transom / rail meets
+  it) whose joint leaves the longest piece that still fits — the junction
+  nearest below the limit — and so on up the member.
+- **Joint position** at that transom:
+
+  | Option | Piece below ends | Piece above starts | The transom |
+  | --- | --- | --- | --- |
+  | *Above* (`top`, default) | just above the transom's top face (and its joint parts) + clearance | one gap higher | stays on the piece below (a through-node) |
+  | *Below* (`bottom`) | one gap lower | just below the transom's bottom face (and its joint parts) − clearance | stays on the piece above |
+  | *Centre line* (`centre`) | gap / 2 below the transom axis | gap / 2 above it | its ends move gap / 2 down onto the top of the piece below, so it connects to the lower piece (the length the sleeve is fixed to); its transom joints there are removed for Auto-connect to place again on the lower piece |
+
+  The transom's faces come from its profile: the section's extent along the
+  member axis, with its rotation, surface normal and alignment (an RHS 100×50
+  with its depth along the facade normal: ±25 mm). With the derived model
+  (always in the dialog and the assistant) the joint also clears the parts of
+  the connections at the junction (cleats, fin plates), so no joint hole ends
+  up past a piece end.
+- **Gap:** the project's stack-joint size (*Wireframe check → Rules → New
+  joints*, default 30 mm), or the dialog's value. It must lie in the
+  stack-joint range (10–60 mm) — the plan warns otherwise. **Clearance**
+  (default 0) adds distance between the transom (or its joint parts) and the
+  joint.
+- **Not divided:** a member with no transom where a joint would leave a piece
+  that fits, or whose candidate gaps would swallow another junction, its
+  parts, a bracket or a connection node, is left as it is and listed with the
+  reason.
+- **Result:** the piece at the member's start keeps its id and start details,
+  the last piece its end details; connections, end-preparation targets and
+  welded plates go to the piece at their node; manual assemblies keep every
+  piece; one undo step. The wireframe check lists each new joint as a kept
+  stack joint and Auto-connect gives it a splice (sleeve on hollow sections),
+  the lower piece as the main member.
+
+**Dialog** (tool rail → Modify → *Stock split*, the Split tool's options bar
+*At stock length (transoms)…*, right-click a member → *Split at stock length,
+at transoms (stack joint)…*, Properties → Operations → *stock length…*):
+members, stock length (by profile, with the bar, its source and the longest
+piece, or a length), joint position, gap and clearance; the counts before
+applying (members checked, longer than the stock, divided → pieces, left as
+they are), warnings, the members to divide and the ones left, with zoom; the
+planned joints in the 3D view (teal; members left as they are in red).
+
+On the client facade (119 continuous mullions up to 12 m, profiles and
+auto-connect first): a 12 m bar (11,977 mm pieces) divides 29 mullions into
+58 pieces; 6 m bars divide 89 into 216 pieces. The check then lists 97 (or
+195) stack joints and Auto-connect adds the 29 (or 127) sleeves, with no
+other change. With *Above* or *Below* and no clearance, the default sleeve's
+bolts (up to about 100 mm into each piece) come within 8–10 mm of the transom
+cleat bolts in the same faces: the checks report the hole spacing. A clearance
+of 100 mm (12 m bars) or 150 mm (6 m bars) clears them, with no code-check
+error left.
+
 ## 6. Stretch (move an end)
 
 `moveMemberEnd(id, end, to, mode)`:
@@ -291,6 +360,7 @@ The parameters are transformed by the same rules as a mirror, so the parts are t
 | `modify_match` | source, targets, fields |
 | `modify_reverse` | — |
 | `modify_measure` | length, angles, angle between two members |
+| `modify_stock_split` | split at stock length at transoms (§5a): `filter` (default every mullion), `stockLength`, `at` (top / bottom / centre), `gap`, `clearance`, `dryRun`; returns the counts, the members divided (piece lengths, bar and its source), the ones left with the reason, and warnings |
 | `connection_flip_side` | connections (ids, else the selected), axis `y` / `z` |
 
 - Members are chosen by `filter`: `ids`, `selected` (the default), `all`, `role`, `profile` or `direction`, as in the core tools.
@@ -314,6 +384,7 @@ Copy and Array in `ops.ts`):
 | Join / close gap | of the joined pieces: re-pointed; on the joint, of the pieces: removed (reported; the UI asks first); joints of other members there: re-pointed to the joined member | outer ends kept (converted), inner ends dropped | re-pointed |
 | Split / divide / stock lengths / at crossings | stay on the piece at their node; a split main is re-pointed to the piece that contains the node (the upper one at a cut) | kept at their ends; new cut ends square | to the piece they sit on |
 | Break | as split; refused with a connection in the gap | as split | as split |
+| Split at stock length | on the piece at their node (a transom's cleat on the piece it stays on); *centre*: the transom joints at the moved node are removed (reported) for Auto-connect | kept at the member's ends; new joint ends square | to the nearest piece |
 | Extend / exact length / to a plane / stretch | move with the end; main kept while it meets the end, else reported | kept | — |
 | Extend to member | move with the end; the member extended to becomes the main; *face* on a connected end keeps the wire on the axis and sets the joint gap (§4) | kept | — |
 | Corner join / join to member | move with the end; the other member becomes the main where the old one no longer meets | kept | — |
@@ -345,3 +416,8 @@ Two single helpers in `modify.ts` are the place for stored directions (a surface
 - **Offset along the normal:** members without a surface normal fall back to local z (reported).
 - **Mirror section:** members only. Connection profile parts (cleats, tees) have no mirror flag; they are placed through their own frames, so the angle of a mirrored joint is still the mirror image of the original one.
 - **Measure:** angles are between axes (wire lines), not section faces.
+- **Split at stock length:**
+  - *Centre line* joints move the transom ends half the gap off their drawn axis (reported), and the transom joint there sits at the end of the lower piece; use *Above* / *Below* to keep the transoms where they are drawn.
+  - The joint clears the transom and the connection parts at that junction, not the splice that Auto-connect adds afterwards: give a clearance (about 100 mm with the default sleeve) where the checks report the hole spacing.
+  - Run Auto-connect before the split so the joints also clear the cleats; without connections only the transom sections are cleared.
+  - Lengths are measured on the wire line plus extensions, not the derived cut length (connection trims only shorten it).

@@ -44,6 +44,11 @@ export class Sheet {
   overflow: SheetBlock[] = [];
   /** Layout notices of the generator (shown with the sheet, e.g. marks left out). */
   notices: string[] = [];
+  /**
+   * Measuring sheet (drawing index, see onDemand.ts): the layout packer places blocks
+   * and records what overflows, but does not draw them.
+   */
+  dry = false;
   private seq = new Map<string, number>();
   constructor(
     public w: number,

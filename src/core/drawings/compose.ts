@@ -20,6 +20,16 @@ export interface DrawCtx {
   template: SheetTemplate;
   /** Zone plans of divided views, by view and sheet size (see zoning.ts). */
   zonePlans?: Map<string, ZonePlan | null>;
+  /**
+   * Measuring for the drawing index (onDemand.ts): generators build and pack their
+   * blocks (tables, notes) on dry sheets but skip the views; `finalize` returns sheet
+   * stubs without entities. Ids, numbers, titles and sheet counts are the same as
+   * when the sheets are drawn, since what continues on further sheets depends on the
+   * blocks only.
+   */
+  measure?: boolean;
+  /** State shared by the generators of one project state (setting-out groups, anchor rows, phases …). */
+  memo: Map<string, unknown>;
 }
 
 export function makeCtx(p: Project, dm: DerivedModel): DrawCtx {
@@ -30,14 +40,72 @@ export function makeCtx(p: Project, dm: DerivedModel): DrawCtx {
     usage: partUsage(dm),
     gaNumbers: ['front', 'plan'].map((v) => drawingNumber(p, `ga-${v}`)),
     template: activeTemplate(p),
+    zonePlans: new Map(),
+    memo: new Map(),
   };
 }
+
+/** A value computed once per drawing context (shared by its measuring copy). */
+export function memo<T>(ctx: DrawCtx, key: string, make: () => T): T {
+  if (ctx.memo.has(key)) return ctx.memo.get(key) as T;
+  const v = make();
+  ctx.memo.set(key, v);
+  return v;
+}
+
+/**
+ * One drawing of the set (its first sheet and any continuation sheets), made on
+ * demand. Families list their drawings as items in register order; `allDrawings`
+ * makes all of them, the drawing index (onDemand.ts) measures them and makes one
+ * when it is viewed or exported.
+ */
+export interface PlanItem {
+  /** Id of the drawing's first sheet. */
+  id: string;
+  /** Makes the drawing (null: it has nothing to show); with a measuring context, its stub. */
+  make: (ctx: DrawCtx) => Drawing | null;
+  /**
+   * What the drawing shows, as a string that changes whenever its content may (besides the
+   * project-wide drawing settings and the sheet's own revisions and edits, which the index adds).
+   * Absent: the whole derived model (GA, zone, sequence and section sheets).
+   */
+  dep?: () => string;
+  /** Measuring needs the whole drawing anyway (its blocks depend on the geometry): make it in full. */
+  full?: boolean;
+  /**
+   * Navigation (view sheets): the highest score an assembly instance (its main part ref)
+   * can get on the drawing, known without drawing it — 3 its mark is placed, 2 listed in
+   * the zone, 1 only drawn, 0 not shown (see navigation.ts). Absent: any instance may be marked.
+   */
+  bound?: (inst: string) => number;
+}
+
+/** 53-bit string hash (cyrb53), hex. */
+export function hashString(str: string, seed = 0): string {
+  let h1 = 0xdeadbeef ^ seed;
+  let h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16).padStart(14, '0');
+}
+
+/** Hash of some JSON-serialisable values (dependency signatures). */
+export const depHash = (...values: unknown[]) => hashString(JSON.stringify(values));
+
+/** The measuring copy of a context (same caches). */
+export const measuring = (ctx: DrawCtx): DrawCtx => (ctx.measure ? ctx : { ...ctx, measure: true });
 
 /** A blank sheet; with a context its layout keeps clear of the template's title block. */
 export function newSheet(size: SheetSize, ctx?: DrawCtx): Sheet {
   const s = SHEETS[size];
   const sh = new Sheet(s.w, s.h);
   if (ctx) sh.tb = { w: ctx.template.width, h: ctx.template.height };
+  if (ctx?.measure) sh.dry = true;
   return sh;
 }
 
@@ -94,12 +162,43 @@ export function finalize(ctx: DrawCtx, s: Sheet, size: SheetSize, o: SheetInfo):
     rest = left;
   }
   const count = 1 + more.length;
+  if (ctx.measure) return stubSheets(ctx, s, size, o, count);
   if (count === 1) return finishSheet(ctx, s, size, o);
   const number = o.number ?? drawingNumber(ctx.p, o.id);
   const first = finishSheet(ctx, s, size, { ...o, number, sheetNo: `1/${count}` }, 1, count);
   first.continuation = more.map((sh, i) =>
     finishSheet(ctx, sh, size, { ...o, number, id: sheetId(o.id, i + 2), sheetNo: `${i + 2}/${count}`, fingerprint: undefined, viewports: undefined, subtitle: `${o.subtitle} · continued` }, i + 2, count),
   );
+  return first;
+}
+
+/**
+ * The sheets of a drawing as measured (ctx.measure): identification, title, size and
+ * sheet n/N, without entities, fingerprint or revision state (the drawing index adds
+ * those). Continuation sheets follow in `continuation` as for a drawn sheet.
+ */
+function stubSheets(ctx: DrawCtx, s: Sheet, size: SheetSize, o: SheetInfo, count: number): Drawing {
+  const number = o.number ?? drawingNumber(ctx.p, o.id);
+  const stub = (id: string, i: number): Drawing => ({
+    id,
+    kind: o.kind,
+    number,
+    mark: o.mark,
+    title: o.title,
+    sheetSize: size,
+    sheet: { w: s.w, h: s.h },
+    scale: o.scale,
+    rev: '-',
+    status: 'In preparation',
+    revisions: [],
+    fingerprint: '',
+    changed: true,
+    entities: [],
+    ...(count > 1 ? { sheetIndex: i, sheetCount: count } : {}),
+    ...(o.zone ? { zone: o.zone } : {}),
+  });
+  const first = stub(o.id, 1);
+  if (count > 1) first.continuation = Array.from({ length: count - 1 }, (_, i) => stub(sheetId(o.id, i + 2), i + 2));
   return first;
 }
 
@@ -196,5 +295,10 @@ export function designation(pt: Part): string {
 /** Does any assembly close this hollow part with welded plates (needs galvanizing vents)? */
 export function closedByWelding(ctx: DrawCtx, pt: Part): boolean {
   if (pt.shape?.type !== 'RHS' && pt.shape?.type !== 'CHS') return false;
-  return ctx.dm.parts.some((o) => o.weldedTo === pt.ref && o.kind === 'plate');
+  const welded = memo(ctx, 'weldedPlates', () => {
+    const set = new Set<string>();
+    for (const o of ctx.dm.parts) if (o.weldedTo && o.kind === 'plate') set.add(o.weldedTo);
+    return set;
+  });
+  return welded.has(pt.ref);
 }

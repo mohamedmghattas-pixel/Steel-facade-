@@ -8,7 +8,7 @@
  */
 import type { Project } from '../model/types';
 import { uniqueAssemblies, uniqueParts, type DerivedModel } from '../derive/model';
-import type { Drawing } from '../drawings/types';
+import type { Drawing, SheetRecord } from '../drawings/types';
 import { sheetsToXlsx, type FormStyle, type Row } from '../reports/bom';
 import type { CellValue } from '../io/xlsxTemplate';
 import type { OutputId, PackageIssue, QafMapping, VcfMapping } from './types';
@@ -89,9 +89,11 @@ export interface QafDecision {
 export interface QafContext {
   p: Project;
   dm: DerivedModel;
-  drawings: Drawing[];
+  drawings: Pick<SheetRecord, 'number' | 'revisions' | 'status'>[];
   /** Outputs that write at least one file in this package. */
   exported: ReadonlySet<OutputId>;
+  /** Small text of the sheets (smallTexts), when the drawings are index entries without their entities. */
+  small?: { count: number; min: number; sheets: string[] };
 }
 
 /** Texts smaller than 2.5 mm outside the title block (ISO 7200 field labels are 1.8 mm by design). */
@@ -129,7 +131,7 @@ export function evaluateQaf(c: QafContext): QafDecision[] {
   const unreleased = drawings.filter((d) => d.status !== 'Released').length;
   const kerf = p.settings.kerf;
   const endTrim = p.settings.endTrim;
-  const small = smallTexts(drawings);
+  const small = c.small ?? smallTexts(drawings as Drawing[]);
   const decide: Record<string, [QafAnswer, string]> = {
     drafting: [null, 'Manual: company drafting settings are not known to FacadeSteel (sheets follow ISO 5457 / 7200 / 128 or ASME).'],
     font: [null, 'Manual: drawings use ISO 3098 type B lettering; the company font cannot be checked.'],
@@ -327,7 +329,7 @@ export function vcfRows(history: PackageIssue[], current: PackageIssue): VcfRow[
 }
 
 /** Change summary of the current issue: counts on the first issue, else drawing revisions and confirmations since the last one. */
-export function issueSummary(p: Project, dm: DerivedModel, drawings: Drawing[], history: PackageIssue[], rev: string): string {
+export function issueSummary(p: Project, dm: DerivedModel, drawings: Pick<Drawing, 'number' | 'revisions'>[], history: PackageIssue[], rev: string): string {
   const earlier = history.filter((h) => h.rev !== rev);
   const asm = uniqueAssemblies(dm).length;
   const parts = uniqueParts(dm);

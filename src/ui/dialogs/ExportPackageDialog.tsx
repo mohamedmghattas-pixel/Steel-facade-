@@ -41,6 +41,7 @@ import {
   deleteExportTemplate,
   outlineCurrentPackage,
   planCurrentPackage,
+  prepareCurrentPackage,
   type PackageOutline,
   runExportPackage,
   saveExportTemplate,
@@ -110,16 +111,17 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
     setCalculating(true);
     const req = { template: tpl, settings, skip: [...skip] };
     const at = [...inputs];
-    // A tick first, so the busy state shows before the drawing set and the outputs are planned.
-    setTimeout(() => {
+    // The drawing index is measured in slices that yield to the page, then the outputs are planned.
+    void (async () => {
       try {
+        await prepareCurrentPackage();
         setPlanned({ plan: planCurrentPackage(req), inputs: at });
       } catch (e) {
-        notify(`Could not plan the package: ${(e as Error).message}`, 'error');
+        if ((e as Error).name !== 'AbortError') notify(`Could not plan the package: ${(e as Error).message}`, 'error');
       } finally {
         setCalculating(false);
       }
-    }, 20);
+    })();
   };
   useEffect(() => {
     if (live && !plan && !calculating) setPlanned({ plan: planCurrentPackage({ template: tpl, settings, skip: [...skip] }), inputs: [project, tpl, settings, skip] });

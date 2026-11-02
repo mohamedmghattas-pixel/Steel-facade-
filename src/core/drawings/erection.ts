@@ -28,11 +28,11 @@ import { Sheet, balloon, dimChain, dimLinear, dimRunning, drawTable, tableSize, 
 import { frameRect, notesBlock, packBlocks, tableBlock, REV_H, type Block, type Rect } from './layout';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
 import { bounds, partCorners } from './project';
-import { designation, finalize, newSheet, type DrawCtx } from './compose';
+import { depHash, designation, finalize, memo, newSheet, type DrawCtx, type PlanItem } from './compose';
 import { drawingNumber, seriesNumber } from './register';
 import { cutPrism, drawCut, hatch, partPrism, projectPrism, viewLabel, type ViewAxes } from './section';
 import { blit, entsBox, textExtent } from './viewLayout';
-import { drawGaView, zoneInfo } from './gaDrawing';
+import { drawGaView, zoneBound, zoneInfo } from './gaDrawing';
 import { zoneNumber, zonePlanFor, zoneSheetLayout, zoningSettings, type Zone, type ZonePlan } from './zoning';
 import { drawZoneView, keyPlanBlock, zoneNotes } from './zoneView';
 
@@ -118,8 +118,21 @@ function connectionMark(dm: DerivedModel, cid: string): string {
 
 /** Every slab bracket of the model with its anchors, level and slab-edge geometry. */
 export function slabBrackets(p: Project, dm: DerivedModel): BracketInfo[] {
+  return drainSteps(slabBracketSteps(p, dm));
+}
+
+const drainSteps = <T,>(g: Generator<unknown, T>): T => {
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
+};
+
+function* slabBracketSteps(p: Project, dm: DerivedModel): Generator<void, BracketInfo[]> {
   const out: BracketInfo[] = [];
+  let seen = 0;
   for (const c of Object.values(p.connections)) {
+    if (++seen % 1000 === 0) yield;
     if (c.type !== 'slabBracket' || !dm.connectionOut.has(c.id)) continue;
     const node = p.nodes[c.node]?.p;
     if (!node) continue;
@@ -190,8 +203,23 @@ export interface AnchorRow {
 
 /** Every anchor of the model (bolts of kind "anchor"), ordered by level, then along the facade. */
 export function anchorRows(p: Project, dm: DerivedModel): AnchorRow[] {
+  return drainSteps(anchorRowSteps(p, dm));
+}
+
+/** anchorRows in steps, cached on the context (the drawing index builds it in slices). */
+export function* anchorRowsFor(ctx: DrawCtx): Generator<void, AnchorRow[]> {
+  const hit = ctx.memo.get('anchorRows') as AnchorRow[] | undefined;
+  if (hit) return hit;
+  const rows = yield* anchorRowSteps(ctx.p, ctx.dm);
+  if (!ctx.memo.has('anchorRows')) ctx.memo.set('anchorRows', rows);
+  return ctx.memo.get('anchorRows') as AnchorRow[];
+}
+
+function* anchorRowSteps(p: Project, dm: DerivedModel): Generator<void, AnchorRow[]> {
   const raw: Omit<AnchorRow, 'id'>[] = [];
+  let seen = 0;
   for (const b of dm.bolts) {
+    if (++seen % 5000 === 0) yield;
     if (b.kind !== 'anchor') continue;
     const c = p.connections[b.connectionId];
     const mount = c?.type === 'slabBracket' ? (resolveParams(c, p).mount === 'top' ? 'slab top' : 'slab edge') : Math.abs(b.dir.z) > 0.7 ? 'top' : 'side';
@@ -216,6 +244,7 @@ export function anchorRows(p: Project, dm: DerivedModel): AnchorRow[] {
       });
     }
   }
+  yield;
   raw.sort((a, b) => a.z - b.z || a.x - b.x || a.y - b.y);
   const w = Math.max(2, String(raw.length).length);
   return raw.map((r, i) => ({ id: `AN${String(i + 1).padStart(w, '0')}`, ...r }));
@@ -245,7 +274,20 @@ const facing = (n: Vec3) => COMPASS[(Math.round((Math.atan2(-n.y, -n.x) * 180) /
 
 /** Brackets grouped by level and slab edge, each split into sheets that fit at 1:20. */
 export function setoutGroups(p: Project, dm: DerivedModel): SetoutGroup[] {
-  const brackets = slabBrackets(p, dm);
+  return drainSteps(setoutGroupSteps(p, dm));
+}
+
+/** setoutGroups in steps, cached on the context (the drawing index builds it in slices). */
+export function* setoutGroupsFor(ctx: DrawCtx): Generator<void, SetoutGroup[]> {
+  const hit = ctx.memo.get('setoutGroups') as SetoutGroup[] | undefined;
+  if (hit) return hit;
+  const groups = yield* setoutGroupSteps(ctx.p, ctx.dm);
+  if (!ctx.memo.has('setoutGroups')) ctx.memo.set('setoutGroups', groups);
+  return ctx.memo.get('setoutGroups') as SetoutGroup[];
+}
+
+function* setoutGroupSteps(p: Project, dm: DerivedModel): Generator<void, SetoutGroup[]> {
+  const brackets = yield* slabBracketSteps(p, dm);
   const groups = new Map<string, SetoutGroup>();
   for (const b of brackets) {
     const sector = Math.round(Math.atan2(b.n.y, b.n.x) / (Math.PI / 4));
@@ -280,7 +322,16 @@ export function setoutGroups(p: Project, dm: DerivedModel): SetoutGroup[] {
 }
 
 export function setoutDrawings(ctx: DrawCtx): Drawing[] {
-  const groups = setoutGroups(ctx.p, ctx.dm);
+  return setoutItems(ctx).map((it) => it.make(ctx)!);
+}
+
+/**
+ * The setting-out sheets as plan items. Each depends on its brackets (with their parts
+ * and the mullions), its place along the slab edge, the grids, the survey and the
+ * tolerances — not on the rest of the model.
+ */
+export function setoutItems(ctx: DrawCtx): PlanItem[] {
+  const groups = drainSteps(setoutGroupsFor(ctx));
   const perLevel = new Map<string, number>();
   for (const g of groups) perLevel.set(g.level.id, (perLevel.get(g.level.id) ?? 0) + 1);
   const seen = new Map<string, number>();
@@ -311,7 +362,16 @@ export function setoutDrawings(ctx: DrawCtx): Drawing[] {
             }),
           }
         : undefined;
-    return setoutDrawing(ctx, g, id, i + 1, n > 1 ? `${j}/${n}` : '', edge);
+    const part = n > 1 ? `${j}/${n}` : '';
+    const { p } = ctx;
+    const insts = new Set(g.brackets.map((b) => b.inst).filter(Boolean));
+    return {
+      id,
+      make: (c: DrawCtx) => setoutDrawing(c, g, id, i + 1, part, edge),
+      // Navigation: the bracket balloons name their assembly instances.
+      bound: (inst: string) => (insts.has(inst) ? 3 : 0),
+      dep: () => depHash('setout', g, edge ?? null, i, part, p.grids, p.survey ?? null, p.settings.movement?.tolerances ?? null),
+    };
   });
 }
 
@@ -498,6 +558,18 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
     }
   }
   if (!den) den = ISO_SCALES[ISO_SCALES.length - 1];
+  const marks = [...new Set(g.brackets.map((b) => b.mark))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  const info = {
+    id,
+    kind: 'setout' as const,
+    mark: `SO-${g.level.name}`,
+    title: `Bracket setting-out – ${lvTitle}${edge ? ` – zone ${edge.index + 1} of ${edge.numbers.length}` : part ? ` (${part})` : ''}`,
+    subtitle: `${g.brackets.length} bracket${g.brackets.length === 1 ? '' : 's'} (${marks.join(', ')}) · ${g.brackets.reduce((t, b) => t + b.anchors.length, 0)} anchors`,
+    scale: scaleLabel(den),
+    number: seriesNumber(p, 'E', index),
+  };
+  // Measuring (drawing index): the blocks decide the sheet count; the plan view is left out.
+  if (ctx.measure) return finalize(ctx, s, size, info);
   const M = (v: Vec2): Vec2 => ({ x: (v.x - bb.minX) / den, y: (v.y - bb.minY) / den });
   const P = (q: Vec3) => M(to2(q));
 
@@ -701,16 +773,7 @@ function setoutDrawing(ctx: DrawCtx, g: SetoutGroup, id: string, index: number, 
   const d = { x: (area.x0 + area.x1) / 2 - (box.x0 + box.x1) / 2, y: Math.min((area.y0 + area.y1) / 2 - (box.y0 + box.y1) / 2, area.y1 - 2 - box.y1) };
   blit(s, S, d, 'view:plan');
 
-  const marks = [...new Set(g.brackets.map((b) => b.mark))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return finalize(ctx, s, size, {
-    id,
-    kind: 'setout',
-    mark: `SO-${g.level.name}`,
-    title: `Bracket setting-out – ${lvTitle}${edge ? ` – zone ${edge.index + 1} of ${edge.numbers.length}` : part ? ` (${part})` : ''}`,
-    subtitle: `${g.brackets.length} bracket${g.brackets.length === 1 ? '' : 's'} (${marks.join(', ')}) · ${g.brackets.reduce((t, b) => t + b.anchors.length, 0)} anchors`,
-    scale: scaleLabel(den),
-    number: seriesNumber(p, 'E', index),
-  });
+  return finalize(ctx, s, size, info);
 }
 
 // ---------------------------------------------------------------------------
@@ -732,8 +795,13 @@ const ANCHOR_COLS: TableSpec['cols'] = [
 ];
 
 export function anchorScheduleDrawings(ctx: DrawCtx): Drawing[] {
-  const { p, dm } = ctx;
-  const rows = anchorRows(p, dm);
+  return anchorItems(ctx).map((it) => it.make(ctx)!);
+}
+
+/** The anchor schedule sheets as plan items; each depends on its rows (and sheet 1 on the totals). */
+export function anchorItems(ctx: DrawCtx): PlanItem[] {
+  const { p } = ctx;
+  const rows = drainSteps(anchorRowsFor(ctx));
   if (!rows.length) return [];
   const size = p.drawings.settings.sheet;
   const f = frameRect(size);
@@ -752,8 +820,8 @@ export function anchorScheduleDrawings(ctx: DrawCtx): Drawing[] {
     e.qty++;
     totals.set(k, e);
   }
-  const out: Drawing[] = [];
-  for (let i = 0; i < pages; i++) {
+  const brackets = new Set(rows.map((r) => r.connectionId)).size;
+  const sheet = (ctx: DrawCtx, i: number): Drawing => {
     const s = newSheet(size, ctx);
     const chunk = rows.slice(i * perSheet, (i + 1) * perSheet);
     const spec: TableSpec = {
@@ -763,7 +831,8 @@ export function anchorScheduleDrawings(ctx: DrawCtx): Drawing[] {
       rowH,
     };
     const top = f.y1 - 4;
-    s.withTag({ group: 'table:anchor-schedule' }, () => drawTable(s, f.x0 + 4, top, spec));
+    // Measuring (drawing index): the schedule is not drawn, only the blocks beside it are packed.
+    if (!ctx.measure) s.withTag({ group: 'table:anchor-schedule' }, () => drawTable(s, f.x0 + 4, top, spec));
     const sz = tableSize(spec);
     if (i === 0) {
       const blocks: Block[] = [
@@ -792,19 +861,21 @@ export function anchorScheduleDrawings(ctx: DrawCtx): Drawing[] {
       ];
       if (besideTitle || top - sz.h > f.y0 + ctx.template.height + REV_H + 60) packBlocks(s, size, blocks);
     }
-    out.push(
-      finalize(ctx, s, size, {
-        id: `anchors-${i + 1}`,
-        kind: 'anchors',
-        mark: 'ANCHORS',
-        title: 'Anchor schedule',
-        subtitle: `${rows.length} anchors · ${new Set(rows.map((r) => r.connectionId)).size} brackets`,
-        scale: '—',
-        sheetNo: `${i + 1}/${pages}`,
-      }),
-    );
-  }
-  return out;
+    return finalize(ctx, s, size, {
+      id: `anchors-${i + 1}`,
+      kind: 'anchors',
+      mark: 'ANCHORS',
+      title: 'Anchor schedule',
+      subtitle: `${rows.length} anchors · ${brackets} brackets`,
+      scale: '—',
+      sheetNo: `${i + 1}/${pages}`,
+    });
+  };
+  return Array.from({ length: pages }, (_, i) => ({
+    id: `anchors-${i + 1}`,
+    make: (c: DrawCtx) => sheet(c, i),
+    dep: () => depHash('anchors', rows.slice(i * perSheet, (i + 1) * perSheet), rows.length, pages, brackets, i === 0 ? [...totals.values()] : null),
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -881,8 +952,13 @@ export function erectionPhases(p: Project, dm: DerivedModel): { phases: Sequence
 }
 
 export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
+  return sequenceItems(ctx).map((it) => it.make(ctx)!);
+}
+
+/** The erection sequence sheets as plan items (one per phase, or per phase and zone). */
+export function sequenceItems(ctx: DrawCtx): PlanItem[] {
   const { p, dm } = ctx;
-  const { phases, derived } = erectionPhases(p, dm);
+  const { phases, derived } = memo(ctx, 'phases', () => erectionPhases(p, dm));
   if (!phases.length || !dm.parts.length) return [];
   const asmOf = new Map<string, Assembly>();
   for (const a of dm.assemblies) for (const r of a.parts) asmOf.set(r, a);
@@ -890,8 +966,8 @@ export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
   phases.forEach((ph, i) => ph.assemblies.forEach((a) => phaseIndex.set(a, i)));
   const size = p.drawings.settings.gaSheet;
   const plan = zonePlanFor(ctx, 'front');
-  if (plan) return zonedSequenceDrawings(ctx, plan, phases, derived, asmOf, phaseIndex);
-  return phases.map((ph, k) => {
+  if (plan) return zonedSequenceItems(ctx, plan, phases, derived, asmOf, phaseIndex);
+  const one = (ctx: DrawCtx, ph: SequencePhase, k: number): Drawing => {
     const s = newSheet(size, ctx);
     const mass = (list: Assembly[]) => list.reduce((t, a) => t + a.mass, 0);
     const legend: TableSpec = {
@@ -947,27 +1023,38 @@ export function sequenceDrawings(ctx: DrawCtx): Drawing[] {
         }),
       );
     const areas = packBlocks(s, size, blocks);
-    const gv = drawGaView(p, dm, s, 'front', areas, {
-      style: (pt) => {
-        const a = asmOf.get(pt.ref);
-        const i = a ? (phaseIndex.get(a) ?? Infinity) : Infinity;
-        return i < k ? 'thin' : i === k ? 'heavy' : null;
-      },
-      mark: (a) => phaseIndex.get(a) === k,
-      label: (den) => `ERECTION SEQUENCE ${k + 1}/${phases.length} – ${ph.name}   ${scaleLabel(den)}`,
-    });
+    // Measuring (drawing index): the blocks decide the sheet count; the view is left out.
+    const gv = ctx.measure
+      ? null
+      : drawGaView(p, dm, s, 'front', areas, {
+          style: (pt) => {
+            const a = asmOf.get(pt.ref);
+            const i = a ? (phaseIndex.get(a) ?? Infinity) : Infinity;
+            return i < k ? 'thin' : i === k ? 'heavy' : null;
+          },
+          mark: (a) => phaseIndex.get(a) === k,
+          label: (den) => `ERECTION SEQUENCE ${k + 1}/${phases.length} – ${ph.name}   ${scaleLabel(den)}`,
+        });
     return finalize(ctx, s, size, {
       id: `seq-${ph.id}`,
       kind: 'sequence',
       mark: `SEQ-${k + 1}`,
       title: `Erection sequence ${k + 1}/${phases.length} – ${ph.name}`,
       subtitle: `${ph.assemblies.length} assemblies · ${mass(ph.assemblies).toFixed(0)} kg${derived ? ' · default sequence by floor' : ''}`,
-      scale: scaleLabel(gv.den),
+      scale: gv ? scaleLabel(gv.den) : '',
       number: seriesNumber(p, 'ES', k + 1),
       sheetNo: `${k + 1}/${phases.length}`,
-      viewports: [gv.viewport],
+      viewports: gv ? [gv.viewport] : undefined,
     });
-  });
+  };
+  const phaseOf = new Map<string, number>();
+  phases.forEach((ph, i) => ph.assemblies.forEach((a) => phaseOf.set(a.main, i)));
+  // Navigation: the phase is marked, earlier phases drawn, later ones left out.
+  const bound = (k: number) => (inst: string) => {
+    const i = phaseOf.get(inst);
+    return i === undefined || i > k ? 0 : i === k ? 3 : 1;
+  };
+  return phases.map((ph, k) => ({ id: `seq-${ph.id}`, make: (c: DrawCtx) => one(c, ph, k), bound: bound(k) }));
 }
 
 const SEQ_COLS: TableSpec['cols'] = [
@@ -985,14 +1072,14 @@ const SEQ_COLS: TableSpec['cols'] = [
  * lines refer to the same phase's sheet of the adjacent zone, else to the GA
  * zone sheet.
  */
-function zonedSequenceDrawings(
+function zonedSequenceItems(
   ctx: DrawCtx,
   plan: ZonePlan,
   phases: SequencePhase[],
   derived: boolean,
   asmOf: Map<string, Assembly>,
   phaseIndex: Map<Assembly, number>,
-): Drawing[] {
+): PlanItem[] {
   const { p, dm } = ctx;
   const size = plan.size;
   const gaBase = drawingNumber(p, 'ga-front');
@@ -1009,11 +1096,13 @@ function zonedSequenceDrawings(
   const has = new Set(sheets.map((x) => `${x.k}|${x.zone.index}`));
   const ref = (k: number, i: number) => (has.has(`${k}|${i}`) ? zoneNumber(seriesNumber(p, 'ES', k + 1), i) : zoneNumber(gaBase, i));
   const ov = zoningSettings(p).overlap;
-  return sheets.map(({ k, ph, zone, list }) => {
+  const one = (ctx: DrawCtx, { k, ph, zone, list }: (typeof sheets)[number]): Drawing => {
     const s = newSheet(size, ctx);
     const L = zoneSheetLayout(size, s.tb);
-    const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
-    s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+    if (!ctx.measure) {
+      const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
+      s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+    }
     const legend: TableSpec = {
       title: derived ? 'Erection sequence (default: by floor, bottom-up)' : 'Erection sequence',
       cols: [
@@ -1039,17 +1128,19 @@ function zonedSequenceDrawings(
       tableBlock({ title: `Assemblies in phase ${k + 1}, zone ${zone.index}`, cols: SEQ_COLS, rows, nav: { col: 0, kind: 'asm' } }),
     ];
     packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
-    const gv = drawZoneView(ctx, s, plan, zone, L, {
-      group: 'view:front',
-      style: (pt) => {
-        const a = asmOf.get(pt.ref);
-        const i = a ? (phaseIndex.get(a) ?? Infinity) : Infinity;
-        return i < k ? 'thin' : i === k ? 'heavy' : null;
-      },
-      mark: (a) => phaseIndex.get(a) === k,
-      label: [`ERECTION SEQUENCE ${k + 1}/${phases.length} — ZONE ${zone.index}`, `${zone.direction} · ${ph.name}`, zone.name],
-      ref: (i) => ref(k, i),
-    });
+    const gv = ctx.measure
+      ? null
+      : drawZoneView(ctx, s, plan, zone, L, {
+          group: 'view:front',
+          style: (pt) => {
+            const a = asmOf.get(pt.ref);
+            const i = a ? (phaseIndex.get(a) ?? Infinity) : Infinity;
+            return i < k ? 'thin' : i === k ? 'heavy' : null;
+          },
+          mark: (a) => phaseIndex.get(a) === k,
+          label: [`ERECTION SEQUENCE ${k + 1}/${phases.length} — ZONE ${zone.index}`, `${zone.direction} · ${ph.name}`, zone.name],
+          ref: (i) => ref(k, i),
+        });
     const number = zoneNumber(seriesNumber(p, 'ES', k + 1), zone.index);
     return finalize(ctx, s, size, {
       id: `seq-${ph.id}-z${zone.index}`,
@@ -1059,10 +1150,18 @@ function zonedSequenceDrawings(
       subtitle: `${ph.name} · ${list.length} assemblies · ${mass(list).toFixed(0)} kg${derived ? ' · default sequence by floor' : ''}`,
       scale: scaleLabel(plan.den),
       number,
-      viewports: [gv.viewport],
+      viewports: gv ? [gv.viewport] : undefined,
       zone: zoneInfo(zone, plan, (i) => ref(k, i), list),
     });
-  });
+  };
+  return sheets.map((x) => ({
+    id: `seq-${x.ph.id}-z${x.zone.index}`,
+    make: (c: DrawCtx) => one(c, x),
+    bound: zoneBound(ctx, x.zone, (pt) => {
+      const a = asmOf.get(pt.ref);
+      return (a ? (phaseIndex.get(a) ?? Infinity) : Infinity) <= x.k;
+    }, x.list),
+  }));
 }
 
 /** Line key of an erection sequence sheet: samples of the line styles. */
@@ -1102,8 +1201,13 @@ function uniqueRows(list: Assembly[], dm: DerivedModel) {
 
 /** All erection drawings: setting-out plans, anchor schedules, erection sequences. */
 export function erectionDrawings(ctx: DrawCtx): Drawing[] {
+  return erectionItems(ctx).map((it) => it.make(ctx)!);
+}
+
+/** The erection drawings as plan items, in register order. */
+export function erectionItems(ctx: DrawCtx): PlanItem[] {
   if (ctx.p.drawings.settings.erection === false) return [];
-  return [...setoutDrawings(ctx), ...anchorScheduleDrawings(ctx), ...sequenceDrawings(ctx)];
+  return [...setoutItems(ctx), ...anchorItems(ctx), ...sequenceItems(ctx)];
 }
 
 /** Drawing kinds of the erection drawings. */

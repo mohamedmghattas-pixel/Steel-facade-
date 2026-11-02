@@ -21,6 +21,7 @@ import {
   type BuildProgress,
   type PackagePlan,
   type PackageResult,
+  planCache,
   type PlanCache,
 } from '../core/export/package';
 import { activeExportTemplate, expandPattern, isBuiltinTemplate, packageSettings, packageTokens, revisionFromDrawings, sanitizePath, sanitizeSegment, templateIssues, walkFolders } from '../core/export/template';
@@ -31,7 +32,9 @@ import { defaultQafMapping, defaultVcfMapping } from '../core/export/forms';
 import { readXlsxCells } from '../core/io/xlsxTemplate';
 import type { SvgPainter } from '../core/export/pdfBook';
 import { svgPainter } from './pdf';
-import { cachedDrawingsOf, drawingsOf } from './actions';
+import { cachedDrawingsOf } from './actions';
+import { cachedDrawingSet } from '../core/drawings/onDemand';
+import { currentDrawingSet, requestIndex } from './drawingJobs';
 import { askConfirm } from './askState';
 
 const st = () => useStore.getState();
@@ -54,12 +57,12 @@ export function setPackagePainter(p: SvgPainter | null) {
   painter = p ?? svgPainter;
 }
 
-// Drawing set and generated files per project object (reused while the dialog is open).
+// Drawing index and generated files per project object (reused while the dialog is open).
 const caches = new WeakMap<Project, PlanCache>();
 function sharedCache(p: Project, dm: DerivedModel): PlanCache {
   let c = caches.get(p);
-  // The drawing set is shared with the Drawings tab (one generation per model state).
-  if (!c) caches.set(p, (c = { drawings: dm.parts.length ? drawingsOf(p, dm) : [], cache: new Map() }));
+  // The drawing index is shared with the Drawings tab (one per model state); sheets are made while the package is built.
+  if (!c) caches.set(p, (c = planCache(p, dm)));
   return c;
 }
 
@@ -109,7 +112,8 @@ export function outlineCurrentPackage(req: PackageRequest = {}): PackageOutline 
     const folder = e.path.length ? sanitizePath(e.path.map((n) => expandPattern(n, tokens).text).join('/')) : '';
     for (const item of e.folder.items) items.push({ item, folder });
   }
-  const drawings = cachedDrawingsOf(dm);
+  // Sheet count only when the drawing index (or the eager set) is already known; nothing is measured here.
+  const indexed = cachedDrawingSet(p, dm)?.ready?.entries.length ?? cachedDrawingsOf(dm)?.length;
   return {
     root,
     tokens,
@@ -121,12 +125,18 @@ export function outlineCurrentPackage(req: PackageRequest = {}): PackageOutline 
       partMarks: new Set(dm.parts.map((x) => x.mark)).size,
       assemblies: dm.assemblies.length,
       assemblyMarks: new Set(dm.assemblies.map((a) => a.mark)).size,
-      drawings: drawings ? drawings.length : dm.parts.length ? null : 0,
+      drawings: indexed ?? (dm.parts.length ? null : 0),
     },
   };
 }
 
-/** Plan the package of the current project (no files are made yet; the drawing set is generated if it is not cached). */
+/** Measure the drawing index of the current project in slices that yield to the page (before planning a large package). */
+export async function prepareCurrentPackage(): Promise<void> {
+  if (!derived(st().project).parts.length) return;
+  await requestIndex(currentDrawingSet());
+}
+
+/** Plan the package of the current project (no files are made yet; the drawing index is measured if it is not cached). */
 export function planCurrentPackage(req: PackageRequest = {}): PackagePlan {
   const p = st().project;
   const dm = derived(p);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { derived, useStore, type OutputTab } from '../state/store';
 import { buildBom } from '../core/reports/bom';
 import { nestBars } from '../core/optimize/barNesting';
@@ -6,8 +6,9 @@ import { nestPlates } from '../core/optimize/plateNesting';
 import { DrawingEditor } from './DrawingEditor';
 import { GaCutsDialog } from './dialogs/DrawingDialogs';
 import type { Drawing } from '../core/drawings/types';
-import { checkSheetLayout } from '../core/drawings/layoutCheck';
-import { drawingsFor, exportAnchorScheduleCsv, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
+import type { DrawingSet, SheetEntry } from '../core/drawings';
+import { exportAnchorScheduleCsv, exportBom, exportDrawingsDxf, exportDrawingsPdf, exportIfcFile, exportNc } from './actions';
+import { cancelDrawingJob, checkAllSheets, HEAVY_PARTS, prefetchSheets, sheetsChanged, startFactsPass, useDrawingIndex, useDrawingJob } from './drawingJobs';
 import { Icon } from './icons';
 import { Segmented, Select, kg } from './widgets';
 import { codeForProject, ruleById, runCodeChecks } from '../core/codes';
@@ -244,19 +245,59 @@ const KIND_LABEL: Record<Drawing['kind'], string> = { register: 'REG', ga: 'GA',
 /** The last drawing focus shown (so a remount of the tab does not jump back to it). */
 let appliedFocus = 0;
 
+type DrawingFilter = Drawing['kind'] | 'all' | 'changed' | 'erection' | 'layout';
+
+const ROW_H = 24;
+
+/** The sheet list: only the rows in view are rendered (thousands of sheets on large facades). */
+function SheetList({ items, currentId, render }: { items: SheetEntry[]; currentId?: string; render: (x: SheetEntry) => ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [top, setTop] = useState(0);
+  const [height, setHeight] = useState(600);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const measure = () => setHeight(el.clientHeight || 600);
+    measure();
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null;
+    ro?.observe(el);
+    return () => ro?.disconnect();
+  }, []);
+  // Keep the current sheet in view when it changes (navigation from the 3D view, filters).
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const i = currentId ? items.findIndex((x) => x.id === currentId) : -1;
+    if (!el || i < 0) return;
+    const y = i * ROW_H;
+    if (y < el.scrollTop || y + ROW_H > el.scrollTop + el.clientHeight) {
+      el.scrollTop = Math.max(0, y - el.clientHeight / 2);
+      setTop(el.scrollTop);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId, items.length]);
+  const first = Math.max(0, Math.floor(top / ROW_H) - 8);
+  const last = Math.min(items.length, Math.ceil((top + height) / ROW_H) + 8);
+  return (
+    <div className="list" ref={ref} onScroll={(e) => setTop(e.currentTarget.scrollTop)}>
+      <div className="list-space" style={{ height: items.length * ROW_H }}>
+        {items.slice(first, last).map((x, k) => (
+          <div key={x.id} className="list-row" style={{ top: (first + k) * ROW_H, height: ROW_H }}>
+            {render(x)}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function DrawingsView() {
   const project = useStore((s) => s.project);
   const set = useStore((s) => s.set);
-  const drawings = useMemo(() => {
-    void project;
-    try {
-      return drawingsFor();
-    } catch (e) {
-      console.error(e);
-      return [] as Drawing[];
-    }
-  }, [project]);
-  const [kind, setKind] = useState<Drawing['kind'] | 'all' | 'changed' | 'erection' | 'layout'>('all');
+  const { set: dset, index, ready, progress, facts } = useDrawingIndex(project);
+  const job = useDrawingJob((s) => s.job);
+  const entries = index?.entries ?? [];
+  const [kind, setKind] = useState<DrawingFilter>('all');
+  const [query, setQuery] = useState('');
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [cutsOpen, setCutsOpen] = useState(false);
   // Navigation from the 3D view (navigationActions.openDrawing): show that sheet with its mark highlighted.
@@ -266,94 +307,199 @@ function DrawingsView() {
     if (!focus || focus.n === appliedFocus) return;
     appliedFocus = focus.n;
     setKind('all');
+    setQuery('');
     setCurrentId(focus.id);
     setHl(focus.highlight ? { id: focus.id, h: focus.highlight, n: focus.n } : null);
-    requestAnimationFrame(() => document.querySelector('.drawing-list .list button.on')?.scrollIntoView({ block: 'nearest' }));
   }, [focus]);
-  // Layout check of every sheet (overlapping blocks, frame / title block, lettering heights, overlapping marks).
-  const layoutIssues = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const d of drawings) {
-      const n = checkSheetLayout(d).length;
-      if (n) m.set(d.id, n);
-    }
-    return m;
-  }, [drawings]);
-  const list = drawings.filter(
+  const layoutOf = (id: string) => dset.layout.get(id) ?? 0;
+  const q = query.trim().toLowerCase();
+  const list = entries.filter(
     (d) =>
-      kind === 'all' ||
-      (kind === 'changed'
-        ? d.changed
-        : kind === 'layout'
-          ? layoutIssues.has(d.id)
-          : kind === 'erection'
-            ? d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence'
-            : d.kind === kind),
+      (kind === 'all' ||
+        (kind === 'changed'
+          ? d.changed === true
+          : kind === 'layout'
+            ? layoutOf(d.id) > 0
+            : kind === 'erection'
+              ? d.kind === 'setout' || d.kind === 'anchors' || d.kind === 'sequence'
+              : d.kind === kind)) &&
+      (!q || d.number.toLowerCase().includes(q) || d.title.toLowerCase().includes(q) || d.mark.toLowerCase().includes(q) || d.id.toLowerCase().includes(q)),
   );
-  // Follow the sheet by id, so it stays selected when sheets are added or removed.
-  const d = list.find((x) => x.id === currentId) ?? list[0];
-  const changed = drawings.filter((x) => x.changed).length;
+  // Follow the sheet by id, so it stays selected when sheets are added or removed. By default the first sheet
+  // after the register (the register lists every sheet with its status, so it is made last); on large models
+  // the first one that does not show the whole model (those take a while to make).
+  const large = dset.dm.parts.length > HEAVY_PARTS;
+  const d = list.find((x) => x.id === currentId) ?? list.find((x) => x.kind !== 'register' && !(large && dset.heavy(x.id))) ?? list[0];
+  const changed = entries.filter((x) => x.changed === true).length;
+  const unknown = entries.filter((x) => x.changed === undefined).length;
+  const layoutCount = entries.filter((x) => layoutOf(x.id) > 0).length;
+  const kinds = new Set(entries.map((x) => x.kind));
   const std = project.drawings.settings.standard;
-  const hasErection = drawings.some((x) => x.kind === 'anchors' || x.kind === 'setout' || x.kind === 'sequence');
+  const hasErection = kinds.has('anchors') || kinds.has('setout') || kinds.has('sequence');
+
+  // The previewed sheet is made when it is selected (with a spinner), its neighbours in idle time.
+  const [shown, setShown] = useState<{ id: string; drawing: Drawing | null; set: DrawingSet } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const wantId = d?.id;
+  useEffect(() => {
+    if (!wantId) {
+      setShown(null);
+      setLoading(false);
+      return;
+    }
+    // Sheets of a family that needs the index's preparation (zone plans …) wait for it: it is built in slices.
+    if (!ready && !dset.prepared(wantId)) {
+      setLoading(true);
+      return;
+    }
+    // The register needs every sheet's scale and status: the background pass makes the sheets first.
+    if (d?.kind === 'register' && !dset.cached(wantId) && !dset.allFactsKnown()) {
+      setLoading(true);
+      startFactsPass(dset, { heavy: true });
+      return;
+    }
+    const neighbours = () => {
+      const i = list.findIndex((x) => x.id === wantId);
+      return [list[i + 1], list[i - 1], list[i + 2]].filter(Boolean).map((x) => x!.id);
+    };
+    if (dset.cached(wantId)) {
+      setShown({ id: wantId, drawing: dset.sheet(wantId) ?? null, set: dset });
+      setLoading(false);
+      prefetchSheets(dset, neighbours());
+      return;
+    }
+    setLoading(true);
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Let the spinner paint before the sheet is made.
+    const raf = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        if (!alive) return;
+        let made: Drawing | null = null;
+        try {
+          made = dset.sheet(wantId) ?? null;
+        } catch (e) {
+          console.error(e);
+        }
+        setShown({ id: wantId, drawing: made, set: dset });
+        setLoading(false);
+        sheetsChanged();
+        prefetchSheets(dset, neighbours());
+      }, 0);
+    });
+    return () => {
+      alive = false;
+      cancelAnimationFrame(raf);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dset, wantId, ready, d?.kind === 'register' && facts?.running]);
+  const sheet = shown && shown.id === wantId ? shown.drawing : (shown?.drawing ?? null);
+  const loadingText = !ready
+    ? 'Updating the register…'
+    : d?.kind === 'register' && facts?.running
+      ? `The register lists every sheet — checking ${facts.done.toLocaleString('en')} / ${facts.total.toLocaleString('en')}…`
+      : `Making ${d?.number ?? 'the sheet'}…`;
+  const stale = !!shown && (shown.id !== wantId || shown.set !== dset);
+
+  const row = (x: SheetEntry) => {
+    const n = layoutOf(x.id);
+    const unknownFlag = x.changed === undefined;
+    return (
+      <button className={x.id === d?.id ? 'on' : ''} data-drawing={x.id} onClick={() => setCurrentId(x.id)} title={x.title}>
+        <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
+        <span className="dwg-no">
+          {x.number}
+          {(x.sheetCount ?? 1) > 1 ? (
+            <span className="sheet-of" title={`Sheet ${x.sheetIndex} of ${x.sheetCount} of this drawing`}>
+              {' '}
+              {x.sheetIndex}/{x.sheetCount}
+            </span>
+          ) : null}
+          {x.edited ? <span className="edited" title="Edited by hand"> ✎</span> : null}
+          {n > 0 ? (
+            <span className="layout-warn" title={`${n} layout problem(s) — see above the sheet`}>
+              {' '}
+              ⚠
+            </span>
+          ) : null}
+        </span>
+        <span
+          className={`rev ${x.changed ? 'changed' : ''} ${unknownFlag ? 'unknown' : ''}`}
+          title={unknownFlag ? `Rev ${x.rev} — not checked since the last edit yet (open the sheet, or wait for the check)` : x.changed ? (x.revisions.length ? `Changed since rev ${x.rev}` : 'Not issued yet') : x.status}
+        >
+          {x.rev}
+          {x.changed ? ' •' : unknownFlag ? ' ?' : ''}
+        </span>
+      </button>
+    );
+  };
+
   return (
     <div className="drawings">
       <div className="drawing-list">
         <Segmented
           value={kind}
           options={[
-            { value: 'all', label: `All ${drawings.length}` },
-            { value: 'changed', label: `Changed ${changed}`, title: 'Not issued yet, or changed since the last issue' },
+            { value: 'all', label: `All ${entries.length}` },
+            { value: 'changed', label: `Changed ${changed}${unknown ? ` +${unknown}?` : ''}`, title: unknown ? `Not issued yet, or changed since the last issue; ${unknown} issued sheet(s) not checked yet` : 'Not issued yet, or changed since the last issue' },
             { value: 'register', label: 'Reg' },
             { value: 'ga', label: 'GA' },
-            ...(drawings.some((x) => x.kind === 'section') ? [{ value: 'section' as const, label: 'Sec', title: 'Sections and details cut on the GA' }] : []),
+            ...(kinds.has('section') ? [{ value: 'section' as const, label: 'Sec', title: 'Sections and details cut on the GA' }] : []),
             ...(hasErection ? [{ value: 'erection' as const, label: 'Erection', title: 'Setting-out plans, anchor schedules, erection sequences' }] : []),
             { value: 'assembly', label: 'Asm' },
             { value: 'part', label: 'Part' },
-            ...(layoutIssues.size ? [{ value: 'layout' as const, label: `Layout ⚠ ${layoutIssues.size}`, title: 'Sheets with layout problems (overlapping blocks, lettering too small, overlapping marks)' }] : []),
+            ...(layoutCount ? [{ value: 'layout' as const, label: `Layout ⚠ ${layoutCount}`, title: 'Sheets with layout problems (overlapping blocks, lettering too small, overlapping marks) among the sheets checked so far' }] : []),
           ]}
           onChange={(k) => setKind(k)}
         />
-        <div className="list">
-          {list.map((x) => (
-            <button key={x.id} className={x === d ? 'on' : ''} data-drawing={x.id} onClick={() => setCurrentId(x.id)} title={x.title}>
-              <span className={`kind ${x.kind}`}>{KIND_LABEL[x.kind]}</span>
-              <span className="dwg-no">
-                {x.number}
-                {(x.sheetCount ?? 1) > 1 ? (
-                  <span className="sheet-of" title={`Sheet ${x.sheetIndex} of ${x.sheetCount} of this drawing`}>
-                    {' '}
-                    {x.sheetIndex}/{x.sheetCount}
-                  </span>
-                ) : null}
-                {x.edited ? <span className="edited" title="Edited by hand"> ✎</span> : null}
-                {layoutIssues.has(x.id) ? (
-                  <span className="layout-warn" title={`${layoutIssues.get(x.id)} layout problem(s) — see above the sheet`}>
-                    {' '}
-                    ⚠
-                  </span>
-                ) : null}
+        <input className="dwg-search" type="search" placeholder="Search number, title or mark" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search drawings" />
+        {(!ready || facts?.running || (facts?.heavyLeft ?? 0) > 0) && (
+          <div className="dwg-status" aria-live="polite">
+            {!ready ? (
+              <span>
+                <span className="spinner" /> Updating the register{progress ? ` — ${progress.family}, ${progress.sheets.toLocaleString('en')} sheets` : ''}…
               </span>
-              <span className={`rev ${x.changed ? 'changed' : ''}`} title={x.changed ? (x.revisions.length ? `Changed since rev ${x.rev}` : 'Not issued yet') : x.status}>
-                {x.rev}
-                {x.changed ? ' •' : ''}
+            ) : facts?.running ? (
+              <span title="Sheets are made in idle time to find changed sheets and layout problems">
+                Checking sheets {facts.done.toLocaleString('en')} / {facts.total.toLocaleString('en')}
               </span>
+            ) : (
+              <span>
+                {facts!.heavyLeft.toLocaleString('en')} GA / sequence sheet(s) not checked{' '}
+                <button className="link-btn small" onClick={checkAllSheets} title="Make them in idle time (each takes a while on this model)">
+                  Check all
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+        <SheetList items={list} currentId={d?.id} render={row} />
+        {!list.length && (
+          <p className="muted pad">{!index ? 'Listing the sheets…' : kind === 'changed' ? 'Every checked drawing is issued and up to date.' : kind === 'layout' ? 'No layout problems.' : q ? 'No sheet matches.' : 'No drawings yet — assign profiles first.'}</p>
+        )}
+        {job && (
+          <div className="dwg-job" role="status">
+            <span>
+              {job.label}: {job.done.toLocaleString('en')} / {job.total.toLocaleString('en')}
+            </span>
+            <progress max={job.total} value={job.done} />
+            <button className="link-btn small" onClick={cancelDrawingJob}>
+              Cancel
             </button>
-          ))}
-          {!list.length && (
-            <p className="muted pad">{kind === 'changed' ? 'Every drawing is issued and up to date.' : kind === 'layout' ? 'No layout problems.' : 'No drawings yet — assign profiles first.'}</p>
-          )}
-        </div>
+          </div>
+        )}
         <div className="btn-col">
-          <button className="primary-btn" disabled={!drawings.length} onClick={() => set({ dialog: 'issueDrawings' })} title="Record a new revision (ISO 7200 revision index) for drawings">
+          <button className="primary-btn" disabled={!entries.length} onClick={() => set({ dialog: 'issueDrawings' })} title="Record a new revision (ISO 7200 revision index) for drawings">
             <Icon name="check" size={15} /> Issue / revise…
           </button>
           <button className="secondary-btn" onClick={() => set({ dialog: 'drawingSettings' })}>
             Drawing settings · {std === 'ISO' ? 'ISO' : 'ASME'}
           </button>
-          <button className="secondary-btn" disabled={!list.length} onClick={() => void exportDrawingsPdf(list)}>
+          <button className="secondary-btn" disabled={!list.length || !!job} onClick={() => void exportDrawingsPdf(list)}>
             <Icon name="export" size={15} /> {list.length} sheets → PDF
           </button>
-          <button className="secondary-btn" disabled={!list.length} onClick={() => exportDrawingsDxf(list)}>
+          <button className="secondary-btn" disabled={!list.length || !!job} onClick={() => void exportDrawingsDxf(list)}>
             <Icon name="export" size={15} /> {list.length} sheets → DXF
           </button>
           {hasErection && (
@@ -362,28 +508,43 @@ function DrawingsView() {
             </button>
           )}
           {d && (
-            <button className="link-btn" onClick={() => void exportDrawingsPdf([d])}>
+            <button className="link-btn" disabled={!!job} onClick={() => void exportDrawingsPdf([d])}>
               This sheet only (PDF)
             </button>
           )}
         </div>
       </div>
-      {d ? (
-        <DrawingEditor
-          drawing={d}
-          onCuts={() => setCutsOpen(true)}
-          highlight={hl?.id === d.id ? hl.h : null}
-          focusN={hl?.id === d.id ? hl.n : 0}
-          onNav={(t, dbl) => {
-            if (dbl) return void openFromNav(t.nav, d);
-            // Select it in 3D; the drawing stays open, with what was clicked highlighted.
-            selectFromNav(t.nav, d);
-            setHl({ id: d.id, h: { inst: t.nav.inst, ref: t.nav.ref, asm: t.nav.asm, part: t.nav.part }, n: 0 });
-          }}
-          extraTools={<ShowIn3d drawing={d} />}
-        />
+      {sheet ? (
+        <div className={`dwg-shown ${loading || stale ? 'busy' : ''}`}>
+          <DrawingEditor
+            drawing={sheet}
+            onCuts={() => setCutsOpen(true)}
+            highlight={hl?.id === sheet.id ? hl.h : null}
+            focusN={hl?.id === sheet.id ? hl.n : 0}
+            onNav={(t, dbl) => {
+              if (dbl) return void openFromNav(t.nav, sheet);
+              // Select it in 3D; the drawing stays open, with what was clicked highlighted.
+              selectFromNav(t.nav, sheet);
+              setHl({ id: sheet.id, h: { inst: t.nav.inst, ref: t.nav.ref, asm: t.nav.asm, part: t.nav.part }, n: 0 });
+            }}
+            extraTools={<ShowIn3d drawing={sheet} />}
+          />
+          {(loading || stale) && (
+            <div className="dwg-loading" aria-live="polite">
+              <span className="spinner" /> {loadingText}
+            </div>
+          )}
+        </div>
       ) : (
-        <div className="drawing-preview" />
+        <div className="drawing-preview">
+          {loading ? (
+            <p className="dwg-loading">
+              <span className="spinner" /> {loadingText}
+            </p>
+          ) : d && shown && shown.id === d.id ? (
+            <p className="muted pad">This sheet is not in the drawing set any more.</p>
+          ) : null}
+        </div>
       )}
       {cutsOpen && <GaCutsDialog onClose={() => setCutsOpen(false)} />}
     </div>

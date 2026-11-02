@@ -7,7 +7,7 @@
  */
 import type { ClashIssue, Project } from '../model/types';
 import type { DerivedModel } from '../derive/model';
-import type { Drawing } from '../drawings/types';
+import type { Drawing, SheetRecord } from '../drawings/types';
 import { anchorScheduleCsv, drawingToDxf } from '../drawings';
 import { exportIfc } from '../io/ifcExport';
 import { exportBcf } from '../io/bcf';
@@ -256,29 +256,29 @@ export const DRAWING_TYPE: Record<string, string> = {
   part: 'Part',
 };
 export const drawingType = (kind: string) => DRAWING_TYPE[kind] ?? kind;
-const lastDate = (d: Drawing) => d.revisions[d.revisions.length - 1]?.date ?? '';
+const lastDate = (d: Pick<Drawing, 'revisions'>) => d.revisions[d.revisions.length - 1]?.date ?? '';
 
-export function registerRows(ds: Drawing[]): Row[] {
+export function registerRows(ds: SheetRecord[]): Row[] {
   return [
     ['No.', 'Drawing number', 'Title', 'Type', 'Sheet', 'Scale', 'Revision', 'Date of issue', 'Status', 'Changed since issue'],
     ...ds.map((d, i) => [i + 1, d.number, d.title, drawingType(d.kind), d.sheetSize, d.scale, d.rev, lastDate(d), d.status, d.changed ? 'yes' : '']),
   ];
 }
 
-export function registerXlsx(p: Project, ds: Drawing[]): Uint8Array {
+export function registerXlsx(p: Project, ds: SheetRecord[]): Uint8Array {
   return sheetsToXlsx([
     { name: 'Register', rows: registerRows(ds) },
     { name: 'Info', rows: [['Item', 'Value'], ['Project', p.info.name], ['Project no.', p.info.number], ['Client', p.info.client], ['Sheets', ds.length], ['Date', today()]] },
   ]);
 }
 
-export function revisionLogRows(ds: Drawing[]): Row[] {
+export function revisionLogRows(ds: Pick<Drawing, 'number' | 'title' | 'revisions'>[]): Row[] {
   const rows: Row[] = [['Drawing number', 'Title', 'Revision', 'Date', 'Description', 'Drawn', 'Checked', 'Approved', 'Status']];
   for (const d of ds) for (const r of d.revisions) rows.push([d.number, d.title, r.rev, r.date, r.description, r.drawn, r.checked, r.approved, r.status]);
   return rows;
 }
 
-export const hasRevisions = (ds: Drawing[]) => ds.some((d) => d.revisions.length > 0);
+export const hasRevisions = (ds: { revisions: unknown[] }[]) => ds.some((d) => d.revisions.length > 0);
 
 /** Model warnings and code-check findings, worst first. */
 export function checkRows(p: Project, dm: DerivedModel): Row[] {
@@ -337,7 +337,7 @@ export interface QcCheck {
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 
 /** The package's quality checks with PASS / WARN / FAIL and counts (detailing checks only; no capacity design). */
-export function qcChecks(p: Project, dm: DerivedModel, ds: Drawing[]): QcCheck[] {
+export function qcChecks(p: Project, dm: DerivedModel, ds: Pick<SheetRecord, 'number' | 'revisions' | 'changed'>[]): QcCheck[] {
   const out: QcCheck[] = [];
   const add = (check: string, result: QcResult, count: number | '', details: string) => out.push({ check, result, count, details });
   const wf = wireframeStatus(p);

@@ -141,4 +141,12 @@ export interface Drawing {
   continuation?: Drawing[];
 }
 
+/**
+ * What registers, lists and checks read of a sheet: a drawn sheet, or an entry of
+ * the drawing index (onDemand.ts) with its facts filled in.
+ */
+export type SheetRecord = Pick<Drawing, 'id' | 'kind' | 'number' | 'title' | 'mark' | 'sheetSize' | 'scale' | 'rev' | 'status' | 'revisions' | 'changed' | 'sheetIndex' | 'sheetCount'> & {
+  fingerprint?: string;
+};
+
 export const A3 = { w: 420, h: 297 };

@@ -20,7 +20,10 @@ const COLS: TableSpec['cols'] = [
   { head: 'Status', w: 26 },
 ];
 
-export function registerDrawings(ctx: DrawCtx, set: Drawing[]): Drawing[] {
+/** What the register lists of each sheet (a drawn sheet, or an entry of the drawing index with its scale and revision state). */
+export type RegisterRow = Pick<Drawing, 'id' | 'kind' | 'number' | 'title' | 'sheetSize' | 'scale' | 'rev' | 'status' | 'revisions' | 'changed' | 'sheetIndex' | 'sheetCount'>;
+
+export function registerDrawings(ctx: DrawCtx, set: RegisterRow[]): Drawing[] {
   const { p } = ctx;
   const size = p.drawings.settings.sheet;
   const f = frameRect(size);
@@ -34,21 +37,26 @@ export function registerDrawings(ctx: DrawCtx, set: Drawing[]): Drawing[] {
   });
   const all = [...self, ...set];
   // The register's revision status follows the list of sheets, not their revisions.
-  const listFp = fingerprint(set.map((d) => ({ t: 'text' as const, p: { x: 0, y: 0 }, text: `${sheetLabel(d)}|${d.title}|${d.kind}`, h: 1, layer: 'text' as const })));
+  const listFp = ctx.measure ? '' : fingerprint(set.map((d) => ({ t: 'text' as const, p: { x: 0, y: 0 }, text: `${sheetLabel(d)}|${d.title}|${d.kind}`, h: 1, layer: 'text' as const })));
   const out: Drawing[] = [];
+  // Measuring (drawing index): only the number of rows matters.
+  const sheets = ctx.measure ? {} : Object.fromEntries([...self.map((d, j) => [sheetLabel(d), `register-${j + 1}`] as const), ...set.map((d) => [sheetLabel(d), d.id] as const)]);
   for (let i = 0; i < pages; i++) {
     const s = newSheet(size, ctx);
-    const rows = all.slice(i * rowsPerSheet, (i + 1) * rowsPerSheet).map((d) => {
-      const rev = d.revisions[d.revisions.length - 1] ?? null;
-      return [sheetLabel(d), d.title, DOC_TYPE[d.kind], d.sheetSize, d.scale, d.rev, rev?.date ?? '', 'changed' in d && d.changed && rev ? `${d.status} *` : d.status];
-    });
-    const sheets = Object.fromEntries([...self.map((d, j) => [sheetLabel(d), `register-${j + 1}`] as const), ...set.map((d) => [sheetLabel(d), d.id] as const)]);
+    const page = all.slice(i * rowsPerSheet, (i + 1) * rowsPerSheet);
+    const rows = ctx.measure
+      ? page.map(() => [])
+      : page.map((d) => {
+          const rev = d.revisions[d.revisions.length - 1] ?? null;
+          return [sheetLabel(d), d.title, DOC_TYPE[d.kind], d.sheetSize, d.scale, d.rev, rev?.date ?? '', 'changed' in d && d.changed && rev ? `${d.status} *` : d.status];
+        });
     const spec: TableSpec = { title: `Drawing register – ${set.length + pages} sheets`, cols: COLS, rows, rowH, nav: { col: 0, kind: 'sheet', sheets } };
     const sz = tableSize(spec);
     const top = f.y1 - 4;
-    s.withTag({ group: 'table:drawing-register' }, () => drawTable(s, f.x0 + 4, top, spec));
+    // Measuring (drawing index): the table is not drawn; the pages follow from the number of sheets.
+    if (!ctx.measure) s.withTag({ group: 'table:drawing-register' }, () => drawTable(s, f.x0 + 4, top, spec));
     if (i === 0) {
-      s.text({ x: f.x0 + 4, y: top - sz.h - 6 }, '* content changed since the last issued revision', TEXT.label, 'start');
+      if (!ctx.measure) s.text({ x: f.x0 + 4, y: top - sz.h - 6 }, '* content changed since the last issued revision', TEXT.label, 'start');
       // Notes go above the title block when there is room beside the table.
       if (f.x0 + 4 + sz.w < f.x1 - s.tb.w - 4 || top - sz.h > f.y0 + s.tb.h + REV_H + 60) {
         packBlocks(s, size, [notesBlock('General notes', generalNotes(p, { kind: 'register', welded: false, hdg: false, paint: false, hollowClosed: false, plates: false, bolts: false }), s.tb.w)]);

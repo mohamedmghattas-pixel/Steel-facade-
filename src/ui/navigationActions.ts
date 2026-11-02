@@ -26,17 +26,23 @@ import {
   setAssemblyPrefix,
   validateAssembly,
 } from '../core/model/assemblies';
-import { bestSheet, drawingIndexFor, drawingsForPart, navSelection, VIEW_KINDS, type DrawingIndex, type NavSheet } from '../core/drawings/navigation';
+import { instanceSheets, navSelection, partDrawingsOf, VIEW_KINDS, type NavSheet } from '../core/drawings/navigation';
 import type { DrawNav, Drawing } from '../core/drawings/types';
-import { drawingsFor } from './actions';
+import type { SheetIndex } from '../core/drawings/onDemand';
+import { currentDrawingSet } from './drawingJobs';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
 const dmNow = () => derived(st().project);
 
-/** The drawing index of the current drawing set (built once per model state). */
-export function currentIndex(): DrawingIndex {
-  return drawingIndexFor(dmNow(), drawingsFor());
+/** The drawing index (register) of the current model state; sheets are made on demand. */
+export function currentIndex(): SheetIndex {
+  return currentDrawingSet().index();
+}
+
+/** Sheets that show an assembly instance, best first (makes the view sheets that can show it). */
+export function sheetsShowing(inst: string, o: { kinds?: Drawing['kind'][]; best?: boolean } = {}): NavSheet[] {
+  return instanceSheets(currentDrawingSet(), inst, o);
 }
 
 // ---------------------------------------------------------------------------
@@ -268,9 +274,9 @@ export function openDrawing(id: string, highlight?: DrawingFocus['highlight']) {
   st().set({ outputs: { open: true, tab: 'drawings' }, drawingFocus: { id, highlight, n: Date.now() } });
 }
 
-function partOf(ref: PartRef) {
+function partOf(ref: PartRef, sheets = false) {
   const dm = dmNow();
-  const r = drawingsForPart(currentIndex(), dm, ref);
+  const r = partDrawingsOf(currentDrawingSet(), dm, ref, { sheets });
   return { dm, r };
 }
 
@@ -296,15 +302,16 @@ export function showOnSheet(ref: PartRef, which: 'ga' | 'erection' = 'ga'): NavS
   const inst = r.instance;
   if (!inst) return void notify('This part is not in an assembly.', 'error');
   const kinds = which === 'ga' ? (['ga'] as const) : (['sequence', 'setout'] as const);
-  const sheet = bestSheet(currentIndex(), inst.main, [...kinds]) ?? (which === 'ga' ? bestSheet(currentIndex(), inst.main) : undefined);
+  // Only the sheets that can show it are made, and only until the best one is known.
+  const sheet = sheetsShowing(inst.main, { kinds: [...kinds], best: true })[0] ?? (which === 'ga' ? sheetsShowing(inst.main, { best: true })[0] : undefined);
   if (!sheet) return void notify(which === 'ga' ? `No GA sheet shows ${inst.mark}.` : `No erection sheet shows ${inst.mark} (erection drawings off, or no phase?).`, 'error');
   openDrawing(sheet.id, { inst: inst.main, ref, asm: inst.mark });
   return sheet;
 }
 
-/** Sheets that show a part's assembly (for Properties). */
+/** Sheets that show a part's assembly (for Properties): makes the view sheets that can show it. */
 export function sheetsOf(ref: PartRef): NavSheet[] {
-  return partOf(ref).r.sheets;
+  return partOf(ref, true).r.sheets;
 }
 
 // ---------------------------------------------------------------------------

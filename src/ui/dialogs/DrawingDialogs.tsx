@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { derived, useStore } from '../../state/store';
 import { wireframeStatus } from '../../core/wireframe';
 import { openWireframeCheck } from '../wireframeActions';
 import { Field, Modal, NumberInput, Segmented, Select, TextInput } from '../widgets';
-import { drawingsFor } from '../actions';
+import { useDrawingIndex } from '../drawingJobs';
+import { yieldMacrotask } from '../../core/drawings';
 import { DEFAULT_TEMPLATE, DEFAULT_TEMPLATE_ID, FIELD_SOURCES, ISO_SCALES, drawTemplateTitleBlock, entitiesToSvg, issueDrawings, makeCtx, newTemplate, nextCutLetter, parseTemplates, sampleTitleData, zonePlanFor, zoningSettings } from '../../core/drawings';
 import { Sheet } from '../../core/drawings/dims';
 import { frameRect } from '../../core/drawings/layout';
@@ -26,10 +27,8 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const apply = useStore((s) => s.apply);
   const notify = useStore((s) => s.notify);
-  const drawings = useMemo(() => {
-    void project;
-    return drawingsFor();
-  }, [project]);
+  const { set: dset, index, ready } = useDrawingIndex(project);
+  const drawings = ready && index ? index.entries : [];
   const set = project.drawings.settings;
   const [which, setWhich] = useState<'changed' | 'all'>('changed');
   const [status, setStatus] = useState<DocStatus>('In approval');
@@ -38,16 +37,44 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
   const [drawn, setDrawn] = useState(project.info.designer);
   const [checked, setChecked] = useState(set.checkedBy);
   const [approved, setApproved] = useState(set.approvedBy);
-  const selected = which === 'all' ? drawings : drawings.filter((d) => d.changed);
+  // Issued sheets are checked against their revision (made where needed), in slices.
+  const [busy, setBusy] = useState<{ what: string; done: number; total: number } | null>(null);
+  const [, bump] = useState(0);
+  const stop = useRef(false);
+  const facts = async (ids: string[], what: string) => {
+    const todo = ids.filter((id) => !dset.meta(id));
+    let last = Date.now();
+    for (let i = 0; i < todo.length; i++) {
+      if (stop.current) return false;
+      dset.ensureMeta(todo[i]);
+      if (Date.now() - last > 60) {
+        setBusy({ what, done: i + 1, total: todo.length });
+        await yieldMacrotask();
+        last = Date.now();
+      }
+    }
+    setBusy(null);
+    return true;
+  };
+  useEffect(() => {
+    if (!ready || !index) return;
+    stop.current = false;
+    const issued = index.entries.filter((e) => e.changed === undefined).map((e) => e.id);
+    if (issued.length) void facts(issued, 'Checking issued sheets').then(() => bump((n) => n + 1));
+    return () => void (stop.current = true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, index]);
+  const unknown = drawings.filter((d) => d.changed === undefined).length;
+  const selected = which === 'all' ? drawings : drawings.filter((d) => d.changed === true);
 
-  const run = () => {
+  const run = async () => {
+    // Every issued sheet records its fingerprint: make the sheets not made yet.
+    stop.current = false;
+    if (!(await facts(selected.map((d) => d.id), 'Making the sheets to issue'))) return;
     let n = 0;
+    const list = selected.map((d) => ({ id: d.id, fingerprint: dset.meta(d.id)!.fingerprint }));
     apply('Issue drawings', (p) => {
-      n = issueDrawings(
-        p,
-        selected.map((d) => ({ id: d.id, fingerprint: d.fingerprint })),
-        { description, status, date, drawn, checked, approved },
-      );
+      n = issueDrawings(p, list, { description, status, date, drawn, checked, approved });
     });
     notify(`Issued ${n} drawing${n === 1 ? '' : 's'} — ${description}.`);
     onClose();
@@ -60,9 +87,13 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <span className="muted">
-            {selected.length} of {drawings.length} sheets get the next revision index
+            {busy
+              ? `${busy.what}: ${busy.done.toLocaleString('en')} / ${busy.total.toLocaleString('en')}…`
+              : !ready
+                ? 'Listing the sheets…'
+                : `${selected.length} of ${drawings.length} sheets get the next revision index${unknown && which === 'changed' ? ` (${unknown} issued sheets still being checked)` : ''}`}
           </span>
-          <button className="primary-btn" disabled={!selected.length || !description.trim()} onClick={run}>
+          <button className="primary-btn" disabled={!selected.length || !description.trim() || !!busy || (which === 'changed' && unknown > 0)} onClick={() => void run()}>
             Issue {selected.length} sheet{selected.length === 1 ? '' : 's'}
           </button>
         </>
@@ -77,7 +108,7 @@ export function IssueDrawingsDialog({ onClose }: { onClose: () => void }) {
         <Segmented
           value={which}
           options={[
-            { value: 'changed', label: `New or changed (${drawings.filter((d) => d.changed).length})` },
+            { value: 'changed', label: `New or changed (${drawings.filter((d) => d.changed === true).length}${unknown ? '…' : ''})` },
             { value: 'all', label: `All (${drawings.length})` },
           ]}
           onChange={setWhich}

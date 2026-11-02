@@ -31,8 +31,8 @@ import { nestBars } from '../core/optimize/barNesting';
 import { issueDrawings } from '../core/drawings';
 import { sampleProject } from '../core/sample';
 import { derived, useStore } from '../state/store';
+import { currentDrawingSet, requestIndex } from '../ui/drawingJobs';
 import {
-  drawingsFor,
   exportBom,
   exportDrawingsDxf,
   exportDrawingsPdf,
@@ -431,7 +431,7 @@ function summary(): Json {
     assemblies: dm.assemblies.length,
     warnings: dm.warnings.length,
     selection: { members: sel.members.length, connections: sel.connections.length, memberIds: sel.members.slice(0, 40) },
-    drawings: { count: ds.length, changed: ds.filter((d) => d.changed).length },
+    drawings: ds ? { count: ds.length, changed: ds.filter((d) => d.changed === true).length, notCheckedYet: ds.filter((d) => d.changed === undefined).length } : { count: null, note: 'the drawing register of this large model is still being built' },
     settings: {
       designCode: p.settings.designCode,
       drawingStandard: p.drawings.settings.standard,
@@ -445,9 +445,14 @@ function summary(): Json {
   };
 }
 
+/** The drawing index (register) when it is known without blocking the page for long. */
 function safeDrawings() {
   try {
-    return drawingsFor();
+    const set = currentDrawingSet();
+    const idx = set.ready ?? (set.dm.parts.length < 20000 ? set.index() : null);
+    if (!idx) return null;
+    for (const e of idx.entries) if (e.changed === undefined) set.refresh(e, false);
+    return idx.entries;
   } catch {
     return [];
   }
@@ -728,14 +733,19 @@ export async function runTool(name: string, input: Json): Promise<string> {
     }
 
     case 'drawings': {
-      const ds = drawingsFor();
+      // The register; issuing makes the sheets whose fingerprints are not known yet (one at a time).
+      const set = currentDrawingSet();
+      const ds = (await requestIndex(set)).entries;
       if (input.action === 'issue') {
+        for (const e of ds) if (input.which !== 'all' && e.changed === undefined) set.ensureMeta(e.id);
+        for (const e of ds) set.refresh(e, false);
         const list = input.which === 'all' ? ds : ds.filter((d) => d.changed);
         let n = 0;
+        const prints = list.map((x) => ({ id: x.id, fingerprint: set.ensureMeta(x.id)!.fingerprint }));
         s.apply('Assistant: issue drawings', (d) => {
           n = issueDrawings(
             d,
-            list.map((x) => ({ id: x.id, fingerprint: x.fingerprint })),
+            prints,
             {
               description: String(input.description ?? 'Issued for approval'),
               status: (input.status as never) ?? 'In approval',
@@ -748,7 +758,8 @@ export async function runTool(name: string, input: Json): Promise<string> {
         });
         return out({ issued: n });
       }
-      return out(ds.map((d) => ({ number: d.number, title: d.title, rev: d.rev, status: d.status, changed: d.changed, scale: d.scale })));
+      for (const e of ds) set.refresh(e, false);
+      return out(ds.map((d) => ({ number: d.number, title: d.title, rev: d.rev, status: d.status ?? null, changed: d.changed ?? null, scale: d.scale ?? null })));
     }
 
     case 'export': {

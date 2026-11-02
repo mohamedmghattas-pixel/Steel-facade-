@@ -1,12 +1,9 @@
 import type { Project } from '../model/types';
-import { uniqueAssemblies, uniqueParts, type DerivedModel, type Part } from '../derive/model';
-import { assemblyDrawing } from './assemblyDrawing';
-import { gaDrawings } from './gaDrawing';
+import type { DerivedModel, Part } from '../derive/model';
 import { partDrawing as partDrawingCtx } from './partDrawing';
 import { registerDrawings } from './registerDrawing';
 import { flattenSheets, makeCtx, type DrawCtx } from './compose';
-import { cutDrawings } from './cuts';
-import { erectionDrawings } from './erection';
+import { drawingItems } from './families';
 import type { Drawing } from './types';
 
 export * from './types';
@@ -16,7 +13,24 @@ export { zonePlan, zonePlanFor, zoningSettings, facadeSegments, legibleScaleByPl
 export { drawingToSvg, drawingToDxf, entitiesToSvg } from './render';
 export { issueDrawings, nextRev, drawingNumber, sheetFileStem, sheetLabel, type IssueInfo } from './register';
 export { STANDARDS, SHEETS, ISO_SCALES } from './standards';
-export { flattenSheets, makeCtx, sheetId, type DrawCtx } from './compose';
+export { flattenSheets, makeCtx, sheetId, type DrawCtx, type PlanItem } from './compose';
+export { drawingFamilies, drawingItems, type DrawingFamily } from './families';
+export {
+  DrawingSet,
+  SheetCache,
+  clearDrawingCaches,
+  drawSheet,
+  drawingCacheStats,
+  drawingIdOf,
+  drawingIndex,
+  drawingSet,
+  sheetCache,
+  yieldMacrotask,
+  type IndexProgress,
+  type SheetEntry,
+  type SheetIndex,
+  type SheetMeta,
+} from './onDemand';
 export {
   anchorRows,
   anchorScheduleCsv,
@@ -35,6 +49,9 @@ export {
   buildDrawingIndex,
   drawingIndexFor,
   drawingsForPart,
+  instanceSheets,
+  partDrawingsOf,
+  sheetHits,
   bestSheet,
   sheetTargets,
   navTargets,
@@ -62,16 +79,13 @@ export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: numbe
  * section and detail sheets of the GA cuts, erection drawings (bracket
  * setting-out plans, anchor schedules, erection sequences), one drawing per
  * unique assembly and one per unique part.
+ *
+ * Eager: it draws every sheet. The Drawings tab, the exports and the navigation
+ * use the drawing index and make sheets on demand (`drawingIndex`, `drawSheet`,
+ * onDemand.ts), which gives the same ids, numbers, sheets and fingerprints.
  */
 export function allDrawings(p: Project, dm: DerivedModel): Drawing[] {
   const ctx = makeCtx(p, dm);
-  const set = flattenSheets([
-    ...gaDrawings(p, dm, 'front', ctx),
-    ...gaDrawings(p, dm, 'plan', ctx),
-    ...cutDrawings(ctx),
-    ...erectionDrawings(ctx),
-    ...uniqueAssemblies(dm).map(({ assembly, qty }) => assemblyDrawing(p, dm, assembly, qty, ctx)),
-    ...uniqueParts(dm).map(({ part, qty }) => partDrawingCtx(ctx, part, qty)),
-  ]);
+  const set = flattenSheets(drawingItems(ctx).flatMap((it) => it.make(ctx) ?? []));
   return [...flattenSheets(registerDrawings(ctx, set)), ...set];
 }

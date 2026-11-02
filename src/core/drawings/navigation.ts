@@ -21,6 +21,7 @@ import type { DEnt, DrawNav, Drawing, DrawingKind } from './types';
 import { entsBox, type BBox } from './viewLayout';
 import { entDistance } from './edits';
 import { sheetLabel } from './register';
+import type { DrawingSet } from './onDemand';
 
 /** A sheet that shows an assembly instance. */
 export interface NavSheet {
@@ -52,6 +53,46 @@ const KIND_RANK: Partial<Record<DrawingKind, number>> = { ga: 0, sequence: 1, se
 
 const isMarkEnt = (e: DEnt) => !!e.id && (e.id.startsWith('mark:') || e.id.startsWith('balloon:'));
 
+/** How a view sheet shows an assembly instance: its score and the box of its mark (or outlines). */
+export interface SheetHit {
+  score: number;
+  box?: BBox;
+}
+
+/**
+ * The assembly instances a GA / zone / erection / section sheet shows (by main part
+ * ref): 3 = its mark is placed, 2 = listed in the sheet's zone, 1 = only drawn.
+ * Empty for other sheets. `byId`: assemblies by id (zone lists name them by id).
+ */
+export function sheetHits(d: Drawing, byId: ReadonlyMap<string, Assembly>): Map<PartRef, SheetHit> {
+  const out = new Map<PartRef, SheetHit>();
+  if (!VIEW_KINDS.has(d.kind)) return out;
+  const hits = new Map<PartRef, { score: number; ents: DEnt[] }>();
+  const hit = (inst: PartRef, score: number, e?: DEnt) => {
+    const h = hits.get(inst);
+    if (!h) hits.set(inst, { score, ents: e ? [e] : [] });
+    else if (score > h.score) {
+      h.score = score;
+      h.ents = e ? [e] : [];
+    } else if (score === h.score && e) h.ents.push(e);
+  };
+  for (const e of d.entities) {
+    const inst = e.nav?.inst;
+    if (inst) hit(inst, isMarkEnt(e) ? 3 : 1, e);
+  }
+  for (const id of d.zone?.assemblies ?? []) {
+    const a = byId.get(id);
+    if (a) hit(a.main, 2);
+  }
+  for (const [inst, h] of hits) out.set(inst, { score: h.score, ...(h.ents.length ? { box: entsBox(h.ents) } : {}) });
+  return out;
+}
+
+/** Sheets showing an instance, best first: by score, then GA › sequence › setting-out › section, then register order. */
+export function sortNavSheets(list: NavSheet[], order: (id: string) => number) {
+  list.sort((a, b) => b.score - a.score || (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || order(a.id) - order(b.id));
+}
+
 /** Builds the index from a drawing set (allDrawings) and the derived model it was made from. */
 export function buildDrawingIndex(dm: DerivedModel, drawings: Drawing[]): DrawingIndex {
   const idx: DrawingIndex = { parts: new Map(), assemblies: new Map(), instances: new Map(), byId: new Map() };
@@ -62,32 +103,13 @@ export function buildDrawingIndex(dm: DerivedModel, drawings: Drawing[]): Drawin
     order.set(d.id, i);
     if (d.kind === 'part' && !idx.parts.has(d.mark)) idx.parts.set(d.mark, d.id);
     if (d.kind === 'assembly' && !idx.assemblies.has(d.mark)) idx.assemblies.set(d.mark, d.id);
-    if (!VIEW_KINDS.has(d.kind)) return;
-    const hits = new Map<PartRef, { score: number; ents: DEnt[] }>();
-    const hit = (inst: PartRef, score: number, e?: DEnt) => {
-      const h = hits.get(inst);
-      if (!h) hits.set(inst, { score, ents: e ? [e] : [] });
-      else if (score > h.score) {
-        h.score = score;
-        h.ents = e ? [e] : [];
-      } else if (score === h.score && e) h.ents.push(e);
-    };
-    for (const e of d.entities) {
-      const inst = e.nav?.inst;
-      if (inst) hit(inst, isMarkEnt(e) ? 3 : 1, e);
-    }
-    for (const id of d.zone?.assemblies ?? []) {
-      const a = byId.get(id);
-      if (a) hit(a.main, 2);
-    }
-    for (const [inst, h] of hits) {
+    for (const [inst, h] of sheetHits(d, byId)) {
       const list = idx.instances.get(inst) ?? [];
-      list.push({ id: d.id, number: d.number, label: sheetLabel(d), kind: d.kind, title: d.title, score: h.score, ...(h.ents.length ? { box: entsBox(h.ents) } : {}) });
+      list.push({ id: d.id, number: d.number, label: sheetLabel(d), kind: d.kind, title: d.title, score: h.score, ...(h.box ? { box: h.box } : {}) });
       idx.instances.set(inst, list);
     }
   });
-  for (const list of idx.instances.values())
-    list.sort((a, b) => b.score - a.score || (KIND_RANK[a.kind] ?? 9) - (KIND_RANK[b.kind] ?? 9) || order.get(a.id)! - order.get(b.id)!);
+  for (const list of idx.instances.values()) sortNavSheets(list, (id) => order.get(id)!);
   return idx;
 }
 
@@ -100,6 +122,59 @@ export function drawingIndexFor(dm: DerivedModel, drawings: Drawing[]): DrawingI
   const index = buildDrawingIndex(dm, drawings);
   indexCache.set(dm, { drawings, index });
   return index;
+}
+
+/**
+ * Sheets showing an assembly instance (its main part ref), best first, from a
+ * drawing set made on demand (onDemand.ts): the same list as the index of the
+ * drawn set. Only the view sheets that can show the instance are made (their
+ * navigation bound, see PlanItem.bound); with `best`, only as many as needed to
+ * know the best one.
+ */
+export function instanceSheets(set: DrawingSet, inst: PartRef, o: { kinds?: readonly DrawingKind[]; best?: boolean } = {}): NavSheet[] {
+  const idx = set.index();
+  const kinds = new Set(o.kinds ?? VIEW_KINDS);
+  const order = new Map<string, number>();
+  idx.entries.forEach((e, i) => order.set(e.id, i));
+  const cands = idx.entries
+    .filter((e) => kinds.has(e.kind) && VIEW_KINDS.has(e.kind))
+    .map((e) => ({ e, ub: set.bound(e.id, inst) }))
+    .filter((c) => c.ub > 0)
+    .sort((a, b) => b.ub - a.ub || (KIND_RANK[a.e.kind] ?? 9) - (KIND_RANK[b.e.kind] ?? 9) || order.get(a.e.id)! - order.get(b.e.id)!);
+  const out: NavSheet[] = [];
+  const rank = (s: { kind: DrawingKind; id: string }) => [KIND_RANK[s.kind] ?? 9, order.get(s.id)!] as const;
+  const better = (a: { score: number; kind: DrawingKind; id: string }, b: NavSheet) => {
+    if (a.score !== b.score) return a.score > b.score;
+    const [ra, oa] = rank(a);
+    const [rb, ob] = rank(b);
+    return ra !== rb ? ra < rb : oa < ob;
+  };
+  for (const { e, ub } of cands) {
+    if (o.best && out.length && !better({ score: ub, kind: e.kind, id: e.id }, out[0])) break;
+    const h = set.ensureMeta(e.id)?.hits?.get(inst);
+    if (!h) continue;
+    const s: NavSheet = { id: e.id, number: e.number, label: sheetLabel(e), kind: e.kind, title: e.title, score: h.score, ...(h.box ? { box: h.box } : {}) };
+    if (o.best) {
+      if (!out.length || better(s, out[0])) out[0] = s;
+    } else out.push(s);
+  }
+  if (!o.best) sortNavSheets(out, (id) => order.get(id)!);
+  return out;
+}
+
+/** The drawings of a part (by ref) from a drawing set made on demand: as drawingsForPart, the sheets only when asked. */
+export function partDrawingsOf(set: DrawingSet, dm: DerivedModel, ref: PartRef, o: { sheets?: boolean } = {}): PartDrawings {
+  const idx = set.index();
+  const pt = dm.partByRef.get(ref);
+  const a = assemblyByPart(dm).get(ref);
+  return {
+    partMark: pt?.mark,
+    asmMark: a?.mark,
+    part: pt ? idx.parts.get(pt.mark) : undefined,
+    assembly: a ? idx.assemblies.get(a.mark) : undefined,
+    sheets: a && o.sheets ? instanceSheets(set, a.main) : [],
+    instance: a,
+  };
 }
 
 export interface PartDrawings {

@@ -578,3 +578,21 @@ describe('assistant tools for profile assemblies', () => {
     expect(useStore.getState().project.library.profileAssemblies[0].prefix).toBe('MB');
   });
 });
+
+describe('composite members in the drawings on demand', () => {
+  it('the drawing index lists the same sheets as the eager set, and a sheet made on demand equals the eager one', async () => {
+    const { allDrawings, drawingIndex, drawSheet, clearDrawingCaches } = await import('../src/core/drawings');
+    clearDrawingCaches();
+    const { p, dm } = facadeWithComposite();
+    const eager = allDrawings(p, dm);
+    const idx = drawingIndex(p, dm);
+    const key = (d: { id: string; number: string; kind: string; sheetIndex?: number; sheetCount?: number }) => [d.id, d.number, d.kind, d.sheetIndex ?? 1, d.sheetCount ?? 1].join('|');
+    expect(idx.entries.map(key)).toEqual(eager.map(key));
+    // The composite assembly sheet (with its section blocks) is made on demand like any other.
+    const asmSheet = eager.find((d) => d.kind === 'assembly' && d.title.includes('MA'));
+    expect(asmSheet).toBeDefined();
+    const lazy = drawSheet(p, dm, asmSheet!.id)!;
+    expect(lazy.entities.length).toBe(asmSheet!.entities.length);
+    expect(lazy.scale).toBe(asmSheet!.scale);
+  });
+});

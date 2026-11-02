@@ -8,10 +8,10 @@ also from the offline `file://` build) or into **one ZIP** (every browser, and t
 inside the claude.ai artifact).
 
 Code: `src/core/export/` (pure: template, catalogue, outputs, package builder, forms,
-meshes, OBJ, STEP, PDF book), `src/core/io/zipRead.ts` and `xlsxTemplate.ts` (form
+meshes, OBJ, STEP, PDF book, PDF pages), `src/core/io/zipRead.ts` and `xlsxTemplate.ts` (form
 templates), UI in `src/ui/dialogs/ExportPackageDialog.tsx`, `QaFormsTab.tsx` and
 `src/ui/exportPackageActions.ts`, assistant tools in `src/assistant/modules/exportPackage.ts`.
-Tests: `tests/exportPackage.test.ts`, `tests/exportOutline.test.ts`.
+Tests: `tests/exportPackage.test.ts`, `tests/exportOutline.test.ts`, `tests/drawingsOnDemand.test.ts` (pages painted once).
 
 ## Default package (the client's layout)
 
@@ -135,8 +135,10 @@ get `-2`, `-3` …; a warning appears when a path inside the package exceeds 240
 
 `register`, `ga` (with `elevation` / `plan` by sheet id), `section`, `setout`, `anchors`,
 `sequence`, `erection` (= setout + anchors + sequence), `assembly`, `part`, `other` (sheet
-kinds added later). Drawing items read the set through `allDrawings()`, so new sheets flow
-in; a warning lists sheets that only the unfiltered combined PDF takes.
+kinds added later). Drawing items are planned from the drawing index (the register, see
+[DRAWING_STANDARDS.md](DRAWING_STANDARDS.md#drawings-on-demand)), so new sheets flow in; the
+sheets themselves are made one at a time while the package is built. A warning lists sheets
+that only the unfiltered combined PDF takes.
 
 ## Items
 
@@ -204,8 +206,9 @@ at 24,000). The dialog therefore opens on the **outline** (`outlineCurrentPackag
 `src/ui/exportPackageActions.ts`): every template item with its folder, the package folder
 and tokens, the revision from the drawing revisions recorded in the project, and the model
 counts (wire lines, parts and marks, assemblies and marks, and the drawing sheets when the
-drawing set is already made, e.g. by the Drawings tab — it is shared through the same
-cache, `drawingsOf` / `allDrawings`). Nothing is generated. **Calculate sizes** plans the
+drawing index is already measured, e.g. by the Drawings tab — it is shared through the
+same drawing set, `drawingSet(p, dm)`). Nothing is generated. **Calculate sizes** measures the
+drawing index in slices that yield to the page (`prepareCurrentPackage`), then plans the
 package (file names, counts, sizes, QA form decisions, folder tree); after a change to the
 template, the fields or the model the sizes show as out of date until recalculated. Up to
 300 parts the package is planned as the dialog opens and on every change, as before. The
@@ -213,6 +216,25 @@ export buttons plan the package themselves, so exporting never needs the calcula
 Measured in the browser on the client facade after auto-connect (714 wire lines, 1,196
 parts): the dialog opens in about 0.14 s, Calculate sizes takes about 2.4 s, a keystroke in
 a package field about 0.07 s.
+
+## Drawing PDFs
+
+Each sheet is painted once per package: drawn (on demand), turned into SVG and painted by
+svg2pdf.js into a one-page PDF, from which the page is lifted (its compressed content and the
+fonts / images it uses, `src/core/export/pdfPages.ts`). The per-sheet file, the combined PDF and
+the group books (*Master elevation*, *Single Parts (all)*, *Assemblies (all)*, *Erection (all)* …)
+are then put together from those pages, with their bookmarks; shared objects such as the fonts
+or a logo are written once per file. The pages are kept within about 256 MB (least recently
+used out; an evicted page is painted again if a later book needs it), and the sheets themselves
+are released to the drawing cache after painting. While painting, svg2pdf.js measures text on
+one shared canvas instead of a new one per text.
+
+The drawing register (XLSX / CSV), QC checklist, QAF and run report read every sheet's scale,
+status and fingerprint, so they are written last, after the drawings (sheets not made by then
+are made for them). Sizes of drawing files in the plan are estimates until the sheets are made.
+
+On the client's facade (528 sheets, 1,268 files, 1,596 PDF pages) the package took 391 s
+before and 35 s after this change in the same browser.
 
 ## Writing
 
@@ -229,9 +251,11 @@ a package field about 0.07 s.
 
 - STEP solids are faceted (planar triangles), not exact cylinders / B-splines; validated
   structurally (entity references, closed shells) — check the first files in the target CAD.
-- OBJ / STEP and per-sheet PDFs are generated in the browser; very large models take time
-  (progress shown). The combined and per-sheet PDFs are rendered separately.
+- OBJ / STEP and the drawing PDFs are generated in the browser; very large models take time
+  (progress shown). Each sheet is painted once, but a combined PDF is still assembled in memory
+  (about 20–40 KB per page). A page that uses resources the page reader does not know is
+  reported as an error for that file.
 - Profile parts are not unfolded (`CNC/Profiles/DXF` stays empty).
-- The QAF text-size rule reads the drawing entities (no separate layout validator yet).
+- The QAF text-size rule reads the text of every sheet as it is made (no separate layout validator yet).
 - Uploaded form workbooks and reference files live in the browser's storage; on another
   browser they must be uploaded again (the item reports the missing file).

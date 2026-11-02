@@ -27,6 +27,7 @@ import { centroid, partCorners } from './project';
 import { ISO_SCALES, TEXT } from './standards';
 import type { DrawCtx } from './compose';
 import { LabelPlacer } from './labels';
+import { textExtent } from './viewLayout';
 
 export type ZoneView = 'front' | 'plan';
 
@@ -203,12 +204,18 @@ export function normalFrame(plane: PlaneFit): ViewFrame {
  * more than FOLD_ANGLE.
  */
 export function facadeSegments(dm: DerivedModel, mode: DrawingZoning['viewDirection']): FacadeSegment[] {
-  const asms = dm.assemblies.map((a) => {
+  return drain(facadeSegmentSteps(dm, mode));
+}
+
+function* facadeSegmentSteps(dm: DerivedModel, mode: DrawingZoning['viewDirection']): Generator<void, FacadeSegment[]> {
+  const asms: { a: Assembly; parts: Part[]; pts: Vec3[]; anchor: Vec3 }[] = [];
+  for (const a of dm.assemblies) {
     const parts = a.parts.map((r) => dm.partByRef.get(r)).filter((x): x is Part => !!x);
     const pts = parts.flatMap(partPoints);
     const anchor = markAnchor(dm, a) ?? pts[0] ?? ZERO;
-    return { a, parts, pts, anchor };
-  });
+    asms.push({ a, parts, pts, anchor });
+    if (asms.length % 4000 === 0) yield;
+  }
   const all = asms.flatMap((x) => x.pts);
   const whole = (frame: ViewFrame, plane: PlaneFit): FacadeSegment[] => [
     { index: 0, name: 'A', frame, plane, tilt: tiltOf(plane.n), assemblies: asms.map((x) => x.a), parts: asms.flatMap((x) => x.parts) },
@@ -237,7 +244,7 @@ export function facadeSegments(dm: DerivedModel, mode: DrawingZoning['viewDirect
 
   // Recursive two-plane split along the facade.
   const leaves: (typeof items)[] = [];
-  const split = (list: typeof items, depth: number) => {
+  const split = function* (list: typeof items, depth: number): Generator<void, void> {
     const pts = list.flatMap((x) => x.pts);
     const fit = fitPlane(pts);
     if (depth >= 3 || list.length < 12 || fit.rms <= tolRms) return void leaves.push(list);
@@ -250,13 +257,15 @@ export function facadeSegments(dm: DerivedModel, mode: DrawingZoning['viewDirect
       const r = fitPlane(list.slice(k).flatMap((x) => x.pts));
       const cost = l.rms * l.rms * l.count + r.rms * r.rms * r.count;
       if (!best || cost < best.cost) best = { k, cost, nl: l.n, nr: r.n };
+      if (n > 2000) yield;
     }
     const total = fit.rms * fit.rms * fit.count;
     if (!best || best.cost > 0.5 * total || angleBetweenPlanes(best.nl, best.nr) < FOLD_ANGLE) return void leaves.push(list);
-    split(list.slice(0, best.k), depth + 1);
-    split(list.slice(best.k), depth + 1);
+    yield* split(list.slice(0, best.k), depth + 1);
+    yield* split(list.slice(best.k), depth + 1);
   };
-  split(items, 0);
+  yield;
+  yield* split(items, 0);
   // Neighbouring leaves on one plane after all (a split that only helped deeper down) are merged back.
   const merged: (typeof items)[] = [];
   for (const l of leaves) {
@@ -287,15 +296,86 @@ export interface MarkItem {
   text: string;
 }
 
-/** How the marks of a view place at a scale (labels 2.5 mm, see labels.ts): placed beside, with leaders, left out. */
-export function placementStats(items: MarkItem[], den: number) {
-  const placer = new LabelPlacer({ x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 });
+const PLACE_BOUNDS = { x0: -1e9, y0: -1e9, x1: 1e9, y1: 1e9 };
+
+/**
+ * Does every mark take its first position (beside its anchor, up and to the right)?
+ * True when no two of those boxes touch (with the placer's clearance): the greedy
+ * placer then places each one there, so its statistics are known without running
+ * it. Same arithmetic as LabelPlacer, on a grid of cells larger than any box.
+ */
+function allBeside(items: MarkItem[], den: number, h: number, widths: number[], cl = 0.4): boolean {
+  const B = PLACE_BOUNDS;
+  let wmax = 0;
+  for (const w of widths) wmax = Math.max(wmax, w);
+  const cx = wmax + cl + 1;
+  const cy = 1.3 * h + cl + 1;
+  const grid = new Map<number, number[]>();
+  const n = items.length;
+  const X0 = new Float64Array(n);
+  const Y0 = new Float64Array(n);
+  const X1 = new Float64Array(n);
+  const Y1 = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    // LabelPlacer.place: anchor = at / den, first candidate p = anchor + 1.2, box = [p.x, p.x + w] × [p.y − 0.3 h, p.y + h].
+    const px = items[i].at.x / den + 1.2;
+    const py = items[i].at.y / den + 1.2;
+    const x0 = px;
+    const y0 = py - 0.3 * h;
+    const x1 = px + widths[i];
+    const y1 = py + h;
+    if (x0 < B.x0 || x1 > B.x1 || y0 < B.y0 || y1 > B.y1) return false;
+    const gx = Math.floor(x0 / cx);
+    const gy = Math.floor(y0 / cy);
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++) {
+        const cell = grid.get((gx + dx) * 4194304 + (gy + dy));
+        if (!cell) continue;
+        // labels.ts overlaps(box, placed, clearance).
+        for (const j of cell) if (x0 < X1[j] + cl && X0[j] < x1 + cl && y0 < Y1[j] + cl && Y0[j] < y1 + cl) return false;
+      }
+    X0[i] = x0;
+    Y0[i] = y0;
+    X1[i] = x1;
+    Y1[i] = y1;
+    const k = gx * 4194304 + gy;
+    const l = grid.get(k);
+    if (l) l.push(i);
+    else grid.set(k, [i]);
+  }
+  return true;
+}
+
+/**
+ * How the marks of a view place at a scale (labels 2.5 mm, see labels.ts): placed beside, with leaders, left out.
+ * With `limit`, placing stops as soon as the count of omitted marks or of leaders exceeds it (the scale is then not legible).
+ */
+export function placementStats(items: MarkItem[], den: number, limit?: { omitted: number; leaders: number }, widths?: number[]) {
+  return drain(placementSteps(items, den, limit, widths));
+}
+
+function* placementSteps(items: MarkItem[], den: number, limit?: { omitted: number; leaders: number }, widths?: number[]): Generator<void, { n: number; leaders: number; omitted: number }> {
+  const h = TEXT.small;
+  if (widths && allBeside(items, den, h, widths)) return { n: items.length, leaders: 0, omitted: 0 };
+  yield;
+  const placer = new LabelPlacer(PLACE_BOUNDS);
   let leaders = 0;
+  let i = 0;
   for (const it of items) {
-    const pl = placer.place({ x: it.at.x / den, y: it.at.y / den }, it.text, TEXT.small);
+    const pl = placer.place({ x: it.at.x / den, y: it.at.y / den }, it.text, h);
     if (pl?.leader) leaders++;
+    if (limit && (placer.omitted > limit.omitted || leaders > limit.leaders)) break;
+    if (++i % 1500 === 0) yield;
   }
   return { n: items.length, leaders, omitted: placer.omitted };
+}
+
+/** Runs a step generator to its end (the synchronous form of a sliced computation). */
+export function drain<T>(g: Generator<unknown, T>): T {
+  for (;;) {
+    const r = g.next();
+    if (r.done) return r.value;
+  }
 }
 
 /**
@@ -305,6 +385,10 @@ export function placementStats(items: MarkItem[], den: number) {
  * once. 0 when there are fewer than two marks.
  */
 export function legibleScaleByPlacement(groups: MarkItem[][]): number {
+  return drain(legibleScaleSteps(groups));
+}
+
+function* legibleScaleSteps(groups: MarkItem[][]): Generator<void, number> {
   let worst = 0;
   for (const g of groups) {
     const seen = new Set<string>();
@@ -314,10 +398,14 @@ export function legibleScaleByPlacement(groups: MarkItem[][]): number {
     });
     if (items.length < 2) continue;
     let den = ISO_SCALES[0];
+    const widths = items.map((it) => textExtent(it.text, TEXT.small));
+    // The counts only grow while placing: stop a scale as soon as it fails (same verdict).
+    const limit = { omitted: 0.02 * items.length, leaders: 0.25 * items.length };
     for (const d of ISO_SCALES) {
-      const st = placementStats(items, d);
+      const st = yield* placementSteps(items, d, limit, widths);
       if (st.omitted > 0.02 * st.n || st.leaders > 0.25 * st.n) break;
       den = d;
+      yield;
     }
     worst = worst ? Math.min(worst, den) : den;
   }
@@ -480,8 +568,21 @@ interface Extent {
   y1: number;
 }
 
-/** Projected hull points of a part in a frame. */
-const partView = (f: ViewFrame, pt: Part) => partCorners(pt).map((q) => toView(f, q));
+/** Box of a part's projected corners in a frame. */
+function viewBox(f: ViewFrame, pt: Part): Extent {
+  let x0 = Infinity;
+  let y0 = Infinity;
+  let x1 = -Infinity;
+  let y1 = -Infinity;
+  for (const c of partCorners(pt)) {
+    const q = toView(f, c);
+    x0 = Math.min(x0, q.x);
+    y0 = Math.min(y0, q.y);
+    x1 = Math.max(x1, q.x);
+    y1 = Math.max(y1, q.y);
+  }
+  return { x0, y0, x1, y1 };
+}
 
 /**
  * Cut positions dividing [lo, hi] into pieces no longer than `cap`: as even as
@@ -573,13 +674,19 @@ const dirLabel = (view: ZoneView, sg: FacadeSegment, segments: number) =>
  * the undivided sheet would use.
  */
 export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }, oneSheetDen: number): ZonePlan | null {
+  return drain(zonePlanSteps(p, dm, view, size, tb, oneSheetDen));
+}
+
+/** zonePlan in steps (yields between pieces of work), for building the drawing index in slices. */
+export function* zonePlanSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }, oneSheetDen: number): Generator<void, ZonePlan | null> {
   const z = zoningSettings(p);
   if (!z.enabled || !dm.parts.length) return null;
   const segments: FacadeSegment[] =
     view === 'plan'
       ? [{ index: 0, name: 'A', frame: worldFrame('plan'), plane: fitPlane(dm.parts.flatMap(partPoints)), tilt: 0, assemblies: [...dm.assemblies], parts: [...dm.parts] }]
-      : facadeSegments(dm, z.viewDirection);
+      : yield* facadeSegmentSteps(dm, z.viewDirection);
   const normal = segments.some((sg) => sg.frame.kind === 'normal');
+  yield;
 
   // Mark positions per segment, for the legible scale.
   const anchors = new Map<Assembly, Vec2>();
@@ -592,7 +699,8 @@ export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: She
       anchors.set(a, v);
       if (dm.partByRef.get(a.main)?.kind !== 'profile') groups[sg.index].push({ at: v, text: a.mark });
     }
-  const legible = legibleScaleByPlacement(groups);
+  yield;
+  const legible = yield* legibleScaleSteps(groups);
   const preferred = z.scale > 0 ? z.scale : 0;
   const target = preferred || legible || oneSheetDen;
   if (!normal && oneSheetDen <= target) return null;
@@ -602,27 +710,47 @@ export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: She
   const usableH = L.view.y1 - L.view.y0 - ZONE_MARGIN.b - ZONE_MARGIN.t;
   const ov = Math.max(0, z.overlap);
 
-  // Extent of each segment in its frame.
-  const ext = segments.map((sg) => {
-    let e: Extent = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
-    for (const pt of sg.parts)
-      for (const q of partView(sg.frame, pt)) e = { x0: Math.min(e.x0, q.x), y0: Math.min(e.y0, q.y), x1: Math.max(e.x1, q.x), y1: Math.max(e.y1, q.y) };
-    return Number.isFinite(e.x0) ? e : { x0: 0, y0: 0, x1: 1000, y1: 1000 };
-  });
+  // Extent of each segment in its frame, and of each of its parts (once: the zones reuse them).
+  const boxes: Extent[][] = [];
+  const ext: Extent[] = [];
+  for (const sg of segments) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    const bx: Extent[] = [];
+    for (const pt of sg.parts) {
+      const b = viewBox(sg.frame, pt);
+      bx.push(b);
+      x0 = Math.min(x0, b.x0);
+      y0 = Math.min(y0, b.y0);
+      x1 = Math.max(x1, b.x1);
+      y1 = Math.max(y1, b.y1);
+      if (bx.length % 4000 === 0) yield;
+    }
+    boxes.push(bx);
+    ext.push(Number.isFinite(x0) ? { x0, y0, x1, y1 } : { x0: 0, y0: 0, x1: 1000, y1: 1000 });
+  }
   // Scale: the preferred one, else the legible one — or a larger one when every facade part fits a sheet at it.
   const fitDen = (e: Extent) => ISO_SCALES.find((d) => (e.x1 - e.x0) / d <= usableW && (e.y1 - e.y0) / d <= usableH) ?? ISO_SCALES[ISO_SCALES.length - 1];
   let den = preferred || Math.min(legible || Infinity, Math.max(...ext.map(fitDen)));
   if (!Number.isFinite(den)) den = oneSheetDen;
 
   // Cut candidates per segment: grid lines / levels, else member lines.
-  const cands = segments.map((sg) => {
-    if (z.splitBy === 'equal') return { x: [] as number[], y: [] as number[] };
+  const cands: { x: number[]; y: number[] }[] = [];
+  for (const sg of segments) {
+    if (z.splitBy === 'equal') {
+      cands.push({ x: [] as number[], y: [] as number[] });
+      continue;
+    }
     const gx = gridPositions(p, view, sg).map((g) => g.x);
     const ly = levelPositions(p, view, sg).map((l) => l.y);
     const mx: number[] = [];
     const my: number[] = [];
     if (!gx.length || !ly.length) {
+      let seen = 0;
       for (const pt of sg.parts) {
+        if (++seen % 8000 === 0) yield;
         if (pt.kind === 'plate' || !pt.length) continue;
         const a = toView(sg.frame, toWorld(pt.frame, 0, 0, 0));
         const b = toView(sg.frame, toWorld(pt.frame, pt.length, 0, 0));
@@ -634,8 +762,9 @@ export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: She
         if (l >= 1 && Math.abs(dy) / l < 0.35) my.push((a.y + b.y) / 2);
       }
     }
-    return { x: gx.length ? gx : mx, y: ly.length ? ly : my };
-  });
+    cands.push({ x: gx.length ? gx : mx, y: ly.length ? ly : my });
+  }
+  yield;
 
   // Divide; when there would be more zones than allowed, go to the next smaller scale.
   let cutsX: number[][] = [];
@@ -695,33 +824,28 @@ export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: She
   const zoneAt = (si: number, c: number, r: number) => zones.find((zz) => zz.segment.index === si && zz.col === c && zz.row === r);
 
   // Assemblies: exactly one zone each, by the position of the mark (half-open intervals).
+  yield;
   for (const sg of segments) {
     const si = sg.index;
+    let seen = 0;
     for (const a of sg.assemblies) {
+      if (++seen % 8000 === 0) yield;
       const v = anchors.get(a) ?? { x: ext[si].x0, y: ext[si].y0 };
       const c = bucket(cutsX[si], v.x);
       const r = bucket(cutsY[si], v.y);
       zoneAt(si, c, r)?.assemblies.push(a);
     }
   }
-  // Parts drawn: those of the segment reaching into the zone's view.
+  // Parts drawn: those of the segment reaching into the zone's view (boxes in the segment's frame, as the zone's).
   for (const zz of zones) {
     const own = new Set(zz.assemblies.flatMap((a) => a.parts));
-    zz.parts = zz.segment.parts.filter((pt) => {
+    const bx = boxes[zz.segment.index];
+    zz.parts = zz.segment.parts.filter((pt, i) => {
       if (own.has(pt.ref)) return true;
-      const pv = partView(zz.frame, pt);
-      let x0 = Infinity;
-      let y0 = Infinity;
-      let x1 = -Infinity;
-      let y1 = -Infinity;
-      for (const q of pv) {
-        x0 = Math.min(x0, q.x);
-        y0 = Math.min(y0, q.y);
-        x1 = Math.max(x1, q.x);
-        y1 = Math.max(y1, q.y);
-      }
-      return x0 <= zz.view.x1 && x1 >= zz.view.x0 && y0 <= zz.view.y1 && y1 >= zz.view.y0;
+      const b = bx[i];
+      return b.x0 <= zz.view.x1 && b.x1 >= zz.view.x0 && b.y0 <= zz.view.y1 && b.y1 >= zz.view.y0;
     });
+    yield;
   }
   // Match lines: neighbours in the same facade part, and across folds.
   for (const zz of zones) {
@@ -797,13 +921,22 @@ export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: She
  * block column, less the room for level labels, bubbles and dimensions.
  */
 export function oneSheetDen(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }): number {
+  return drain(oneSheetDenSteps(p, dm, view, size, tb));
+}
+
+function* oneSheetDenSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }): Generator<void, number> {
   const f = frameRect(size);
   const W = f.x1 - f.x0 - tb.w - 8 - 48;
   const H = f.y1 - f.y0 - 50;
   const fr = worldFrame(view);
   let e: Extent = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   const grow = (q: Vec2) => (e = { x0: Math.min(e.x0, q.x), y0: Math.min(e.y0, q.y), x1: Math.max(e.x1, q.x), y1: Math.max(e.y1, q.y) });
-  for (const pt of dm.parts) for (const q of partView(fr, pt)) grow(q);
+  let seen = 0;
+  for (const pt of dm.parts) {
+    const b = viewBox(fr, pt);
+    if (b.x0 <= b.x1) e = { x0: Math.min(e.x0, b.x0), y0: Math.min(e.y0, b.y0), x1: Math.max(e.x1, b.x1), y1: Math.max(e.y1, b.y1) };
+    if (++seen % 8000 === 0) yield;
+  }
   if (!Number.isFinite(e.x0)) return ISO_SCALES[0];
   for (const g of p.grids) if (g.axis === 'x') grow({ x: g.pos, y: e.y0 });
   if (view === 'plan') for (const g of p.grids) if (g.axis === 'y') grow({ x: e.x0, y: g.pos });
@@ -832,12 +965,21 @@ export const outlineCentre = (pts: Vec2[]) => centroid(pts);
  * view stays on one sheet.
  */
 export function zonePlanFor(ctx: DrawCtx, view: ZoneView): ZonePlan | null {
+  return drain(zonePlanForSteps(ctx, view));
+}
+
+/** zonePlanFor in steps (the drawing index builds it in slices); the result is cached on the context as well. */
+export function* zonePlanForSteps(ctx: DrawCtx, view: ZoneView): Generator<void, ZonePlan | null> {
   const size = ctx.p.drawings.settings.gaSheet;
   const key = `${view}|${size}`;
   const cache = (ctx.zonePlans ??= new Map());
   if (!cache.has(key)) {
     const tb = { w: ctx.template.width, h: ctx.template.height };
-    cache.set(key, zonePlan(ctx.p, ctx.dm, view, size, tb, oneSheetDen(ctx.p, ctx.dm, view, size, tb)));
+    const one = yield* oneSheetDenSteps(ctx.p, ctx.dm, view, size, tb);
+    yield;
+    const plan = yield* zonePlanSteps(ctx.p, ctx.dm, view, size, tb, one);
+    // A synchronous call may have made it meanwhile (same result): keep the first.
+    if (!cache.has(key)) cache.set(key, plan);
   }
   return cache.get(key) ?? null;
 }

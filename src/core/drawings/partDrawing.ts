@@ -132,7 +132,8 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
   }
   const areas = packBlocks(s, size, blocks);
   const free = [areas.full, areas.left];
-  const scale = part.kind === 'plate' || !part.shape ? drawPlate(ctx, s, part, holes, free) : drawLinear(ctx, s, part, part.shape, holes, free);
+  // Measuring (drawing index): the blocks decide the sheet count; the views (and with them the scale) are left out.
+  const scale = ctx.measure ? '' : part.kind === 'plate' || !part.shape ? drawPlate(ctx, s, part, holes, free) : drawLinear(ctx, s, part, part.shape, holes, free);
 
   return finalize(ctx, s, size, {
     id: `part-${part.mark}`,

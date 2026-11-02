@@ -13,7 +13,7 @@ import { notesBlock, packBlocks, tableBlock, type Block, type PackResult, type R
 import { dimChain, dimLinear, type Sheet, type TableSpec } from './dims';
 import { TEXT, generalNotes, isoScale, scaleLabel } from './standards';
 import { bounds, centroid, convexHull, partCorners } from './project';
-import { designation, finalize, makeCtx, newSheet, type DrawCtx } from './compose';
+import { designation, finalize, makeCtx, newSheet, type DrawCtx, type PlanItem } from './compose';
 import { drawingNumber } from './register';
 import { drawGaCuts } from './cuts';
 import { labelBox, obstacleBoxes, partNav, placeMarks } from './labels';
@@ -46,9 +46,34 @@ export function projectPoint(view: GaView, p: Vec3): Vec2 {
  * outlines and the zone index, followed by one sheet per zone.
  */
 export function gaDrawings(p: Project, dm: DerivedModel, view: 'front' | 'plan', ctx: DrawCtx = makeCtx(p, dm)): Drawing[] {
+  return gaItems(ctx, view).map((it) => it.make(ctx)!);
+}
+
+/** The GA sheets of a view as plan items: the GA sheet, then its zone sheets. */
+export function gaItems(ctx: DrawCtx, view: 'front' | 'plan'): PlanItem[] {
   const plan = zonePlanFor(ctx, view);
-  if (!plan) return [gaDrawing(p, dm, view, ctx)];
-  return [gaDrawing(p, dm, view, ctx), ...plan.zones.map((z) => gaZoneDrawing(ctx, plan, z))];
+  // The overall sheet of a divided view draws everything and marks nothing.
+  const items: PlanItem[] = [{ id: `ga-${view}`, make: (c) => gaDrawing(c.p, c.dm, view, c), ...(plan ? { bound: () => 1 } : {}) }];
+  if (plan) for (const z of plan.zones) items.push({ id: `ga-${view}-z${z.index}`, make: (c) => gaZoneDrawing(c, plan, z), bound: zoneBound(ctx, z) });
+  return items;
+}
+
+/** Navigation bound of a zone sheet: its own assemblies are marked (3), parts of others drawn in the overlap (1). */
+export function zoneBound(ctx: DrawCtx, z: Zone, drawn: (pt: Part) => boolean = () => true, marked: Assembly[] = z.assemblies): (inst: string) => number {
+  let own: Set<string> | null = null;
+  let shown: Set<string> | null = null;
+  return (inst) => {
+    if (!own) {
+      own = new Set(marked.map((a) => a.main));
+      const asmOf = assemblyByPart(ctx.dm);
+      shown = new Set();
+      for (const pt of z.parts) {
+        const a = asmOf.get(pt.ref);
+        if (a && drawn(pt)) shown.add(a.main);
+      }
+    }
+    return own.has(inst) ? 3 : shown!.has(inst) ? 1 : 0;
+  };
 }
 
 export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
@@ -145,7 +170,10 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
   }
   const areas = packBlocks(s, size, blocks);
   const base = drawingNumber(p, `ga-${view}`);
-  const gv = drawGaView(
+  // Measuring (drawing index): the blocks decide the sheet count; the view is left out.
+  const gv = ctx.measure
+    ? null
+    : drawGaView(
     p,
     dm,
     s,
@@ -170,7 +198,7 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
           },
         }
       : { cuts: ctx },
-  );
+      );
 
   return finalize(ctx, s, size, {
     id: `ga-${view}`,
@@ -178,8 +206,8 @@ export function gaDrawing(p: Project, dm: DerivedModel, view: GaView, ctx: DrawC
     mark: `GA-${view.toUpperCase()}`,
     title: `General arrangement – ${VIEW_LABEL[view]}`,
     subtitle: `${dm.assemblies.length} assemblies · ${dm.parts.reduce((t, pt) => t + pt.mass, 0).toFixed(0)} kg steel${plan ? ` · ${plan.zones.length} zone sheets` : ''}`,
-    scale: scaleLabel(gv.den),
-    viewports: [gv.viewport],
+    scale: gv ? scaleLabel(gv.den) : '',
+    viewports: gv ? [gv.viewport] : undefined,
   });
 }
 
@@ -200,8 +228,10 @@ function gaZoneDrawing(ctx: DrawCtx, plan: ZonePlan, zone: Zone): Drawing {
   const L = zoneSheetLayout(size, s.tb);
   const base = drawingNumber(p, `ga-${view}`);
   const z = zoningSettings(p);
-  const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
-  s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+  if (!ctx.measure) {
+    const kp = keyPlanBlock(ctx, plan, zone, L.keyPlan.x1 - L.keyPlan.x0, L.keyPlan.y1 - L.keyPlan.y0);
+    s.withTag({ group: kp.id! }, () => kp.draw(s, L.keyPlan.x0, L.keyPlan.y1));
+  }
   const rows = [...zoneRows(zone.assemblies).values()].map(({ a, qty }) => {
     const main = dm.partByRef.get(a.main);
     return [a.mark, qty, main ? designation(main) : '', a.mass.toFixed(1), drawingNumber(p, `asm-${a.mark}`)];
@@ -211,12 +241,14 @@ function gaZoneDrawing(ctx: DrawCtx, plan: ZonePlan, zone: Zone): Drawing {
     tableBlock({ title: `Assemblies in zone ${zone.index}`, cols: ASM_COLS, rows, nav: { col: 0, kind: 'asm' } }),
   ];
   packBlocks(s, size, blocks, { rightMax: L.rightMax, bandMax: L.bandMax, strict: true });
-  const gv = drawZoneView(ctx, s, plan, zone, L, {
-    group: `view:${view}`,
-    label: [`${zone.direction} — ZONE ${zone.index}`, zone.name],
-    ref: (i) => zoneNumber(base, i),
-    cuts: ctx,
-  });
+  const gv = ctx.measure
+    ? null
+    : drawZoneView(ctx, s, plan, zone, L, {
+        group: `view:${view}`,
+        label: [`${zone.direction} — ZONE ${zone.index}`, zone.name],
+        ref: (i) => zoneNumber(base, i),
+        cuts: ctx,
+      });
   const mass = zone.assemblies.reduce((t, a) => t + a.mass, 0);
   return finalize(ctx, s, size, {
     id: `ga-${view}-z${zone.index}`,
@@ -226,7 +258,7 @@ function gaZoneDrawing(ctx: DrawCtx, plan: ZonePlan, zone: Zone): Drawing {
     subtitle: `${zone.name.replace(/^Zone \d+ of \d+( — )?/, '') || zone.direction.toLowerCase()} · ${zone.assemblies.length} assemblies · ${mass.toFixed(0)} kg`,
     scale: scaleLabel(plan.den),
     number: zoneNumber(base, zone.index),
-    viewports: [gv.viewport],
+    viewports: gv ? [gv.viewport] : undefined,
     zone: zoneInfo(zone, plan, (i) => zoneNumber(base, i)),
   });
 }

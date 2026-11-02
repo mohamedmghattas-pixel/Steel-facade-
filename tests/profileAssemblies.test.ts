@@ -622,3 +622,24 @@ describe('assembly drawing balloons', () => {
     expect(balloonPlacement([...items, ...items], 30, 100, 260)).toHaveLength(marks.length);
   });
 });
+
+describe('export package with composite members', () => {
+  it('puts the aluminium cutting list and sections in 06-Exports/CNC/Profiles/DXF', async () => {
+    const { packageContext, planPackage, buildPackage } = await import('../src/core/export/package');
+    const { DEFAULT_EXPORT_TEMPLATE } = await import('../src/core/export/template');
+    const { p, dm } = facadeWithComposite();
+    const plan = planPackage(packageContext(p, dm, { date: new Date('2026-11-01T00:00:00Z') }), DEFAULT_EXPORT_TEMPLATE, new Set());
+    const ext = plan.files.filter((f) => f.item.output === 'extrusions');
+    expect(ext.length).toBeGreaterThan(1);
+    for (const f of ext) expect(f.path.startsWith('06-Exports/CNC/Profiles/DXF/')).toBe(true);
+    expect(ext.some((f) => f.path.endsWith('Extrusion cutting list.csv'))).toBe(true);
+    expect(ext.filter((f) => f.path.endsWith('.dxf')).length).toBeGreaterThan(0);
+    const res = await buildPackage({ ...plan, files: ext }, { painter: { paint: async () => new Uint8Array() } as never });
+    const csv = new TextDecoder().decode(res.files.find((f) => f.path.endsWith('Extrusion cutting list.csv'))!.data!);
+    expect(csv.split('\n')[0]).toMatch(/mark/i);
+    // A project without composites skips the item with a reason.
+    const plain = sampleFacade();
+    const q = planPackage(packageContext(plain, deriveModel(plain), {}), DEFAULT_EXPORT_TEMPLATE, new Set());
+    expect(q.items.find((i) => i.item.output === 'extrusions')?.skip).toMatch(/non-steel/);
+  });
+});

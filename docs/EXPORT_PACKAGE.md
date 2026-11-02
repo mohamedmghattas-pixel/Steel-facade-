@@ -65,7 +65,7 @@ items are created empty, as in the reference.
 │   │   │   └───DXF    {mark}.dxf per plate, NEST-{nnn}-S{w}x{h}.dxf per nested sheet
 │   │   └───Profiles
 │   │       ├───DSTV   {project}-{mark}.nc1 per member / profile part
-│   │       └───DXF    (empty: profile parts are not unfolded)
+│   │       └───DXF    Extrusion cutting list.csv + <profile>.dxf per aluminium section (composite members; else empty)
 │   ├───IFC   {code}-{seq} Model.ifc
 │   ├───STP   {code}-{seq} Model.stp
 │   └───MIS   {code}-{seq} MIS.json + parts / assemblies / bolts / operations / welds / coatings .csv
@@ -151,7 +151,7 @@ failing file does not stop the package; it is listed under ERRORS.
 |---|---|
 | Drawings | PDF per sheet; combined PDF (bookmarks per drawing grouped by type); DXF per sheet; several sheets in one DXF; register XLSX / CSV; revision log XLSX / CSV |
 | Models / project | IFC4; STEP AP214 (one faceted solid per part, mm, product = mark); OBJ + MTL (group per assembly, object per part, material per role); Rhino 3dm (mesh per part named by mark with user strings, wire lines, bolts; [RHINO.md](RHINO.md)); project JSON; project input JSON; profiles used JSON; reference files |
-| Fabrication | NC1 members / plates / all; plate DXF per part; plate list CSV; nested sheet DXF; nesting CSV / XLSX / PDF; flat patterns DXF; part labels PDF; bar cutting plan CSV / XLSX / PDF; purchase list; stock on hand |
+| Fabrication | NC1 members / plates / all; aluminium extrusions (cutting list CSV + section DXF per profile); plate DXF per part; plate list CSV; nested sheet DXF; nesting CSV / XLSX / PDF; flat patterns DXF; part labels PDF; bar cutting plan CSV / XLSX / PDF; purchase list; stock on hand |
 | Lists | material list XLSX, one CSV, CSV set; part schedule PDF; packing lists XLSX and PDF per batch; galvanizing; paint; MIS/ERP JSON + CSV |
 | Site | fixing schedule CSV; anchor schedule CSV; setting-out table CSV / XLSX; survey points CSV; erection notes |
 | Coordination / records | BCF; clash report CSV / PDF; detailing checks CSV / PDF; wireframe confirmation TXT / PDF; QC checklist; QAF; VCF; run report |
@@ -255,7 +255,12 @@ before and 35 s after this change in the same browser.
   (progress shown). Each sheet is painted once, but a combined PDF is still assembled in memory
   (about 20–40 KB per page). A page that uses resources the page reader does not know is
   reported as an error for that file.
-- Profile parts are not unfolded (`CNC/Profiles/DXF` stays empty).
+- Profile parts are not unfolded. `CNC/Profiles/DXF` holds only the aluminium extrusion cutting
+  list and sections of composite members (profile assemblies, [PROFILE_ASSEMBLIES.md](PROFILE_ASSEMBLIES.md)).
+- The STEP model is made once per export even when two folders carry it, in slices that let the
+  page paint and Cancel work (about 13 s and 390 MB for 1.1 million triangles: the client facade
+  with composite mullions and transoms). A package over 500 MB asks before building the ZIP in
+  memory; *Export to folder* writes file by file instead.
 - The QAF text-size rule reads the text of every sheet as it is made (no separate layout validator yet).
 - Uploaded form workbooks and reference files live in the browser's storage; on another
   browser they must be uploaded again (the item reports the missing file).

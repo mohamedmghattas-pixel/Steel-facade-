@@ -31,7 +31,7 @@ import { pdfOutlineTitles, pdfPageCount, type SvgPainter } from '../src/core/exp
 import { QAF_ITEMS, defaultQafMapping, qafCells, qafWorkbook, vcfRows, vcfWorkbook } from '../src/core/export/forms';
 import { partMeshes } from '../src/core/export/meshes';
 import { meshesToObj } from '../src/core/export/obj';
-import { checkStep, meshesToStep } from '../src/core/export/step';
+import { checkStep, meshesToStep, meshesToStepAsync } from '../src/core/export/step';
 import type { ExportTemplate } from '../src/core/export/types';
 import { deflateRaw, entryText, readZip, rewriteZip } from '../src/core/io/zipRead';
 import { fillXlsxTemplate, patchSheetXml, readXlsxCells } from '../src/core/io/xlsxTemplate';
@@ -241,8 +241,12 @@ describe('export package of the sample facade (client tree)', () => {
 
   it('writes every applicable item at the client paths', () => {
     expect(plan.root).toBe(pkg);
-    // Only the section / detail sheets are missing (the sample has no GA cuts).
-    expect(plan.items.filter((i) => i.skip).map((i) => `${i.item.id}: ${i.skip}`)).toEqual(['drawing-dxf-combined-4: no sheets of the chosen drawing types', 'drawings-pdf-combined-6: no sheets of the chosen drawing types']);
+    // Only the section / detail sheets (the sample has no GA cuts) and the aluminium extrusions (no composite members) are missing.
+    expect(plan.items.filter((i) => i.skip).map((i) => `${i.item.id}: ${i.skip}`)).toEqual([
+      'drawing-dxf-combined-4: no sheets of the chosen drawing types',
+      'drawings-pdf-combined-6: no sheets of the chosen drawing types',
+      'extrusions: no member carries aluminium or other non-steel components',
+    ]);
     const used = new Set(templateItems(DEFAULT_EXPORT_TEMPLATE).map((x) => x.item.output));
     expect(OUTPUTS.filter((o) => !used.has(o.id)).map((o) => o.id).sort()).toEqual(['anchors-csv', 'bom-csv', 'nc1-all', 'nesting-csv', 'plates-csv', 'qc-checklist-pdf', 'qc-checklist-xlsx', 'register-csv', 'revision-log-csv']);
     const expected = [
@@ -337,7 +341,7 @@ describe('export package of the sample facade (client tree)', () => {
     const q = planFor(bare, addItem(DEFAULT_EXPORT_TEMPLATE, 'f-10-quality-check-list', 'drawing-pdf', `${'x'.repeat(230)}{drawingNo}.{ext}`).template);
     const skip = Object.fromEntries(q.items.filter((i) => i.skip).map((i) => [i.item.id, i.skip]));
     expect(Object.keys(skip).sort()).toEqual(
-      ['bcf', 'clashes-csv', 'clashes-pdf', 'drawing-dxf-combined-4', 'drawings-pdf-combined-6', 'paint-xlsx', 'references', 'revision-log-xlsx', 'setting-out-csv', 'setting-out-xlsx', 'stock-csv', 'survey-csv', 'wireframe-pdf', 'wireframe-txt'].sort(),
+      ['bcf', 'clashes-csv', 'clashes-pdf', 'drawing-dxf-combined-4', 'drawings-pdf-combined-6', 'extrusions', 'paint-xlsx', 'references', 'revision-log-xlsx', 'setting-out-csv', 'setting-out-xlsx', 'stock-csv', 'survey-csv', 'wireframe-pdf', 'wireframe-txt'].sort(),
     );
     expect(skip['setting-out-csv']).toMatch(/survey/);
     expect(q.warnings.some((w) => /longer than 240/.test(w))).toBe(true);
@@ -482,6 +486,30 @@ describe('OBJ and STEP models', () => {
     expect(stp.match(/=FACE_SURFACE\(/g)!.length).toBe(six.reduce((s, m) => s + m.indices.length / 3, 0));
     expect(checkStep(stp.replace('#1=', '#99999='))).not.toEqual([]);
   });
+
+  it('writes the same STEP in slices that yield to the page, and stops when told to', async () => {
+    const six = meshes.slice(0, 6);
+    const o = { name: 'FWR-001 Model', time: '2026-11-01T00:00:00' };
+    let pauses = 0;
+    const text = await meshesToStepAsync(six, o, async () => void pauses++, -1);
+    expect(text).toBe(meshesToStep(six, o));
+    expect(pauses).toBeGreaterThanOrEqual(5);
+    await expect(meshesToStepAsync(six, o, async () => false, -1)).rejects.toThrow(/cancelled/);
+  });
+
+  it('makes the STEP model once for the two folders that carry it', async () => {
+    const p = sampleProject();
+    const plan = planFor(p);
+    const steps = plan.files.filter((f) => f.path.endsWith('.stp'));
+    expect(steps.map((f) => f.path.split('/')[0])).toEqual(['06-Exports', '07-Model']);
+    expect(steps[0].source).toBe(steps[1].source);
+    const only = { ...plan, files: steps };
+    const res = await buildPackage(only, { painter: stubPainter });
+    const files = res.files.filter((f) => f.path.endsWith('.stp'));
+    expect(files).toHaveLength(2);
+    expect(dec(files[0].data!)).toBe(dec(files[1].data!));
+    expect(checkStep(dec(files[0].data!))).toEqual([]);
+  }, 120000);
 });
 
 describe('QA forms', () => {

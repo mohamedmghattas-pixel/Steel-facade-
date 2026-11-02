@@ -11,13 +11,14 @@ import { drawingSet, drawingToSvg, sheetFileStem, yieldMacrotask, type DrawingSe
 import type { Drawing, SheetRecord } from '../drawings/types';
 import { exportPlateDxfAll, flatPatternsDxf } from '../fabrication/plateDxf';
 import { hasDstv } from '../fabrication/dstv';
+import { extrusionFiles } from '../fabrication/extrusions';
 import { buildBom, toCsv } from '../reports/bom';
 import { fillXlsxTemplate } from '../io/xlsxTemplate';
 import { wireframeStatus } from '../wireframe/record';
 import * as extra from './extras';
 import { partMeshes, type PartMesh } from './meshes';
 import { meshesToObj } from './obj';
-import { meshesToStep } from './step';
+import { meshesToStepAsync } from './step';
 import { loadRhino } from '../io/rhinoLoader';
 import { APP_NAME, APP_VERSION, defaultQafMapping, defaultVcfMapping, evaluateQaf, issueSummary, qafCells, qafWorkbook, submittalType, vcfCells, vcfRows, vcfWorkbook, type QafDecision } from './forms';
 import type { SvgPage } from '../reports/tablePages';
@@ -104,6 +105,8 @@ export interface BuildContext {
   blob?: (id: string) => Promise<ArrayBuffer | Uint8Array | null>;
   /** Return false to stop (the PDF in progress is dropped). */
   onPage?: (page: number, pages: number) => boolean | void;
+  /** Lets the page paint during a long file (STEP of a large model); resolves false when the build is cancelled. */
+  pause?: () => Promise<boolean>;
   /** The plan being built, its result so far, and the path of any planned source. */
   plan?: PackagePlan;
   result?: PackageResult;
@@ -435,7 +438,27 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
       const meshes = lazy(() => partMeshes(p, dm));
       const est = dm.parts.length * (id === 'step' ? 60000 : 9000);
       if (est > MAX_MODEL_FILE_BYTES) return { skip: tooLargeForOneFile(id === 'step' ? 'STEP model' : 'OBJ model', est, dm.parts.length) };
-      if (id === 'step') return { sources: [{ base: out.fileBase(p), ext: 'stp', tokens: {}, size: est, data: () => meshesToStep(meshes(), { name: `${ctx.tokens.code}-${ctx.tokens.seq} Model`, author: p.info.designer, organization: p.drawings.settings.legalOwner }) }] };
+      if (id === 'step') {
+        // Made once per build however many folders carry it (the default template has two), in slices that let the page paint.
+        let made: { plan?: PackagePlan; text: Promise<string>; left: number } | null = null;
+        const src: Source = {
+          base: out.fileBase(p),
+          ext: 'stp',
+          tokens: {},
+          size: est,
+          data: (b) => {
+            if (!made || made.plan !== b.plan || made.left <= 0) {
+              const uses = b.plan ? b.plan.files.filter((f) => f.source === src).length : 1;
+              const opts = { name: `${ctx.tokens.code}-${ctx.tokens.seq} Model`, author: p.info.designer, organization: p.drawings.settings.legalOwner };
+              made = { plan: b.plan, text: meshesToStepAsync(meshes(), opts, b.pause ?? (async () => true)), left: Math.max(1, uses) };
+            }
+            const m = made;
+            if (--m.left <= 0) made = null;
+            return m.text;
+          },
+        };
+        return { sources: [src] };
+      }
       const both = lazy(() => (mtlName: string) => meshesToObj(meshes(), { mtlFile: mtlName, title: `${p.info.name} — FacadeSteel model` }));
       const mtl: Source = { base: out.fileBase(p), ext: 'mtl', tokens: {}, size: 600, data: () => both()('model.mtl').mtl };
       const obj: Source = {
@@ -576,6 +599,13 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
     case 'nesting-xlsx':
       if (!out.hasPlates(dm)) return { skip: 'there are no plates' };
       return { sources: [exact('Plate nesting', 'xlsx', out.nestingXlsx(p, dm))] };
+    case 'extrusions': {
+      if (!parts) return { skip: NO_PARTS };
+      // Same files as the NC export's extrusions/ folder (src/core/fabrication/extrusions.ts).
+      const files = extrusionFiles(p, dm).map((f) => ({ name: f.name.replace(/^extrusions\//, '').replace(/^cutting-list\.csv$/, 'Extrusion cutting list.csv'), data: f.content }));
+      if (!files.length) return { skip: 'no member carries aluminium or other non-steel components' };
+      return { sources: fromFiles(files) };
+    }
     case 'nc1-members':
     case 'nc1-plates':
     case 'nc1-all': {
@@ -920,6 +950,11 @@ export async function buildPackage(plan: PackagePlan, o: BuildOptions): Promise<
         plan,
         result: res,
         pathOf: (s2) => paths.get(s2),
+        pause: async () => {
+          if (o.yieldEvery) await o.yieldEvery();
+          else await new Promise((r) => setTimeout(r, 0));
+          return !aborted();
+        },
         onPage: (page) => {
           if (pages > 3) o.onProgress?.({ done: i, total, path: f.path, page: page + 1, pages });
           return !aborted();

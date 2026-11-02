@@ -172,8 +172,9 @@ export const DEFAULT_EXPORT_TEMPLATE_ID = 'facadesteel-default';
  * The client's package layout, from their reference package "25122-FWR-001-R00"
  * (`tree /F`): eleven numbered folders, document names prefixed "{code}-{seq}"
  * (e.g. "FWR-001 …"), part and assembly files named by mark, NC1 files
- * "{project}-{mark}.nc1". Folders without items (00-References/1-…4,
- * CNC/Profiles/DXF) are created empty, as in the reference.
+ * "{project}-{mark}.nc1". Folders without items (00-References/1-…4) are
+ * created empty, as in the reference; CNC/Profiles/DXF takes the aluminium
+ * extrusion cutting list and sections of composite members (empty otherwise).
  */
 export const DEFAULT_TEMPLATE_SPEC: TemplateSpec = {
   id: DEFAULT_EXPORT_TEMPLATE_ID,
@@ -248,7 +249,7 @@ export const DEFAULT_TEMPLATE_SPEC: TemplateSpec = {
       ['nested-dxf', 'NEST-{nest}-S{sheetSize}.{ext}'],
     ],
     '06-Exports/CNC/Profiles/DSTV': [['nc1-members', '{project}-{mark}.{ext}']],
-    '06-Exports/CNC/Profiles/DXF': [],
+    '06-Exports/CNC/Profiles/DXF': [['extrusions', '{item}.{ext}']],
     '06-Exports/IFC': [['ifc', '{code}-{seq} Model.{ext}']],
     '06-Exports/STP': [['step', '{code}-{seq} Model.{ext}']],
     '06-Exports/MIS': [

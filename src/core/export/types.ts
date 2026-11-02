@@ -37,6 +37,7 @@ export const OUTPUT_IDS = [
   'nc1-members',
   'nc1-plates',
   'nc1-all',
+  'extrusions',
   'plate-dxf',
   'plates-csv',
   'nested-dxf',

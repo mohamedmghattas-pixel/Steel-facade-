@@ -23,6 +23,40 @@ export interface StepOptions {
 
 /** The STEP file text. */
 export function meshesToStep(meshes: PartMesh[], o: StepOptions): string {
+  const gen = stepParts(meshes, o);
+  let r = gen.next();
+  while (!r.done) r = gen.next();
+  return r.value;
+}
+
+/**
+ * The STEP file text, made part by part with a pause every `slice` ms (large
+ * models: about 13 s for 1.1 million triangles), so the page stays responsive.
+ * `pause` resolves when the page may continue; returning false stops (throws).
+ */
+export async function meshesToStepAsync(meshes: PartMesh[], o: StepOptions, pause: () => Promise<boolean | void>, slice = 40): Promise<string> {
+  const gen = stepParts(meshes, o);
+  let t0 = Date.now();
+  let r = gen.next();
+  while (!r.done) {
+    if (Date.now() - t0 > slice) {
+      if ((await pause()) === false) throw new StepCancelled();
+      t0 = Date.now();
+    }
+    r = gen.next();
+  }
+  return r.value;
+}
+
+export class StepCancelled extends Error {
+  constructor() {
+    super('STEP export cancelled');
+    this.name = 'AbortError';
+  }
+}
+
+/** The writer: yields after each part, returns the file text. */
+function* stepParts(meshes: PartMesh[], o: StepOptions): Generator<void, string> {
   const lines: string[] = [];
   let id = 0;
   const add = (s: string) => {
@@ -93,6 +127,7 @@ export function meshesToStep(meshes: PartMesh[], o: StepOptions): string {
     const brep = add(`FACETED_BREP(${str(`${m.mark}.${n}`)},${shell})`);
     const rep = add(`FACETED_BREP_SHAPE_REPRESENTATION(${str(m.mark)},(${brep},${world}),${ctx})`);
     add(`SHAPE_DEFINITION_REPRESENTATION(${pds},${rep})`);
+    yield;
   }
   const time = o.time ?? new Date().toISOString().slice(0, 19);
   return [

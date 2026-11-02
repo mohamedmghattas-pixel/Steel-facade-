@@ -2,13 +2,13 @@
 
 FacadeSteel produces a numbered drawing set:
 - a drawing register
-- general arrangement (GA) drawings
+- general arrangement (GA) drawings, with an unfolded (developed) elevation of folded facades
 - section and detail sheets cut on the GA
 - erection drawings: bracket setting-out plans, anchor schedules and erection sequences
 - assembly drawings
 - part (fabrication) drawings
 
-Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*). Every sheet is laid out by one layout engine that keeps its blocks apart, continues long tables on further sheets and checks the result (see *Sheet layout*). Large facades are divided into zones, one sheet per zone (see *Large facades: zones*). Sheets are made when they are viewed or exported, not all at once (see *Drawings on demand*).
+Every sheet can be edited by hand on top of what is generated (see *Editing drawings*), and the title block can follow a company template (see *Sheet templates*). Every sheet is laid out by one layout engine that keeps its blocks apart, continues long tables on further sheets and checks the result (see *Sheet layout*). Large facades are divided into zones, one sheet per zone (see *Large facades: zones*); folded facades also get an unfolded elevation (see *Unfolded elevation*), and bent plates and folded sections their flat patterns (see *Flat patterns*). Sheets are made when they are viewed or exported, not all at once (see *Drawings on demand*).
 
 By default the sheets follow the ISO technical-drawing standards and EN 1090-2 for steel execution. You can switch the set to an **ASME / AISC** profile under *Outputs → Drawings → Drawing settings*.
 
@@ -91,6 +91,7 @@ See *Erection drawings* below.
   - galvanizing (with vent holes where needed)
   - painting
 - A **"Used in" table** linking back to the assembly drawings.
+- Bent plates and folded (cold-formed) sections show their flat pattern: see *Flat patterns*.
 
 ## Sections and details
 
@@ -179,6 +180,40 @@ Elevation views have a view direction (*Elevation view direction*):
 
 A folded facade (V-shaped or polygonal in plan, or with parts at different inclinations) is first split where the best-fit planes of its parts differ by more than 10° (recursive two-plane fits along the facade); each part (*facade A, B* …) gets its own view and zones, and the zones meet at the fold with match lines. The view label states the direction (*VIEW NORMAL TO FACADE A — ZONE 2*) and a note gives the plane's inclination. Levels are drawn where they cut the plane (horizontal lines with their true heights); grid lines are projected onto the plane; both are omitted where they do not cross the zone. Section cuts and details are placed on world-projection GA views only.
 
+## Unfolded elevation
+
+A folded, V-shaped, faceted or curved facade gets an **unfolded (developed) elevation**: its facade planes laid out flat side by side, in plan order, as one continuous strip (`src/core/drawings/unfolded.ts`). It is a GA sheet, `<prefix>-GA-04`, after the GA front and plan; *Drawing settings → Unfolded elevation* switches it off (default *When folded*). A planar facade, vertical or inclined, has no unfolded elevation: the GA's view normal to the facade already shows its true shape.
+
+| Topic | Rule |
+|---|---|
+| Facade planes | The facade parts of the views normal to the facade (*facade A, B* …: recursive best-fit planes, split where they differ by more than 10°, see *Views normal to the facade*). Each plane is refitted on the axes of its members (brackets behind the facade do not tilt it) and taken as vertical when it is within 1° of vertical. |
+| Development | Facade A keeps its view normal to its plane. Each next facade part is turned about the **fold line** it shares with the previous one (the intersection of the two planes) into the drawing plane, on the far side of the fold. Each plane keeps its true shape and true lengths, and neighbouring planes join exactly along their fold line. The strip is then turned so that its fold lines are as near vertical as possible: exactly vertical with one fold, so the developed widths read across the strip. Every part is projected onto the plane of its facade part. The view is seen from the side the views normal to the facade are seen from (*looking N* …, stated in the notes). |
+| Fold lines | Chain lines (ISO 128-2, long-dash dotted narrow) across the strip, labelled *FOLD F1 13.7°*: the **fold angle** is the deflection between the two planes (0° = flat). The *Folds* table gives each fold's facade parts, its developed position from the strip start, the angle, the **included angle** (180° less the fold angle) and whether it is seen as a **ridge** (pointing towards the viewer) or a **valley**. |
+| Dimensions | Below the strip: the developed grid spacing (where grids cross the facade), the **developed width** of each facade part between its fold lines (end parts: to the extent of their steel) and the **overall developed length**. Widths are measured across the folds. The *Facade planes (developed)* table lists each part's developed width, its inclination from vertical and its assemblies, with the total. |
+| Grids and levels | Where the grid planes and the level planes cut each facade plane: grid lines with bubbles above the strip; levels with their markers at the left, continuous across the folds. On a leaning folded facade the levels are horizontal in each plane but kink at the folds on the development (the strip is a chevron). |
+| Marks | Assembly marks placed clear of each other and of the view's text, as on the GA (see *Mark placement*); they carry the navigation tags (mark → assembly drawing, instance → 3D). |
+| One sheet or zones | On one GA sheet when the strip is legible there (the legible scale of the marks, as for the GA). Otherwise, with *Divide large views* on, the strip is divided like a GA view (same settings): the first sheet becomes the **overall sheet** (the whole strip at the scale that fits, zone outlines with their numbers, the zone index, the planes and folds tables, no marks), followed by **zone sheets** `<prefix>-GA-04-Z<n>` (*Unfolded elevation – Zone 2 of 6*). Zones are rectangles on the strip, divided at fold lines and grid lines (else member lines) and at levels, with the overlap beyond each match line. Each zone sheet has a **key plan** of the strip (facade planes, folds, every zone, this one hatched), match lines referring to the adjacent zone sheets, the folds in the zone and the assemblies whose mark lies in it (every assembly in exactly one zone). |
+| On demand | Listed in the register without drawing it (the development and zones are worked out in steps while the register is built); each sheet is made when viewed or exported and keyed by what it shows (see *Drawings on demand*). In the export package it belongs to the GA elevations. |
+
+On the client's V-shaped facade (two leaning planes, 29° from vertical, 1,170 assemblies) the unfolded elevation is an overall sheet at 1:500 and six zone sheets at 1:200: developed widths 52,962 + 52,965 mm, developed length 105,927 mm, one fold F1 of 13.7° (included 166.3°), seen as a ridge.
+
+**Limits.** Curved facades are developed as the polygon of their best-fit planes (at most eight, the GA's facade parts), so a member on a curve is projected onto the chord plane of its facade part (a fraction of a millimetre per metre on usual radii). An assembly belongs to one facade part as a whole: a part of it on the other side of a fold is drawn in the plane of its assembly's part. Several non-parallel folds cannot all be vertical: the strip is turned to the best average and the developed widths are measured horizontally on the sheet at mid-height of each fold. Section cuts and details are placed on the GA, not on the unfolded elevation.
+
+## Flat patterns
+
+Bent plates and folded (cold-formed) sections show what is cut before bending on their part drawings, by the method of the bent plates (DIN 6935 with a neutral-axis K-factor, [MODELLING.md](MODELLING.md) §2): bend allowance BA = θ·(Ri + K·t), outside leg dimensions to the outer mould lines, K = 0.33 unless set on the plate.
+
+**Bent plates** (`FreePlate` with bends):
+- The elevation is the **FLAT PATTERN** (developed blank) with its holes, the bend lines as chain lines at the centre of each bend zone and the zone edges (zone width = BA) as thin lines, each bend labelled *UP 90° Ri 5* / *DOWN 90° Ri 5* beside its line, clear of the holes. UP: the far side bends towards the viewer of the flat pattern.
+- The positions of the bend lines from the datum are dimensioned (running dimensions, between the hole dimensions and the overall size) where the bend lines are parallel to an edge.
+- A **bend table** *Bends (flat pattern, K = 0.33)*: bend, direction, angle, inner radius, bend allowance and the bend line from the datum (`x = 55.2`, or its end points for an oblique bend).
+- **Flat pattern notes**: the developed size, the bend allowance formula with the K-factor ("confirm K with the press brake tooling before cutting") and the meaning of UP / DOWN.
+- The plan is replaced by the **FORMED SHAPE** seen along the bend lines (`formedProfile` in `src/core/geometry/bentPlate.ts`): both faces with the bend arcs, tangent lines at the arcs, the **outside leg dimensions** (the legs the plate was bent from) and the bend angles. Bends at another direction than the first are not in this view (the notes say so). The section A–A stays a section through the blank.
+
+**Folded sections** — lipped C and Z (EN 10162), cold-formed L and U (an outer corner radius `ro`), and POLY thin-wall open outlines with a sheet thickness `t`: the part drawing gets a **FLAT STRIP (DEVELOPED)** block, *375 × 3000* — the strip (broken when long) with its bend lines along the length (B1, B2 …), the developed width and the length dimensioned, a bend table (direction, angle, inner radius, bend allowance, position from the first edge) and the K-factor note. Parametric sections are developed from their outside legs (C 200×75×20×2: 20 + 75 + 200 + 75 + 20 less four bend deductions = 374.7 mm); a POLY outline from its mid-line (the two end caps of length t, the mid-line between the sides, its bends where it turns, less the shift of the neutral fibre from mid-thickness to K·t at each bend) — within 0.3 mm of the parametric development for the catalogue sections drawn as POLY. Hot-rolled sections (root radii, no `ro`) and closed sections have no flat strip. Holes are not drawn on the strip (see the elevation and the hole table).
+
+Both are written to the flat-patterns DXF of the export package (see [FABRICATION.md](FABRICATION.md) §1). Code: `src/core/geometry/bentPlate.ts` (`profileStrip`, `formedProfile`), `src/core/drawings/flatPattern.ts`, `partDrawing.ts`. Tests: `tests/flatPatterns.test.ts`.
+
 ## Drawings on demand
 
 A large facade has thousands of sheets (a 24,000-member facade about 7,000, most of them setting-out plans and anchor schedules). They are not drawn all at once: the drawing set is listed first and each sheet is made when it is viewed or exported (`src/core/drawings/onDemand.ts`).
@@ -194,12 +229,13 @@ A large facade has thousands of sheets (a 24,000-member facade about 7,000, most
 | Bracket setting-out plan | its brackets (with their plates, anchors and mullions), its place along the slab edge, the grids, the survey, the tolerances |
 | Anchor schedule | its rows (and on sheet 1 the totals) |
 | GA, zone, erection sequence, section / detail sheets | anything in the model (they show all of it) |
+| Unfolded elevation sheet / zone sheet | the development (facade planes, folds, grids, levels), the zones, and the geometry and marks of the parts it draws (the overall sheet: all of them; a zone sheet: those in the zone and its overlap) |
 | Register | the number, title, scale or status of any sheet |
 | Every sheet | the drawing settings, the title block fields, the sheet template, its own edits and revisions |
 
 So after an edit only the drawings whose inputs changed are made again, and only when they are viewed or exported; undo and redo find the sheets of the earlier state in the cache. The eager `allDrawings(p, dm)` still draws the whole set (same sheets, same fingerprints).
 
-**Changed since issue.** A sheet that has never been issued is always *changed*. For an issued sheet the flag needs its fingerprint, which is known once the sheet has been made; fingerprints, scales and layout results are kept for many more sheets than the cache holds, by the same key without the revisions — so issuing does not lose them, and sheets an edit did not touch keep their flag. In the Drawings tab a background check makes the sheets one at a time in idle time (issued sheets first) until every flag and layout badge is known; a rev shown with `?` has not been checked since the last edit. On models with more than 15,000 parts the GA, zone and sequence sheets (the slowest, made again after every edit) are left to *Check all*.
+**Changed since issue.** A sheet that has never been issued is always *changed*. For an issued sheet the flag needs its fingerprint, which is known once the sheet has been made; fingerprints, scales and layout results are kept for many more sheets than the cache holds, by the same key without the revisions — so issuing does not lose them, and sheets an edit did not touch keep their flag. In the Drawings tab a background check makes the sheets one at a time in idle time (issued sheets first) until every flag and layout badge is known; a rev shown with `?` has not been checked since the last edit. On models with more than 15,000 parts the GA, zone and sequence sheets (the slowest, made again after every edit) and the unfolded elevation are left to *Check all*.
 
 **The register sheet** lists the scale and status of every sheet, so viewing or exporting it first makes the sheets whose facts are not known yet (the background check, with progress).
 
@@ -235,7 +271,7 @@ The title block can follow a company template (*Drawing settings → Sheet templ
 
 ## Drawing numbers
 
-`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-SD-NN` section / detail sheets (in the order of the GA cuts), `<prefix>-E-NN` bracket setting-out plans, `<prefix>-AS-NN` anchor schedules, `<prefix>-ES-NN` erection sequences, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part. Zone sheets of a divided view add `-Z<n>` (`<prefix>-GA-01-Z2`, `<prefix>-ES-01-Z3`).
+`<prefix>-DR-01` register, `<prefix>-GA-01/02` GA, `<prefix>-GA-04` unfolded elevation (zones `<prefix>-GA-04-Z<n>`), `<prefix>-SD-NN` section / detail sheets (in the order of the GA cuts), `<prefix>-E-NN` bracket setting-out plans, `<prefix>-AS-NN` anchor schedules, `<prefix>-ES-NN` erection sequences, `<prefix>-A-<assembly mark>` assembly, `<prefix>-P-<part mark>` part. Zone sheets of a divided view add `-Z<n>` (`<prefix>-GA-01-Z2`, `<prefix>-ES-01-Z3`).
 
 The sheets of a multi-sheet drawing share its number (ISO 7200) and carry *Sheet n/N*; the register lists them as `<number> (n/N)`.
 

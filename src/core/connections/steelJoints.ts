@@ -6,7 +6,8 @@
  */
 import { getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
-import type { Vec3 } from '../model/types';
+import type { Connection, ParamValue, Project, Vec3 } from '../model/types';
+import { memberAxes } from '../model/geometry';
 import { centreAt, emptyOut, endSlot, halfExtent, num, rect, str, type ConnCtx, type ConnectionDef, type ProfilePartOut, type Trim } from './common';
 import {
   P,
@@ -44,6 +45,7 @@ import {
   v3,
   wallOf,
   type Joint,
+  throughHole,
 } from './kit';
 
 const jointTrim = (ctx: ConnCtx, extra: (j: Joint) => number): Trim[] => {
@@ -235,7 +237,7 @@ export const doubleAngle: ConnectionDef = {
         dir: scale(dIn, -1),
         grip: a.t + mainDepth,
       });
-      for (const p of mainPts) memberHole(out, main, madd(p, dIn, -mainDepth / 2), dIn, bolt.hole);
+      for (const p of mainPts) memberHole(out, main, throughHole(main, p, dIn, mainDepth), dIn, bolt.hole);
       if (s > 0) for (const o of offs) secHeads.push(madd(madd(madd(Cs, dIn, face + g), xp, o), ySec, sec.w / 2 + a.t));
     }
     addBolts(out, { key: 'bolts-sec', bolt, grade: str(v.grade, '8.8'), heads: secHeads, dir: scale(ySec, -1), grip: 2 * a.t + sec.w });
@@ -325,7 +327,7 @@ export const teeCleat: ConnectionDef = {
       dir: scale(dIn, -1),
       grip: tee.tf + mainDepth,
     });
-    for (const p of flangePts) memberHole(out, main, madd(p, dIn, -mainDepth / 2), dIn, bolt.hole);
+    for (const p of flangePts) memberHole(out, main, throughHole(main, p, dIn, mainDepth), dIn, bolt.hole);
     const secPts = offs.map((o) => madd(madd(Cs, dIn, face + gs), zs, o));
     addBolts(out, {
       key: 'bolts-sec',
@@ -344,11 +346,39 @@ export const teeCleat: ConnectionDef = {
 
 const SEAT_ANGLES = ['L 80x80x8', 'L 100x100x10', 'L 120x80x10', 'L 120x120x12', 'L 150x90x10'];
 
-/** Downward-most face normal of a member section (±y / ±z). */
-function bottomNormal(sec: Joint['sec']): Vec3 {
+/** The seat face options of the seated angle: 'auto' = the downward-most face; else a face of the secondary's section. */
+const SEAT_AUTO = 'auto (lowest face)';
+const SEAT_FACES = ['-z', '+z', '-y', '+y'] as const;
+type SeatFace = (typeof SEAT_FACES)[number];
+
+/** Downward-most face of a member section (±y / ±z) with axes y, z. */
+function bottomFace(y: Vec3, z: Vec3): SeatFace {
   const down = v3(0, 0, -1);
-  const c = [sec.frame.y, scale(sec.frame.y, -1), sec.frame.z, scale(sec.frame.z, -1)];
-  return c.reduce((best, n) => (dot(n, down) > dot(best, down) ? n : best), c[0]);
+  const c: [SeatFace, Vec3][] = [
+    ['+y', y],
+    ['-y', scale(y, -1)],
+    ['+z', z],
+    ['-z', scale(z, -1)],
+  ];
+  return c.reduce((best, n) => (dot(n[1], down) > dot(best[1], down) ? n : best), c[0])[0];
+}
+
+/** Outward normal of the seat face: the `seat` parameter, or the downward-most face (auto). */
+function seatNormal(sec: Joint['sec'], seat: string): Vec3 {
+  const face = (SEAT_FACES as readonly string[]).includes(seat) ? (seat as SeatFace) : bottomFace(sec.frame.y, sec.frame.z);
+  const axis = face[1] === 'y' ? sec.frame.y : sec.frame.z;
+  return face[0] === '+' ? axis : scale(axis, -1);
+}
+
+/** `ConnectionDef.pin` of the seated angle: the downward-most face as an explicit `seat` face. */
+function pinSeat(p: Project, c: Connection, v: Record<string, ParamValue>): Record<string, ParamValue> {
+  if ((SEAT_FACES as readonly string[]).includes(str(v.seat))) return {};
+  const m = p.members[c.secondary[0]];
+  const a = m && p.nodes[m.start]?.p;
+  const b = m && p.nodes[m.end]?.p;
+  if (!m || !a || !b) return {};
+  const ax = memberAxes(a, b, m);
+  return { seat: bottomFace(ax.y, ax.z) };
 }
 
 /**
@@ -363,6 +393,13 @@ export const seatedAngle: ConnectionDef = {
   needsMain: true,
   faceGap: 'gap',
   gravity: true,
+  pin: pinSeat,
+  transform(params, f) {
+    // An explicit seat face is signed along the secondary's y or z.
+    const s = str(params.seat);
+    if (!(SEAT_FACES as readonly string[]).includes(s)) return;
+    if ((s[1] === 'y' ? f.y : f.z) < 0) params.seat = `${s[0] === '+' ? '-' : '+'}${s[1]}`;
+  },
   params: [
     P.sel('angle', 'Seat angle (vertical × seat leg)', SEAT_ANGLES, 'L 100x100x10'),
     P.num('length', 'Seat length (0 = auto)', 0),
@@ -374,6 +411,7 @@ export const seatedAngle: ConnectionDef = {
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.num('slot', 'Seat slot, lateral (extra)', 0),
     P.bool('topCleat', 'Top restraint cleat', false),
+    P.sel('seat', 'Seat face of the secondary (auto = the lowest face)', [SEAT_AUTO, ...SEAT_FACES], SEAT_AUTO, 'Auto picks the face pointing most downwards; auto-connect, Apply and every mirror / rotate / reverse set it to that face of the secondary\'s section, so the seat follows the member under any map.'),
   ],
   trims: (ctx) => jointTrim(ctx, () => num(ctx.v.gap, 10)),
   build(ctx) {
@@ -391,7 +429,7 @@ export const seatedAngle: ConnectionDef = {
     const bolt = getBolt(str(v.bolt, 'M12'));
     const slot = Math.max(0, num(v.slot, 0));
     const gap = num(v.gap, 10);
-    const nb = bottomNormal(sec);
+    const nb = seatNormal(sec, str(v.seat, SEAT_AUTO));
     const hb = halfExtent(sec, nb);
     const across = normalize(cross(dIn, nb));
     const Ls = num(v.length, 0) || ceilTo(2 * halfExtent(sec, across) + 40, 5);
@@ -423,7 +461,7 @@ export const seatedAngle: ConnectionDef = {
         dir: scale(dIn, -1),
         grip: a.t + mainDepth,
       });
-      for (const p of pts) memberHole(out, main, madd(p, dIn, -mainDepth / 2), dIn, bolt.hole);
+      for (const p of pts) memberHole(out, main, throughHole(main, p, dIn, mainDepth), dIn, bolt.hole);
     }
     const top = cleats.length > 1;
     const secPts = seatOffs.map((o) => madd(madd(Cs, dIn, face + gS), across, o));

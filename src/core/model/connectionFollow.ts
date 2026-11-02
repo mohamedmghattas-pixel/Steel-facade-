@@ -19,10 +19,10 @@
  * - connections that disappeared are listed as removed.
  * The summary feeds the status message, the assistant replies and the toast.
  */
-import type { Connection, Id, Member, Project, Vec3 } from './types';
+import type { Connection, Id, Member, ParamValue, Project, Vec3 } from './types';
 import { dist, dot, memberAxes, normalize, pointSegment, sub, toLocal, type Frame } from './geometry';
 import { CONNECTIONS, COLLINEAR_TYPES } from '../connections/registry';
-import { jointFlip, transformParams, type JointAxes } from '../connections/transform';
+import { jointFlip, pinFrameParams, transformParams, type JointAxes } from '../connections/transform';
 import { memberGeom } from '../derive/memberGeom';
 import { pieceAt } from '../wireframe/apply';
 import { NODE_TOL, ROLE_LABEL, membersAtNode, newId, removeOrphanNodes } from './ops';
@@ -42,6 +42,8 @@ interface ConnSnap {
   main: Id | null;
   mainAxes?: Axes;
   mainWire?: [Vec3, Vec3];
+  /** Member-local values of its world-referenced 'auto' parameters before the operation (transform.ts). */
+  pinned: Record<string, ParamValue>;
 }
 
 export interface ConnectionSnapshot {
@@ -106,6 +108,7 @@ export function snapshotConnections(p: Project): ConnectionSnapshot {
       main: c.main,
       mainAxes: axesOf(p, main),
       mainWire: main ? wires.get(main.id) : undefined,
+      pinned: pinFrameParams(p, c),
     });
   }
   return { conns, wires };
@@ -221,7 +224,7 @@ export function followConnections(p: Project, snap: ConnectionSnapshot, opts: Fo
       // The joint moved with its supported member: the parts are the image of the old ones.
       // Only the main moved (reverse of a main member): its joint stays where it is.
       const f = secMoved ? jointFlip(before, now, opts.map.vector, opts.map.improper) : jointFlip({ main: before.main }, { main: now.main });
-      if (transformParams(p, c, f).length) sum.transformed.push(c.id);
+      if (transformParams(p, c, f, s0.pinned).length) sum.transformed.push(c.id);
     }
   }
   // 5. Copies: parameters from the source, through the map.
@@ -232,7 +235,7 @@ export function followConnections(p: Project, snap: ConnectionSnapshot, opts: Fo
     sum.copied.push(nid);
     if (!opts.map) continue;
     const now = { sec: axesOf(p, p.members[c.secondary[0]]), main: axesOf(p, c.main ? p.members[c.main] : undefined) };
-    if (transformParams(p, c, jointFlip({ sec: s0.secAxes, main: s0.mainAxes }, now, opts.map.vector, opts.map.improper)).length) sum.transformed.push(nid);
+    if (transformParams(p, c, jointFlip({ sec: s0.secAxes, main: s0.mainAxes }, now, opts.map.vector, opts.map.improper), s0.pinned).length) sum.transformed.push(nid);
   }
   // 6. Removed.
   for (const [id, s0] of snap.conns) if (!p.connections[id]) sum.removed.push({ id, label: s0.label });

@@ -397,24 +397,38 @@ interface ConnCtx    { p; c; node: Vec3; v: params; geom(id): MemberGeom }      
 - Existing connections on the same member end (`node` and `secondary[0]`)
   are kept unless `replace` is set (`:260,268-269,282`).
 
-`autoConnect(p, options)` (`src/core/connections/registry.ts:139-218`) works
-node by node:
+`autoConnect(p, options, only?, structure?)` = `applyAutoPlan(planAutoConnect(…))`
+(`src/core/connections/autoConnect.ts`) places by **role and topology**; the
+rules and their order are in [CONNECTIONS.md "Auto-connect"](CONNECTIONS.md).
+The geometric choices:
 
-- **Mullion brackets** (`:153-174`):
-  - With a mullion below the node: `slabBracket` with `mount: 'edge'` and
-    `secondary = [below, above?]`.
-  - Otherwise, with a mullion above it: `mount: 'top'`.
-  - Both use `side = slabSide` and `standoff`.
-- **Post bases**: at the bottom end of a vertical `post` (`:177-185`).
-- **Joints** (`:188-215`):
-  - Every non-vertical member that ends at the node gets `o.joint`.
-  - `main` is chosen in this order: a through vertical member, a vertical
-    member continuing upwards, any vertical member, any through member
-    (`:195-199`).
-  - Braces with an FL, L, CHS or RHS section get `braceJoint` (default
-    `gussetPlate`) (`:201-205`).
-  - When `main` ends at the node and the secondary's `ŷ` is near-vertical,
-    `params.side = sign(ŷz)·(main continues up ? 1 : −1)` (`:206-212`).
+- **Kinds:** mullion / post = main, transom / rail = secondary, bracket =
+  stub, brace; other, beam and outrigger by direction (`isVerticalAxis` =
+  main).
+- **Transom joints:** a secondary ending at a node; `main` = a main member
+  passing through, else the one whose other end is higher, else any main,
+  else any member passing through. When `main` ends at the node:
+  `params.side = sign(ŷ_sec·d)` if `|ŷ_sec·d| > 0.7`, `d` = unit vector from
+  the node to the main member's other end. For a plumb main `d = ±Ẑ`, which is
+  the earlier `sign(ŷz)·(main continues up ? 1 : −1)`.
+- **Stack joints:** main-member line ends (no collinear member at the node)
+  `E1`, `E2` with outward axes `o1·o2 < −cos 1°`, gap `(E2 − E1)·o1` within the
+  stack-joint range, lateral offset ≤ the junction tolerance. The splice sits
+  at the upper length's end node with `main` = the lower length (§10.4, gap
+  joints).
+- **Structure brackets:** support point `P` on the wire line, structure point
+  `q`, `v = q − P`; needs `|v·ẑ| ≥ 0.7|v|`; `side = sign(v·ẑ)`,
+  `standoff = |v·ẑ|`; at node `N` (nearest end of the piece): slab bracket
+  `dz = (P − N)·up`, others `along = (P − N)·dIn`; `upSign = sign(x̂·Ẑ)`
+  (`exactAxis`), all in the member frame.
+- **Level brackets** (vertical mullions only): with a mullion below the node
+  `mount: 'edge'`, `secondary = [below, above?]`, else `mount: 'top'`, both
+  with `side = slabSide`, `standoff` — at chain ends, and where two pieces meet
+  only at a level (or, without levels, with no other member there). A level a
+  length passes without a node: edge bracket on that piece at the nearest
+  free end node, `dz = z_level − 100 − z_N`.
+- **Post bases**: at the bottom end of a vertical `post`.
+- Every placed connection is pinned (`ConnectionDef.pin`, §15).
 
 ### 4.3 Joint quantities shared by the builders
 
@@ -613,8 +627,9 @@ Set-up (`:125-143`):
 ```
 s     = sign(side)                    zN = ẑ·s   (towards the slab)
 f     = sign(finSide)                 y  = ŷ·f   (the fin side of the mullion, default +ŷ)
-up    = x̂·sign(x̂·Ẑ),  upSign = ±1      vWire = −shift.y·s   (wire line along zN, relative to C)
-edge: C = centreAt(g, N + Ẑ·dz)       (dz default −100: world-Z offset, projected on the axis)
+up    = x̂·upSign (param ±1)  or, upSign 'auto': x̂·sign(x̂·Ẑ)        vWire = −shift.y·s   (wire line along zN, relative to C)
+edge: C = centreAt(g, N + exactAxis(up)·dz)   (upSign set: dz along the axis)
+      C = centreAt(g, N + Ẑ·dz)               (auto: dz default −100, a world-Z offset projected on the axis)
 top : C = centreAt(g, N) + up·(backT + finH/2)
 sideFace = C + y·w/2                  yFin = w/2 + finT/2     (fin mid-plane along y)
 sb    = edgeSetback (default 20)      base plate set-back behind the slab edge (top mount)
@@ -949,7 +964,7 @@ Symbols as in §4.3. Bracket family (`bracketFrame`, `src/core/connections/kit.t
 
 - `C = centreAt(g, N + dIn·along)`, `zN = ẑ·side`, `y = ŷ·finSide`
 - `D = −shift.y·side + standoff` (the concrete face is `C + zN·D`)
-- `up = x̂·sign(x̂·Ẑ)` if `|x̂·Ẑ| > 0.5`, else `dIn`
+- `up = x̂·upSign` (param ±1); with `upSign` 'auto': `x̂·sign(x̂·Ẑ)` if `|x̂·Ẑ| > 0.5`, else `dIn`
 
 `throughMember` (`src/core/connections/concreteBrackets.ts:51-63`): heads at
 `C + up·u + zN·zOff + y·(w/2 + plies)`, `dir −y`, `grip plies + w`, member
@@ -991,7 +1006,7 @@ Plate notation in the tables below: `[P | n_out | x, y]` means
 | `flangeClamp` (`:61`) | Main I/U, `\|dIn·ẑm\| ≥ 0.95`. `Fm = centreAt(main,N) + dIn·halfExtent(main,dIn)`, `A = ŷm`, `Lm = x̂m`, `sl = (Cs − Fm)·Lm`. Top `[Fm − A·W/2 + Lm(sl − L/2) \| dIn \| A, Lm]` welded to sec; clamp plates at `Fm − dIn·tf`, `n_out −dIn`; packers `t = tf` (`:85-152`) | bolts outside the flange tips at `Fm ± A·oc + Lm(sl + u)`, `oc = bf/2 + clear + d/2`; head `+dIn·t`, `dir −dIn`; no member holes (`:99,120-162`) | `face + t` (`:77`) |
 | `doubleAngle` (`:172`) | for `s = ±1`: `zp = s·ŷ`, `xs = dIn × zp`, `K = Cs + zp·w/2 + dIn·face`, `placeAngle(K − xs·Lc/2, xs, Lc, legB = dIn, legH = zp)` (`:213-219`) | main per side: head `K + zp·g + xp·o + dIn·a.t`, `dir −dIn`; sec once: head `Cs + dIn(face + g) + xp·o + ŷ(w/2 + a.t)`, `dir −ŷ`, `grip 2a.t + w` (`:221-238`) | `face + gap` (`:187`) |
 | `teeCleat` (`:252`) | `placeTee(faceC, ẑ, out = −dIn, width = ys)`, `faceC = Cs + dIn·face + ys·stemOff − ẑ·Lc/2`, `stemOff = 0` (knife) or `w/2 + tw/2`; the flange outer face lies on the main face (`:291-302`, `kit.ts:371-380`) | flange: `Cs + dIn·face + ys(stemOff ± gf) + ẑo`, head `+dIn·tf`, `dir −dIn`; stem: `Cs + dIn(face + gs) + ẑo`, head `ys·w/2` or `ys(w/2 + tw)`, `dir −ys` (`:307-334`); knife: end slot in sec `tw + 2` × `h_tee − tf − gap + 5` unless the stem fits inside a hollow sec (`:297`) | `face + tf + gap` (`:268`) |
-| `seatedAngle` (`:355`) | `nb` = most downward of `±ŷ, ±ẑ` (`:344-348`), `across = dIn × nb`; seat (`n = nb`) and optional top cleat (`n = −nb`): `placeAngle(Cs + dIn·face + n·hb − across·Ls/2, across, Ls, legB = dIn, legH = n)` (`:403-407`) | main head `+dIn·a.t`, `dir −dIn`; vertical: head `−nb(hb [+ a.t])`, `dir nb`, `grip 2hb + a.t·n` (`:408-432`) | `face + gap` (`:372`) |
+| `seatedAngle` (`:355`) | `nb` = the `seat` face (`±ŷ, ±ẑ`), or with `seat` auto the most downward of them, `across = dIn × nb`; seat (`n = nb`) and optional top cleat (`n = −nb`): `placeAngle(Cs + dIn·face + n·hb − across·Ls/2, across, Ls, legB = dIn, legH = n)` (`:403-407`) | main head `+dIn·a.t`, `dir −dIn`; vertical: head `−nb(hb [+ a.t])`, `dir nb`, `grip 2hb + a.t·n` (`:408-432`) | `face + gap` (`:372`) |
 | `stubBracket` (`:446`) | stub `sectionFrame(Cs + dIn·face, dIn, sec)` length `Ls`, welded to main; plates `[Cs + dIn·u − YW/2 − ZH/2 \| dIn \| Y, Z]` at `u = face + Ls` (welded to stub) and `face + Ls + t` (welded to sec) (`:485-508`, `kit.ts:383-389`) | head `Cs + Y·by + Z·bz + dIn(face + Ls + 2t)`, `dir −dIn`, `grip 2t` (`:509`) | `face + Ls + 2t` (`:461`) |
 | `saddleBracket` (`:522`) | `A = norm(dIn × x̂m)`, `M = norm(A × dIn)`, `uFar = (centreAt(main,N) − Cs)·dIn − halfExtent(main,dIn)`; back `[Cs + dIn·uFar − A(Hin + t) − M·Hs/2 \| −dIn \| A, M]`; sides `[Cs + s·A·Hin + dIn·uFar − M·Hs/2 \| s·A \| dIn, M]` (`:550-596`) | at `Cs + dIn·(face + gap + e + i·p)`, head `+A(Hin + t)`, `dir −A`, `grip 2t + 2Hin`; optional main bolt at `Cs + dIn·cM` (`:566-603`) | `face + gap` (`:538`) |
 | `shearBlock` (`:615`) | RHS sec only; `[Cs + ŷ·y0 + dIn·face − ẑ·hi \| ŷ \| dIn, ẑ]`, block `y0 = −tb/2`, twin `y0 ∈ {wi − tp, −wi}`, welded to main (`:659-683`) | head `+ŷ·w/2`, `dir −ŷ`, `grip w`; sec holes slotted along `x̂` (`:684-685`) | `face + gap` (`:632`) |
@@ -1002,7 +1017,7 @@ Plate notation in the tables below: `[P | n_out | x, y]` means
 | Type | Placement | Bolts / holes | Trim |
 | --- | --- | --- | --- |
 | `endPlateSplice` (`spliceJoints.ts:50`) | `C = centreAt(b,N)`; plates `[C + dB·u − YW/2 − ZH/2 \| dB \| Y, Z]`: `u = pack/2` (welded to b), `−pack/2 − t` (welded to a), pack at `−pack/2` (`:90-108`) | head `+dB(pack/2 + t)`, `dir −dB`, `grip 2t + pack` (`:109-116`) | `t + pack/2` on both (`:65`) |
-| `sleeveSplice` (`spliceJoints.ts:158`) | sleeve `sectionFrame(C − dB·Ls/2, dB, b)`, length `Ls`, centred on `N` (`:212-214`) | at `C + d·u`, `u = gap/2 + e + i·p` per side; head `+Y·max(w)/2`, `dir −Y`; sleeve holes slotted on the sliding side (the upper member if vertical, `:206-207,216-233`) | `gap/2` on both (`:174`) |
+| `sleeveSplice` (`spliceJoints.ts:158`) | sleeve `sectionFrame(C − dB·Ls/2, dB, b)`, length `Ls`, centred on `C` (the node, or the middle of a drawn gap) | at `C + d·u`, `u = max(gap, apart)/2 + e + i·p` per side; head `+Y·max(w)/2`, `dir −Y`; sleeve holes slotted on the sliding side (`slides`: supported / main; auto = the upper member of a steep joint, else the supported one) | `max(0, gap/2 − apart/2)` on both |
 | `gussetPlate` (`bracing.ts:132`) | `nG = norm(x̂m × dIn)` (towards `ŷs`); `n` = main face normal; `O` on the main face (`:65-77`); gusset `[O + nG((Cs−O)·nG + contact) \| side·nG \| x̂m, n]`, outline = hull of the weld base and bolt capsule (`:164-175`); tubes: knife `[Cs + dIn·tip − wdir·kW/2 − nG·tk/2 \| nG \| dIn, wdir]` (`:184-199`), end slot in the tube `tk + 2` × `insert + 5` (`:202`) | holes slotted along `dIn`; head `p + nG(contact + side·t − (p−Cs)·nG)`, `dir −side·nG`, `grip t + tPart` (`:177,206-216`) | flat/angle `clearAt(halfW)`, tube: last bolt + edge + 5 (`:89-111`) |
 | `crossBrace` (`bracing.ts:294`) | `nG = norm(x̂a × x̂b)`; in-plane members at the node joined; plate `[N + nG·side·contact \| side·nG \| ax, nG × ax]`, `contact = max halfExtent(m, nG)` (`:235-240,323-350`) | through member: `±p/2` around `N`; split members after the trim; head `p + nG(side(contact + t) − (p−N)·nG)`, `dir −side·nG`, `grip t + 2contact` (`:267-285,351-363`) | split members: `(tHalf + gap + half·\|wdir·nt\|)/sinθ` (`:276-283`) |
 | `hangerRod`, `tieBack` (`hangers.ts:181,216`) | `nL = norm(dIn × x̂m)`, `wL = norm(nL × dIn)`, `at(u,y,w) = Cs + dIn(face + u) + nL·y + wL·w`; lug `[at(0, yL − tl/2, −Wl/2) \| nL \| dIn, wL]` welded to main; fork boss/cap ⟂ `dIn` at `uEnd` + cheeks at `±nL·yc`; tab/tongue at `nL·(−tp/2)` with the lug offset `yL = −(tp + tl)/2` (`:48-157`); tongue: end slot in the strut `tp + 2` × `insert + 5` (`:159`) | pin hole `P0 = at(uPin, 0, 0)` slotted along `dIn`; head `P0 + nL·headY`, `dir −nL`, `grip 2(tp + 1.5) + tl` (fork) or `tp + tl` (`:103-171`) | `face + trim` (`:83-86`, `trim` `:67-78`) |
@@ -1255,8 +1270,9 @@ Assemblies: `M1 = {mullion, fin plate}`: welded, and the main is the member
 9. **Mirror and flip rules** (§15): give every parameter signed along a
    member axis (a side, an offset across the member, a bolt head side) a
    `flip` rule (`P.side(key, label, d, flip)` or `flips(spec, …)` in
-   `kit.ts`), a select with mirrored options a `swap`, and set `gravity` when
-   the geometry is placed from world up. A hard-coded side (`+ŷ`, a cross
+   `kit.ts`), a select with mirrored options a `swap`. Geometry placed from
+   world up needs an `auto` parameter with a member-local value, `gravity` and
+   a `pin` (§15) — the mirror tests include planes that turn world up. A hard-coded side (`+ŷ`, a cross
    product sign) needs a ±1 parameter with a rule, or the mirror test fails.
    Set `faceGap` to the clearance parameter when the trim is face + it.
 
@@ -1407,29 +1423,37 @@ reflection of the old ones through that plane.
 | Type | Rule(s) | Notes |
 | --- | --- | --- |
 | `finPlate`, `angleCleat`, `teeCleat`, `wallAngle`, `gussetPlate`, `crossBrace` | `side`: y | gusset: angle braces follow `mirrorSection` (§10 notes) |
-| `slabBracket` | `side`: z, `finSide`: y, `surveyAlong`: y | `surveyOut` (along `zN`) and `surveyVert` (along `up`) need none; gravity (`dz`, `up`) |
-| `helpingHand`, `castInChannel`, `embedPlate`, `adjustableBracket` | `side`: z, `finSide`: y | gravity (`bracketFrame.up`) |
+| `slabBracket` | `side`: z, `finSide`: y, `surveyAlong`: y, `upSign`: x | `surveyOut` (along `zN`), `surveyVert` (along `up`) and `dz` (along `up` once pinned) need none; pinned: `upSign`, `dz` |
+| `helpingHand`, `castInChannel`, `embedPlate`, `adjustableBracket` | `side`: z, `finSide`: y, `upSign`: x | pinned: `upSign` (`bracketFrame.up`) |
 | `soffitHanger` | `finSide`: y | twin fins: bolt head side |
 | `anchorPlate` | `finSide`: y | fin variant |
-| `doubleAngle`, `shearBlock`, `splicePlates`, `sleeveSplice` | `boltSide`: y | sleeve splice: gravity (the sliding upper member) |
+| `doubleAngle`, `shearBlock`, `splicePlates`, `sleeveSplice` | `boltSide`: y | sleeve splice: pinned `slides` (a member, so no flip) |
 | `saddleBracket` | `boltSide`: mx·det | |
 | `hangerRod`, `tieBack` | `side`: mx·det | |
 | `custom` | `mirrorV`: z·det (joint frame) or y (member frame), `mirrorW`: z | §4.4 |
 | `endPlate`, `welded`, `baseplate`, `stiffenedBase`, `endCap`, `flangeClamp`, `stubBracket`, `endPlateSplice` | — | symmetric about both member planes through the joint |
-| `seatedAngle` | — | gravity: the seat is the downward face (§10.3) |
+| `seatedAngle` | `seat` (`transform`): `±y` with y, `±z` with z | pinned: `seat` (§10.3) |
 
 Slots and their directions are built along member or plate axes, so they
 follow the frames; no type has an angle parameter.
 
-**Gravity-referenced geometry** (`ConnectionDef.gravity`: `slabBracket`,
-`helpingHand`, `castInChannel`, `embedPlate`, `adjustableBracket`,
-`seatedAngle`, `sleeveSplice`) is placed from world up: a bracket's vertical,
-the seat under the member, the sliding upper member. Maps that keep world Z
-(a mirror about a vertical plane, a rotation about a vertical axis, any move)
-give the image; a map that turns the vertical (a mirror about a horizontal
-plane, a rotation about a horizontal axis) rebuilds these parts by the same
-rule (the seat stays under the member), which is the intended detail, not the
-image.
+**World-up parameters, pinned to the member frames** (`ConnectionDef.gravity`
+and `ConnectionDef.pin`: `slabBracket`, `helpingHand`, `castInChannel`,
+`embedPlate`, `adjustableBracket`, `seatedAngle`, `sleeveSplice`). Their
+`auto` defaults are placed from world up (a bracket's vertical, the seat under
+the member, the sliding upper member). `pin(p, c)` returns member-local values
+that give exactly the same parts: `upSign = sign(x̂·Ẑ)` along the supported
+member's x (and `dz' = dz·|x̂·Ẑ|`, so `exactAxis(up)·dz'` projects like
+`Ẑ·dz`; on a plumb mullion `dz' = dz` and the parts are bit-identical, see
+`exactAxis`), `seat` = the downward-most face, `slides` = the upper member.
+`transformParams` applies them before the flip rules — `followConnections`
+pins from the snapshot taken before the operation, Flip connection side from
+the model as it is — so the parts are the image under **any** map, including
+a mirror about a horizontal or an inclined plane and a rotation about a
+horizontal axis. Auto-connect, Apply and Joints → Add write the pinned values
+when they place a connection. The slab bracket's movement provisions take
+heights along the same axis (`bracketUp`, `src/core/movement/provisions.ts`;
+world Z while auto).
 
 **Tests** (`tests/connectionsFollow.test.ts`) on the representative joint of
 every catalogue entry, every select / bool / side variant and the custom
@@ -1440,8 +1464,9 @@ hole centres and slot ends (plates, profile parts, members), end slots, bolts
 members' cut-back ends equal the image within 0.5 mm after a mirror about two
 vertical planes (moved and copied), a reverse of the supported and of the main
 member, a rotation about a vertical axis, a move, an extension of the
-supported end, and Flip side in y and z. Skipped by design: Flip `y` of
-`seatedAngle` on a transom (its local y is world up) and Flip `z` of the
-inclined braces (`gussetPlate`, `crossBrace`: the main member is not symmetric
+supported end, and Flip side in y and z; and, for every case, a mirror about a
+horizontal plane, a mirror about a plane that turns a plumb member 29° off
+vertical, and a rotation of 29° about a horizontal axis. Skipped by design:
+Flip `z` of the inclined braces (`gussetPlate`, `crossBrace`: the main member is not symmetric
 about that plane); the extension of a `crossBrace` split brace (the centre
 plate is centred on its node and follows it).

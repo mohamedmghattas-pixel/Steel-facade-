@@ -28,7 +28,9 @@ the product ETA (EAD 330232 / 330499 / 330008) or ICC-ES ESR.
 | `src/core/connections/kit.ts` | Shared helpers: code-compliant edge / pitch / slot defaults, plates and holes from world points, angle and tee placement, joint frames |
 | `src/core/connections/catalog.ts` | Library metadata: category, use, members, standards notes, key parameters, preview joint, expected warnings |
 | `src/core/connections/preview.ts` | Pure preview builder: representative joints, the user's real joint, concrete context, weld lines, hole runs, findings |
-| `src/core/connections/registry.ts` | `CONNECTIONS`, placement rules (`applyConnection`, `APPLY_END`, `COLLINEAR_TYPES`, `ONE_PER_NODE`), `autoConnect` |
+| `src/core/connections/registry.ts` | `CONNECTIONS`, placement rules (`applyConnection`, `APPLY_END`, `COLLINEAR_TYPES`, `ONE_PER_NODE`) |
+| `src/core/connections/autoConnect.ts` | Auto-connect by roles and topology: `planAutoConnect` (what each rule places, without changing the model), `applyAutoPlan`, `autoConnect` |
+| `src/ui/dialogs/AutoConnectDialog.tsx`, `src/ui/autoConnectActions.ts` | Auto-connect dialog (rules, types, counts, 3D markers) and the reference structure it reads |
 | `src/viewer/ConnectionPreview.ts` | Three.js live preview and the shared offscreen thumbnail renderer |
 | `src/ui/ConnectionLibrary.tsx` | Library browser, `ConnectionPreviewView`, `ParamEditor`, `TypeSelect` |
 | `src/assistant/modules/connections.ts` | Assistant tools `connection_library` and `preview_connection` |
@@ -110,7 +112,7 @@ all checked by the code-check module).
 | --- | --- | --- | --- | --- | --- |
 | `splicePlates` | Splice plates | Mullion stack joints, long rails | Two collinear members | t 10, length 300, M12 × 2 per member, slot, gap 10 | — |
 | `endPlateSplice` | End-plate splice | Rigid shop splices | Two collinear members | t 15; two sides / four corners; M16; shim pack | — |
-| `sleeveSplice` | Sleeve (spigot) splice | Stack joints with thermal / deflection movement | Two collinear hollow members | sliding / fixed; sleeve auto-fit (largest same-shape section ≥ 1.5 mm inside); length 400; gap 20; M12; slot = long slot | Lower member fixed, upper member slides on long slots in the sleeve |
+| `sleeveSplice` | Sleeve (spigot) splice | Stack joints with thermal / deflection movement | Two collinear hollow members (sharing a node, or drawn with their gap) | sliding / fixed; sleeve auto-fit (largest same-shape section ≥ 1.5 mm inside); length 400; gap 20; M12; slot = long slot; sliding member (auto = upper / supported / main) | Lower member fixed, upper member slides on long slots in the sleeve |
 
 ### Bracing & gussets
 
@@ -155,11 +157,82 @@ parameter sets of any type and appear in the same library category.
   wall fixings (`wallAngle`, `anchorPlate`). Slab brackets keep the mullion
   rules of auto-connect.
 - Existing connections on a member end are kept unless `replace` is set.
+- The world-up parameters of the placed connections are written as
+  member-local values (`ConnectionDef.pin`, see "Member operations" below).
 
-`autoConnect` is unchanged except for one unambiguous default:
-`AUTO_DEFAULTS.braceJoint = 'gussetPlate'` — members with role `brace` and a
-flat, angle or hollow section get a gusset plate where they end on another
-member (set `braceJoint: 'none'` to switch it off).
+### Splices across a drawn gap
+
+The splices (`sleeveSplice`, `splicePlates`, `endPlateSplice`) also join two
+collinear members whose ends do not share a node: a stack joint drawn with its
+gap (the wireframe check keeps such gaps, [WIREFRAME_CHECK.md §3](WIREFRAME_CHECK.md)).
+The connection sits at one member's end node; the joint centre is the middle
+of the gap, and each end is cut back only by what the joint needs beyond the
+drawn gap (`max(0, amount − gap/2)`, nothing below 0.05 mm). With the gap
+parameter equal to the measured gap the members keep their drawn ends. A
+joint parameter smaller than the drawn gap leaves the gap as drawn (warning).
+The slab bracket's stack-joint cut-back works the same way. Members sharing a
+node derive exactly as before.
+
+## Auto-connect
+
+Joints → **Auto** (tool rail), the assistant's `auto_connect`, and new sample
+projects. Auto-connect places connections by the **member roles** and the
+**joint topology** — the classification and surface normals the wireframe
+check leaves ([WIREFRAME_CHECK.md](WIREFRAME_CHECK.md)) — so a sloped,
+V-shaped or folded facade is connected like a vertical one. Direction (plumb =
+mullion) is only the fallback for unclassified lines (roles other, beam,
+outrigger). Existing connections are kept; only members with a profile take
+part; the selection limits it.
+
+Roles: mullion / post = main member; transom / rail = secondary; bracket =
+stub; brace. The **mullion lengths** are the chains of collinear mullions
+joined at nodes; a stack joint (gap) separates two lengths.
+
+| Rule | Where | Default type | Notes |
+| --- | --- | --- | --- |
+| Transom joints | A transom / rail end at a node with a mullion / post (T-junction): main = the mullion passing through, else the piece continuing upwards, else any | `angleCleat` (picker: fin plate, end plate, double angle, tee cleat, seated angle, U-saddle, shear block, welded) | Oriented by the members' local axes (so by the surface normals). Cleats / fins go on the side of the transom where the mullion continues: `side = sign(ŷ·d)` when the main ends at the node and `\|ŷ·d\| > 0.7` (`d` from the node into the main) — the old rule on vertical facades, up the slope on sloped ones |
+| Fold joints | Transoms meeting one mullion at more than 2° to each other (a fold, a building corner, a raking edge) | `finPlate` (fold joint picker: fin plate, welded, shear block, or the transom joint) | Only when the transom joint bolts through the mullion (angle cleat, end plate, double angle, tee cleat, seated angle): their through-bolts would cross inside it |
+| Mullion ends | A mullion end on an edge member that passes through the node (nothing continues the mullion) | the transom joint type | |
+| Brace joints | Role brace ending on a member | `gussetPlate` (flat, angle, hollow braces), else the transom joint | as before |
+| Stack joints | Two collinear mullion line ends facing each other across a gap of the stack-joint size (wireframe setting, 10–60 mm), lateral offset ≤ the junction tolerance | `sleeveSplice`, sliding, gap = the measured gap rounded up to 0.1 mm; `splicePlates` when the section is not hollow | One per joint; the lower length is the main member, the upper one slides (`slides: supported`). Picker: sleeve, splice plates, end-plate splice (pack = gap − 2t) |
+| Structure brackets | With reference models (visible IFC / Rhino .3dm triangles): where each mullion length comes nearest to each structure element within the distance (600 mm) | `slabBracket` (picker: helping hand, 3-way bracket, cast-in channel, embed plate) | See below |
+| Stack brackets (option) | A stack joint within reach of a structure bracket on its lower length | `slabBracket` carrying both lengths | Off by default; replaces the splice and moves the bracket to the joint node |
+| Bracket stubs | Role bracket, profiled, one end on a mullion and the other free | free end: `anchorPlate` (picker: wall angle, base plate); mullion end: `endPlate` (picker: fin plate, angle cleat, welded) | The mullion length counts as supported |
+| Level brackets | Fallback for vertical mullion lengths without structure or stub support: chain ends; a node where two mullion pieces meet when it is at a level (± 50 mm) or, without levels, when no other member meets there; a level the length passes without a node (bracket on the piece across it, at level − 100 mm) | `slabBracket` (edge / top mount) | Not for sloped mullions. **Fix:** a transom junction where the wireframe check cut the mullion is not a support |
+| Post bases | Bottom end of a vertical post | `baseplate` | as before |
+
+**Structure brackets.** The mullion length is sampled every 50 mm against the
+reference triangles (BVH, `core/clash`); along each run of samples nearest to
+one element the support is the middle of the stretch within 5 mm of the
+smallest distance (the middle of a slab edge the mullion runs past), refined
+until the structure point is square to the axis. Supports closer than 300 mm
+along the length, or reaching structure points within 500 mm of each other,
+are one support. The bracket is turned to the structure by the member's own
+frame — `side` = the sign of the structure direction on the mullion's local z,
+`standoff` = its distance along it, the height offset along the mullion axis
+(`dz` / `along`) and `upSign` along local x — never by world up. It sits on
+the piece containing the support point, at least 150 mm from nodes where other
+members meet (transom joints), 240 mm from a stack joint and 90 mm from a
+plain split; a support that cannot move clear by up to 400 mm is reported. A
+structure beside the mullion (not along its depth), beyond its end, or closer
+than half its depth + 20 mm gets no bracket (reported). Lengths already held by
+a bracket are skipped.
+
+**The dialog** shows, before anything is placed, each rule with an on/off
+switch, its type picker and the count it would place, the connections by
+type, how the mullion lengths are held (already, at the structure, on stubs,
+at levels, without support), the reference models it reads and plain-language
+notes (bracket lines without a profile, fold joints, unsupported lengths and
+how to give the structure). The 3D view shows a marker per connection in the
+rule's colour, and a line from each structure bracket to the point it
+reaches. Settings: structure distance, fold joint, stack-joint gap range,
+sliding / fixed sleeves, level-bracket slab side and stand-off. **Place** runs
+the plan again on the model as it is, as one undo step.
+
+**Assistant** `auto_connect`: `joint`, `stackJoint`, `structureBracket`,
+`structureDistance`, `stubEnd`, `stubJoint`, `levelBrackets`, `slabSide`,
+`standoff`, `dryRun`; returns the counts per rule and type, how the lengths are
+held, and the notes.
 
 ## Member operations, mirror and flip side
 
@@ -182,6 +255,25 @@ declares which parameters are signed along a member axis (`ParamSpec.flip`):
   template's v / w axis.
 
 The defaults give the geometry of earlier versions.
+
+**World up, made member-local.** Seven types have parameters whose default is
+referenced to world up: the slab bracket, helping hand, cast-in channel, embed
+plate and 3-way bracket (`upSign`: the bracket's vertical, `auto` = world up
+projected on the mullion axis; the slab bracket's edge-mount height `dz` is a
+world-Z offset in auto), the seated angle (`seat`: auto = the downward-most
+face of the secondary) and the sleeve splice (`slides`: auto = the upper
+member). `ConnectionDef.pin` turns them into member-local values that give the
+same parts — `upSign` ±1 along the supported member's local x (`dz` becomes
+the same offset along the axis, unchanged on a plumb mullion), the seat face
+`±y` / `±z` of the secondary's section, the sliding member `supported` /
+`main`. Auto-connect, Apply and Joints → Add write them; mirror, rotate,
+reverse, copy and Flip connection side pin them first (from the joint before
+the operation) and then transform them (`upSign` flips with x, the seat face
+with y or z), so these brackets follow the member frames on sloped members
+and under a mirror about any plane. The slab bracket's movement provisions
+(highest = fixed bracket, stack-joint gap, slab deflection) measure heights
+along the same `upSign` axis. Connections left on `auto` (older files, the
+library preview) derive exactly as before.
 
 ## Detailing rules used by the defaults
 
@@ -262,8 +354,10 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
    - use `edgeDist`, `pitchFor`, `longSlot` for defaults and push a plain
      warning to `out.warnings` when the geometry does not fit;
    - give every parameter signed along a member axis a `flip` rule
-     (`P.side(key, label, d, ['z'])`, `flips(spec, …)`), set `gravity` when parts
-     are placed from world up and `faceGap` when the trim is face + a gap
+     (`P.side(key, label, d, ['z'])`, `flips(spec, …)`); avoid world up — when
+     a default must use it, make it an `auto` parameter with a member-local
+     value (`P.up()` for a bracket's vertical), set `gravity` and a `pin` that
+     returns that value; set `faceGap` when the trim is face + a gap
      ([CONNECTION_GEOMETRY.md §15](CONNECTION_GEOMETRY.md)); avoid hard-coded
      sides (`+ŷ` bolt heads): make them a ±1 parameter.
 3. Register it in `CONNECTIONS` (`registry.ts`); add it to `COLLINEAR_TYPES`,
@@ -298,3 +392,13 @@ registered type automatically. `src/assistant/modules/connections.ts` adds:
 - `addConnectionFromSelection` (Joints → Add) places types without a main
   member at the selected node or the lower member end; use the library or
   Apply for the `APPLY_END` rules.
+- Auto-connect: the bracket parts stay in the mullion's frame. On a sloped
+  mullion against a vertical slab edge the back plate touches the edge line
+  only (pack it, or use the 3-way bracket); the structure's own face
+  orientation is not used. Structure brackets need reference triangles: IFC
+  geometry or Rhino meshes (render meshes, own tessellation, or boxes).
+  Mullion–mullion meetings at a kink (other than stack joints) get no
+  connection. The fold rule turns joints that would bolt through the mullion
+  into fin plates; two fins on the same face (transoms meeting from one side
+  at an angle) are not checked for overlap. Through-bolts of a transom meeting
+  a mullion skew keep the bounding-box grip length.

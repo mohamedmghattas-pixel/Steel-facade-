@@ -379,3 +379,22 @@
 .xp-qaf th:last-child {
   width: 32%;
 }
+
+/* Lazy planning: model counts, and the bar that plans the package on request. */
+.xp-counts {
+  margin-left: 10px;
+  font-size: 12px;
+}
+.xp-calc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+  padding: 6px 8px;
+  border: 1px dashed var(--line-2);
+  border-radius: var(--radius);
+  font-size: 12px;
+}
+.xp-calc > span {
+  flex: 1;
+}

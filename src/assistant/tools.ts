@@ -22,7 +22,8 @@ import {
 import { dist } from '../core/model/geometry';
 import { mirrorMembers as mirrorModify } from '../core/model/modify';
 import { connectionSummaryText, type ConnectionSummary } from '../core/model/connectionFollow';
-import { AUTO_DEFAULTS, CONNECTIONS, applyConnection, autoConnect, paramSpecs } from '../core/connections/registry';
+import { AUTO_DEFAULTS, CONNECTIONS, applyAutoPlan, applyConnection, paramSpecs, planAutoConnect, type AutoConnectOptions } from '../core/connections/registry';
+import { loadAutoStructure } from '../ui/autoConnectActions';
 import { getProfile, profileFromDef, searchProfiles } from '../core/library/profiles';
 import { MATERIALS } from '../core/library/materials';
 import { buildBom } from '../core/reports/bom';
@@ -203,14 +204,22 @@ const BASE_TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: 'auto_connect',
-    description: 'Place connections by rules across the model (or the members matching the filter): slab brackets on mullions, base plates under posts and a joint type where members meet.',
+    description:
+      'Place connections by member roles and topology across the model (or the members matching the filter): transom joints at T-junctions, splices at mullion stack joints (collinear gaps), mullion brackets where each mullion length is nearest the visible IFC / 3dm reference structure, bracket-stub joints, slab brackets at levels for vertical mullions, base plates under posts. dryRun: counts per rule and notes only.',
     input_schema: {
       type: 'object',
       properties: {
         filter: memberFilter,
-        joint: { type: 'string', enum: ['angleCleat', 'finPlate', 'endPlate', 'welded', 'none'] },
+        joint: { type: 'string', enum: ['angleCleat', 'finPlate', 'endPlate', 'doubleAngle', 'teeCleat', 'welded', 'none'] },
+        stackJoint: { type: 'string', enum: ['sleeveSplice', 'splicePlates', 'endPlateSplice', 'none'] },
+        structureBracket: { type: 'string', enum: ['slabBracket', 'helpingHand', 'adjustableBracket', 'castInChannel', 'embedPlate', 'none'] },
+        structureDistance: { type: 'number', description: 'Largest mullion-to-structure distance, mm (600)' },
+        stubEnd: { type: 'string', enum: ['anchorPlate', 'wallAngle', 'baseplate', 'none'] },
+        stubJoint: { type: 'string', enum: ['endPlate', 'finPlate', 'angleCleat', 'welded', 'none'] },
+        levelBrackets: { type: 'boolean', description: 'Slab brackets at levels / chain ends of vertical mullions (default true)' },
         slabSide: { type: 'integer', enum: [1, -1] },
-        standoff: { type: 'number', description: 'Wire line to slab face, mm' },
+        standoff: { type: 'number', description: 'Level brackets: wire line to slab face, mm' },
+        dryRun: { type: 'boolean' },
       },
     },
   },
@@ -621,20 +630,27 @@ export async function runTool(name: string, input: Json): Promise<string> {
 
     case 'auto_connect': {
       const ids = input.filter ? new Set(resolveMembers(p, input.filter as Filter)) : undefined;
+      const o: AutoConnectOptions = {
+        ...AUTO_DEFAULTS,
+        joint: (input.joint as AutoConnectOptions['joint']) ?? AUTO_DEFAULTS.joint,
+        stackJoint: (input.stackJoint as AutoConnectOptions['stackJoint']) ?? AUTO_DEFAULTS.stackJoint,
+        structureBracket: (input.structureBracket as AutoConnectOptions['structureBracket']) ?? AUTO_DEFAULTS.structureBracket,
+        structureDistance: Number(input.structureDistance ?? AUTO_DEFAULTS.structureDistance),
+        stubEnd: (input.stubEnd as AutoConnectOptions['stubEnd']) ?? AUTO_DEFAULTS.stubEnd,
+        stubJoint: (input.stubJoint as AutoConnectOptions['stubJoint']) ?? AUTO_DEFAULTS.stubJoint,
+        mullionBrackets: input.levelBrackets !== false,
+        slabSide: input.slabSide === -1 ? -1 : 1,
+        standoff: Number(input.standoff ?? AUTO_DEFAULTS.standoff),
+      };
+      const structure = o.structureBracket !== 'none' ? (await loadAutoStructure()).elements : [];
+      const plan = planAutoConnect(p, o, ids, structure);
+      const counts = Object.fromEntries(Object.entries(plan.counts).filter(([, n]) => n > 0));
+      if (input.dryRun) return out({ dryRun: true, counts, byType: plan.byType, stats: plan.stats, notes: plan.notes });
       let created: Id[] = [];
       s.apply('Assistant: auto-connect', (d) => {
-        created = autoConnect(
-          d,
-          {
-            ...AUTO_DEFAULTS,
-            joint: (input.joint as typeof AUTO_DEFAULTS.joint) ?? AUTO_DEFAULTS.joint,
-            slabSide: input.slabSide === -1 ? -1 : 1,
-            standoff: Number(input.standoff ?? AUTO_DEFAULTS.standoff),
-          },
-          ids,
-        );
+        created = applyAutoPlan(d, planAutoConnect(d, o, ids, structure));
       });
-      return out({ created: created.length });
+      return out({ created: created.length, counts, byType: plan.byType, stats: plan.stats, notes: plan.notes });
     }
 
     case 'set_connection_params': {

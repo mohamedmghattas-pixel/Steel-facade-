@@ -1,0 +1,658 @@
+{
+ "joint: slabBracket": {
+  "hash": "c494b4ca907174b857a647d9",
+  "connections": 1
+ },
+ "joint: slabBracket mount=top": {
+  "hash": "6f09219ff6c8e6aff7597dad",
+  "connections": 1
+ },
+ "joint: slabBracket side*": {
+  "hash": "ae0c378e3582b6f2dfd58923",
+  "connections": 1
+ },
+ "joint: slabBracket finSide*": {
+  "hash": "8ec66ecfa87fabae4239e2fa",
+  "connections": 1
+ },
+ "joint: slabBracket autoSlots=false": {
+  "hash": "dc930014ca1ae7563f6f9a3e",
+  "connections": 1
+ },
+ "joint: slabBracket support=fixed (dead load)": {
+  "hash": "c494b4ca907174b857a647d9",
+  "connections": 1
+ },
+ "joint: slabBracket support=sliding": {
+  "hash": "c494b4ca907174b857a647d9",
+  "connections": 1
+ },
+ "joint: slabBracket slotCap=none (special slot)": {
+  "hash": "c27d671e9d4d13ef62f38954",
+  "connections": 1
+ },
+ "joint: slabBracket anchorType=bonded (chemical)": {
+  "hash": "8fd89c24f2d35e103608ef23",
+  "connections": 1
+ },
+ "joint: slabBracket anchorType=concrete screw": {
+  "hash": "b56c37a76db797bfdda10a92",
+  "connections": 1
+ },
+ "joint: slabBracket anchorType=cast-in channel": {
+  "hash": "3852c3fdcf5b5506531eaf12",
+  "connections": 1
+ },
+ "joint: slabBracket anchorType=undercut": {
+  "hash": "46adb9d57ec0b9660171cee3",
+  "connections": 1
+ },
+ "joint: slabBracket surveyAlong*": {
+  "hash": "6fdc10c32d3cf77964f4d2ad",
+  "connections": 1
+ },
+ "joint: baseplate": {
+  "hash": "0037d828af189756f4793a4c",
+  "connections": 1
+ },
+ "joint: baseplate anchorType=bonded (chemical)": {
+  "hash": "211427255b66ef9329525941",
+  "connections": 1
+ },
+ "joint: baseplate anchorType=concrete screw": {
+  "hash": "81cbf7118f8e0d4e09f3f4c0",
+  "connections": 1
+ },
+ "joint: baseplate anchorType=cast-in channel": {
+  "hash": "fd4558e3df9482d1b1cd237a",
+  "connections": 1
+ },
+ "joint: baseplate anchorType=undercut": {
+  "hash": "f99c0ec77def42a998d032de",
+  "connections": 1
+ },
+ "joint: angleCleat": {
+  "hash": "a037e5e17c8d698a1b70352e",
+  "connections": 1
+ },
+ "joint: angleCleat side*": {
+  "hash": "bb1c0a465f1f4d8995a70765",
+  "connections": 1
+ },
+ "joint: angleCleat autoSlots=false": {
+  "hash": "a037e5e17c8d698a1b70352e",
+  "connections": 1
+ },
+ "joint: angleCleat slotted=yes (slotted)": {
+  "hash": "17802831cd4ca4d6244bf4c4",
+  "connections": 1
+ },
+ "joint: angleCleat slotted=no (fixed)": {
+  "hash": "a037e5e17c8d698a1b70352e",
+  "connections": 1
+ },
+ "joint: finPlate": {
+  "hash": "6f53d15b0d65299303f6ae50",
+  "connections": 1
+ },
+ "joint: finPlate side*": {
+  "hash": "1bd3fcfebb95734e00cfef7b",
+  "connections": 1
+ },
+ "joint: finPlate position=knife (centred, slotted member)": {
+  "hash": "7b9f6262eaff777eb09c3c3c",
+  "connections": 1
+ },
+ "joint: finPlate autoSlots=false": {
+  "hash": "6f53d15b0d65299303f6ae50",
+  "connections": 1
+ },
+ "joint: finPlate slotted=yes (slotted)": {
+  "hash": "a95930565e909fe181b2d86e",
+  "connections": 1
+ },
+ "joint: finPlate slotted=no (fixed)": {
+  "hash": "6f53d15b0d65299303f6ae50",
+  "connections": 1
+ },
+ "joint: endPlate": {
+  "hash": "fdfc128d4951c09d3083e09a",
+  "connections": 1
+ },
+ "joint: welded": {
+  "hash": "79e17d1d29ef0e884612ce02",
+  "connections": 1
+ },
+ "joint: splicePlates": {
+  "hash": "f7f454d2d7df6d917281b740",
+  "connections": 1
+ },
+ "joint: splicePlates boltSide=-1": {
+  "hash": "9979e59554d418c1ef57cf1b",
+  "connections": 1
+ },
+ "joint: helpingHand": {
+  "hash": "a8425b2b359acf9fbe14ab93",
+  "connections": 1
+ },
+ "joint: helpingHand variant=sliding point": {
+  "hash": "239d7673ba92ba83fb9ba411",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 100x100x10": {
+  "hash": "6f5d451b52605a6d2b365055",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 120x80x10": {
+  "hash": "4207b8c7f711a974d7ddcc3f",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 120x120x12": {
+  "hash": "0c0934648e4884a295e47f75",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 150x90x10": {
+  "hash": "5ff831e2895bcf9481712948",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 150x150x12": {
+  "hash": "7d2a8856d449fc810c5470ea",
+  "connections": 1
+ },
+ "joint: helpingHand angle=L 200x100x12": {
+  "hash": "3b401539a2c4c708d14649f2",
+  "connections": 1
+ },
+ "joint: helpingHand side=-1": {
+  "hash": "4fd9d6416450a93a02ddad72",
+  "connections": 1
+ },
+ "joint: helpingHand finSide=-1": {
+  "hash": "6ee87661c3b4aef735525dbe",
+  "connections": 1
+ },
+ "joint: helpingHand anchorType=bonded (chemical)": {
+  "hash": "35080f48f2579ab6831b3d41",
+  "connections": 1
+ },
+ "joint: helpingHand anchorType=undercut": {
+  "hash": "78bc5c1e45df6a014a661ad7",
+  "connections": 1
+ },
+ "joint: helpingHand anchorType=concrete screw": {
+  "hash": "b9ab464583f019cccc9aed39",
+  "connections": 1
+ },
+ "joint: castInChannel": {
+  "hash": "3318813fa716ba9247f1b9b3",
+  "connections": 1
+ },
+ "joint: castInChannel mount=slab top": {
+  "hash": "11aa327872db682dc750553e",
+  "connections": 1
+ },
+ "joint: castInChannel channel=28/15": {
+  "hash": "201e3134b017337df4a2eaad",
+  "connections": 1
+ },
+ "joint: castInChannel channel=38/17": {
+  "hash": "2c6eef1a9f4ac07c91be9954",
+  "connections": 1
+ },
+ "joint: castInChannel channel=50/30": {
+  "hash": "42318d3ab2f870c45a40f8d4",
+  "connections": 1
+ },
+ "joint: castInChannel channel=52/34": {
+  "hash": "74f1c2765bc0822be5042dda",
+  "connections": 1
+ },
+ "joint: castInChannel channel=72/48": {
+  "hash": "f4968f13914d4e6da67a0e23",
+  "connections": 1
+ },
+ "joint: castInChannel side=-1": {
+  "hash": "2777457e6a7fb626263760d0",
+  "connections": 1
+ },
+ "joint: castInChannel finSide=-1": {
+  "hash": "32e8adc6ea105752a3a1e3b8",
+  "connections": 1
+ },
+ "joint: embedPlate": {
+  "hash": "6afc647368b49fc65594949c",
+  "connections": 1
+ },
+ "joint: embedPlate mount=slab top": {
+  "hash": "9ffab550abedacf788e793aa",
+  "connections": 1
+ },
+ "joint: embedPlate finWeld=shop weld": {
+  "hash": "c28344fba6cc818918ebfad1",
+  "connections": 1
+ },
+ "joint: embedPlate side=-1": {
+  "hash": "3bc124389d84bf051b324218",
+  "connections": 1
+ },
+ "joint: embedPlate finSide=-1": {
+  "hash": "32bf4139083b71b6746d9977",
+  "connections": 1
+ },
+ "joint: soffitHanger": {
+  "hash": "4904b1bb11cf3ff61ae92644",
+  "connections": 1
+ },
+ "joint: soffitHanger variant=single fin": {
+  "hash": "ae043511fca70ce2846ccc0f",
+  "connections": 1
+ },
+ "joint: soffitHanger finSide=-1": {
+  "hash": "54f73b8b15cc97c81a21fc04",
+  "connections": 1
+ },
+ "joint: soffitHanger anchorType=bonded (chemical)": {
+  "hash": "ca4d588c073641e73434f393",
+  "connections": 1
+ },
+ "joint: soffitHanger anchorType=undercut": {
+  "hash": "4e955f7e2a87258ecc6c98d9",
+  "connections": 1
+ },
+ "joint: soffitHanger anchorType=concrete screw": {
+  "hash": "9c4e2d697eb5c5ca1cddba60",
+  "connections": 1
+ },
+ "joint: soffitHanger anchors=4": {
+  "hash": "99e5bf435659fa24bde94770",
+  "connections": 1
+ },
+ "joint: wallAngle": {
+  "hash": "7452bbe7d7018a3c532da26a",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 60x60x6": {
+  "hash": "45bc6187394175a0111d8829",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 70x70x7": {
+  "hash": "b287602bc99b6c6274e2a1ff",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 90x90x9": {
+  "hash": "e7c7a256caaac2f22c2666b4",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 100x100x10": {
+  "hash": "1bd1627d0499e23313783ddb",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 100x65x8": {
+  "hash": "5c8bff8cf4311876fb5f37a7",
+  "connections": 1
+ },
+ "joint: wallAngle angle=L 120x80x10": {
+  "hash": "0e76a202211b4e963261aa3f",
+  "connections": 1
+ },
+ "joint: wallAngle side=-1": {
+  "hash": "fe4a95cfe226d3a89dfd8625",
+  "connections": 1
+ },
+ "joint: wallAngle anchorType=bonded (chemical)": {
+  "hash": "9cd706829c8a3cb72f24af1c",
+  "connections": 1
+ },
+ "joint: wallAngle anchorType=undercut": {
+  "hash": "b244c2ec9c8e69fc0c468602",
+  "connections": 1
+ },
+ "joint: wallAngle anchorType=concrete screw": {
+  "hash": "9ce156e37ef8289c902610fd",
+  "connections": 1
+ },
+ "joint: adjustableBracket": {
+  "hash": "768b737fd7dc2cd4bde22db7",
+  "connections": 1
+ },
+ "joint: adjustableBracket angle=L 120x120x12": {
+  "hash": "42f1643109b19eef5ff0fb2a",
+  "connections": 1
+ },
+ "joint: adjustableBracket angle=L 150x100x10": {
+  "hash": "ae5705bab03cda775d16e7f0",
+  "connections": 1
+ },
+ "joint: adjustableBracket angle=L 150x150x12": {
+  "hash": "6d732684f19d748756555905",
+  "connections": 1
+ },
+ "joint: adjustableBracket side=-1": {
+  "hash": "a032f120f6ec68b8010e6a65",
+  "connections": 1
+ },
+ "joint: adjustableBracket finSide=-1": {
+  "hash": "c86ac6c9ab7e26ab14403560",
+  "connections": 1
+ },
+ "joint: adjustableBracket anchorType=bonded (chemical)": {
+  "hash": "6a4d2d50a60062657907d479",
+  "connections": 1
+ },
+ "joint: adjustableBracket anchorType=undercut": {
+  "hash": "2058bd2c567439e02f0744c5",
+  "connections": 1
+ },
+ "joint: adjustableBracket anchorType=concrete screw": {
+  "hash": "e2232eb411bb25d59dd2e187",
+  "connections": 1
+ },
+ "joint: adjustableBracket serrated=false": {
+  "hash": "117b34c196714f0a61b8d692",
+  "connections": 1
+ },
+ "joint: stiffenedBase": {
+  "hash": "50097dc8737771c554ed9481",
+  "connections": 1
+ },
+ "joint: stiffenedBase gussets=2": {
+  "hash": "d1e8694674ec51a1e4f9be32",
+  "connections": 1
+ },
+ "joint: stiffenedBase anchors=6": {
+  "hash": "665086b9ea5242436b9619cb",
+  "connections": 1
+ },
+ "joint: stiffenedBase anchorType=expansion": {
+  "hash": "8dea7b6a2da8ce2ab25f3071",
+  "connections": 1
+ },
+ "joint: stiffenedBase anchorType=undercut": {
+  "hash": "72b12daf89e800ee346005ed",
+  "connections": 1
+ },
+ "joint: stiffenedBase anchorType=cast-in headed": {
+  "hash": "dd7cfe9faccc74a73106b192",
+  "connections": 1
+ },
+ "joint: anchorPlate": {
+  "hash": "a6c878d36996257fb204c87b",
+  "connections": 1
+ },
+ "joint: anchorPlate fixing=plate + fin (bolted)": {
+  "hash": "8cb8da45b9e3692ec18abe0d",
+  "connections": 1
+ },
+ "joint: anchorPlate pattern=2 (in line)": {
+  "hash": "8878958b4348e95178a7d7f3",
+  "connections": 1
+ },
+ "joint: anchorPlate pattern=6 (2×3)": {
+  "hash": "6da9e8e2b956b82a3225b568",
+  "connections": 1
+ },
+ "joint: anchorPlate anchorType=expansion": {
+  "hash": "4dfefbd5ac2939865089f1d9",
+  "connections": 1
+ },
+ "joint: anchorPlate anchorType=undercut": {
+  "hash": "e2741b2149d9fd5292e3bc88",
+  "connections": 1
+ },
+ "joint: anchorPlate anchorType=concrete screw": {
+  "hash": "c66ee4ebf7ef61481d0b68cf",
+  "connections": 1
+ },
+ "joint: anchorPlate finSide=-1": {
+  "hash": "a6c878d36996257fb204c87b",
+  "connections": 1
+ },
+ "joint: flangeClamp": {
+  "hash": "72b702f063d5ffd1042e65d7",
+  "connections": 1
+ },
+ "joint: flangeClamp clamp=proprietary clamps (by others)": {
+  "hash": "6284f0dd1af8427c131eb6ae",
+  "connections": 1
+ },
+ "joint: doubleAngle": {
+  "hash": "ac40e9f5afa7bad313f4eee2",
+  "connections": 1
+ },
+ "joint: doubleAngle angle=L 50x50x5": {
+  "hash": "94a2ebdda212bfb86bb3c087",
+  "connections": 1
+ },
+ "joint: doubleAngle angle=L 70x70x7": {
+  "hash": "a11a2a08f9edd2b9abdb1485",
+  "connections": 1
+ },
+ "joint: doubleAngle angle=L 80x80x8": {
+  "hash": "3656a7696a1cc2602af722d3",
+  "connections": 1
+ },
+ "joint: doubleAngle angle=L 90x90x9": {
+  "hash": "3d2050546e68d640bbef308b",
+  "connections": 1
+ },
+ "joint: doubleAngle angle=L 100x100x10": {
+  "hash": "2f940c32878d80d040721b42",
+  "connections": 1
+ },
+ "joint: doubleAngle boltSide=-1": {
+  "hash": "80149ddb429e820225fe7375",
+  "connections": 1
+ },
+ "joint: teeCleat": {
+  "hash": "23d5a97e928b9b804cb77ab9",
+  "connections": 1
+ },
+ "joint: teeCleat tee=T 80x80x9": {
+  "hash": "346ae14aaf43f616983925ef",
+  "connections": 1
+ },
+ "joint: teeCleat tee=T 100x100x11": {
+  "hash": "12dfee24898ccd91c1864c57",
+  "connections": 1
+ },
+ "joint: teeCleat tee=T 140x140x15": {
+  "hash": "23b65de3235c1850a4221db8",
+  "connections": 1
+ },
+ "joint: teeCleat position=side": {
+  "hash": "ca08ed3f2454990992227baf",
+  "connections": 1
+ },
+ "joint: teeCleat side=-1": {
+  "hash": "c9d1a0c11572c083a17611f0",
+  "connections": 1
+ },
+ "joint: seatedAngle": {
+  "hash": "534fa15c4c2c1222f2b62a3e",
+  "connections": 1
+ },
+ "joint: seatedAngle angle=L 80x80x8": {
+  "hash": "bcc61122f573ab1ddc7f2789",
+  "connections": 1
+ },
+ "joint: seatedAngle angle=L 120x80x10": {
+  "hash": "f86c83108199efa70f6c1b40",
+  "connections": 1
+ },
+ "joint: seatedAngle angle=L 120x120x12": {
+  "hash": "51d9f58ff08afa74f4ebab67",
+  "connections": 1
+ },
+ "joint: seatedAngle angle=L 150x90x10": {
+  "hash": "da24bcf13d64f0cd5a6ccfc0",
+  "connections": 1
+ },
+ "joint: seatedAngle topCleat=true": {
+  "hash": "80d9b06345f0cdfc32bb1fc6",
+  "connections": 1
+ },
+ "joint: stubBracket": {
+  "hash": "b6116ce40570796f414cd11e",
+  "connections": 1
+ },
+ "joint: stubBracket stub=SHS 80x80x5": {
+  "hash": "9500f4b43c2d76ce13fa24ca",
+  "connections": 1
+ },
+ "joint: stubBracket stub=SHS 100x100x5": {
+  "hash": "3911533eb339fd826363d180",
+  "connections": 1
+ },
+ "joint: stubBracket stub=SHS 120x120x6": {
+  "hash": "bd8a2009d93a0fb716828d43",
+  "connections": 1
+ },
+ "joint: stubBracket stub=RHS 100x50x4": {
+  "hash": "b6116ce40570796f414cd11e",
+  "connections": 1
+ },
+ "joint: stubBracket stub=RHS 120x60x5": {
+  "hash": "945a4d9e67d0d7cc0ab46618",
+  "connections": 1
+ },
+ "joint: stubBracket stub=RHS 150x100x6": {
+  "hash": "3efc9d26287160b364eaeca8",
+  "connections": 1
+ },
+ "joint: saddleBracket": {
+  "hash": "1dcc08634cb5917bf3faa8ef",
+  "connections": 1
+ },
+ "joint: saddleBracket mainBolt=true": {
+  "hash": "cddb61da4835dcc107ef0fe1",
+  "connections": 1
+ },
+ "joint: saddleBracket boltSide=-1": {
+  "hash": "9d2cf77205195212d5277840",
+  "connections": 1
+ },
+ "joint: shearBlock": {
+  "hash": "7f0b1b6699ec0859af61763d",
+  "connections": 1
+ },
+ "joint: shearBlock variant=twin plates": {
+  "hash": "9cc5a0acc5745985b4bec19e",
+  "connections": 1
+ },
+ "joint: shearBlock boltSide=-1": {
+  "hash": "d3f598ddbd842c7a367825d5",
+  "connections": 1
+ },
+ "joint: endCap": {
+  "hash": "5636ff49d05645240193cb6f",
+  "connections": 1
+ },
+ "joint: endCap shape=square": {
+  "hash": "5636ff49d05645240193cb6f",
+  "connections": 1
+ },
+ "joint: endPlateSplice": {
+  "hash": "b2bb9945ac83af218ee65ffc",
+  "connections": 1
+ },
+ "joint: endPlateSplice layout=four corners": {
+  "hash": "5d228b75a9011e8c2ca1e897",
+  "connections": 1
+ },
+ "joint: sleeveSplice": {
+  "hash": "0c9fd1d923bd4f5b0ad25c21",
+  "connections": 1
+ },
+ "joint: sleeveSplice mode=fixed": {
+  "hash": "ac71aa6421ac977c742e9fdf",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=SHS 80x80x5": {
+  "hash": "0c9fd1d923bd4f5b0ad25c21",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=SHS 80x80x8": {
+  "hash": "e94e4df3e30d03b2a9fc6695",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=SHS 70x70x5": {
+  "hash": "6ef486f6a346def8ab6e978b",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=SHS 60x60x5": {
+  "hash": "e2dfee81bea6048999a4fce8",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=RHS 80x40x4": {
+  "hash": "ebb58025b43fda8713f0dfd4",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=RHS 100x50x5": {
+  "hash": "f56ef0f7a22d4ef53fb32a45",
+  "connections": 1
+ },
+ "joint: sleeveSplice sleeve=CHS 48.3x4": {
+  "hash": "10ad102c818eaed71f768657",
+  "connections": 1
+ },
+ "joint: sleeveSplice boltSide=-1": {
+  "hash": "9dc759029f88e833608ccf9d",
+  "connections": 1
+ },
+ "joint: gussetPlate": {
+  "hash": "4a9bc2ca17c7b4e015e547d5",
+  "connections": 1
+ },
+ "joint: gussetPlate side=-1": {
+  "hash": "bb623da03aaf573599280700",
+  "connections": 1
+ },
+ "joint: crossBrace": {
+  "hash": "c6a96315426d608426dabc15",
+  "connections": 1
+ },
+ "joint: crossBrace side=-1": {
+  "hash": "ba92c04bec7514e69a80ffd3",
+  "connections": 1
+ },
+ "joint: hangerRod": {
+  "hash": "f8fe1c28984316be85843e88",
+  "connections": 1
+ },
+ "joint: hangerRod variant=tab + lug (bolted)": {
+  "hash": "0e0ce79eb04d3c1b398700cf",
+  "connections": 1
+ },
+ "joint: hangerRod side=-1": {
+  "hash": "b6c155c3cfe53b25b9c2e70f",
+  "connections": 1
+ },
+ "joint: tieBack": {
+  "hash": "1c509956efc78b7a6abd4ca2",
+  "connections": 1
+ },
+ "joint: tieBack variant=fork on end cap (double shear)": {
+  "hash": "1bd8a8645cba072a85966b13",
+  "connections": 1
+ },
+ "joint: tieBack side=-1": {
+  "hash": "c0b0ec9d77a3bb72a78a49b1",
+  "connections": 1
+ },
+ "facade: sample project": {
+  "hash": "47c5b001c37c17eef2c7cbba",
+  "connections": 47
+ },
+ "facade: test facade (tests/helpers)": {
+  "hash": "78063bf39914607e62257003",
+  "connections": 42
+ },
+ "facade: YZ plane": {
+  "hash": "9b65ecdf164ed59e04c27605",
+  "connections": 29
+ },
+ "facade: vertical plane at 30° in plan": {
+  "hash": "4b1673418093b4736f1b007b",
+  "connections": 29
+ }
+}

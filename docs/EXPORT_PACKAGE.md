@@ -11,7 +11,7 @@ Code: `src/core/export/` (pure: template, catalogue, outputs, package builder, f
 meshes, OBJ, STEP, PDF book), `src/core/io/zipRead.ts` and `xlsxTemplate.ts` (form
 templates), UI in `src/ui/dialogs/ExportPackageDialog.tsx`, `QaFormsTab.tsx` and
 `src/ui/exportPackageActions.ts`, assistant tools in `src/assistant/modules/exportPackage.ts`.
-Tests: `tests/exportPackage.test.ts`.
+Tests: `tests/exportPackage.test.ts`, `tests/exportOutline.test.ts`.
 
 ## Default package (the client's layout)
 
@@ -195,6 +195,24 @@ sheet. **VCF**: each export appends the package revision to `project.exportPacka
 (re-exporting a revision replaces it); the form lists them, newest *Last Update*, older
 *Superseded*, with an automatic change summary (initial counts, then the drawing revisions
 and wireframe confirmations since the previous issue).
+
+## Opening the dialog: outline first, sizes on request
+
+Planning the package makes the drawing set and the cheap outputs, which takes seconds on
+large models (it used to freeze the dialog for about 11 s at 4,800 members and about 110 s
+at 24,000). The dialog therefore opens on the **outline** (`outlineCurrentPackage`,
+`src/ui/exportPackageActions.ts`): every template item with its folder, the package folder
+and tokens, the revision from the drawing revisions recorded in the project, and the model
+counts (wire lines, parts and marks, assemblies and marks, and the drawing sheets when the
+drawing set is already made, e.g. by the Drawings tab — it is shared through the same
+cache, `drawingsOf` / `allDrawings`). Nothing is generated. **Calculate sizes** plans the
+package (file names, counts, sizes, QA form decisions, folder tree); after a change to the
+template, the fields or the model the sizes show as out of date until recalculated. Up to
+300 parts the package is planned as the dialog opens and on every change, as before. The
+export buttons plan the package themselves, so exporting never needs the calculation first.
+Measured in the browser on the client facade after auto-connect (714 wire lines, 1,196
+parts): the dialog opens in about 0.14 s, Calculate sizes takes about 2.4 s, a keystroke in
+a package field about 0.07 s.
 
 ## Writing
 

@@ -1,7 +1,7 @@
 import type { Connection, ConnectionType, Id, ParamValue, Project } from '../model/types';
 import { addConnection, memberDirection, membersAtNode, membersAtNodeIndex, type MemberAtNode } from '../model/ops';
-import { getProfile } from '../library/profiles';
-import { memberAxes } from '../model/geometry';
+import { AUTO_DEFAULTS, autoConnect } from './autoConnect';
+import { pinConnection } from './transform';
 import { basePlate } from './basePlate';
 import type { ConnectionDef } from './common';
 import { angleCleat, endPlate, finPlate, welded } from './memberJoints';
@@ -107,120 +107,8 @@ export function resolveParams(c: Connection, p?: Project): Record<string, ParamV
   return { ...v, ...c.params };
 }
 
-export interface AutoConnectOptions {
-  /** Joint used where a horizontal/inclined member ends on another member. */
-  joint: Exclude<ConnectionType, 'slabBracket' | 'baseplate'> | 'none';
-  /** Add slab brackets at mullion stack joints / chain ends. */
-  mullionBrackets: boolean;
-  /** Add base plates under posts. */
-  postBases: boolean;
-  /** Which way the slab is from the mullions (along mullion local z). */
-  slabSide: 1 | -1;
-  standoff: number;
-  /** Joint used where a member with role 'brace' (flat, angle or hollow section) ends on another member. */
-  braceJoint?: ConnectionType | 'none';
-}
-
-export const AUTO_DEFAULTS: AutoConnectOptions = {
-  joint: 'angleCleat',
-  mullionBrackets: true,
-  postBases: true,
-  slabSide: 1,
-  standoff: 150,
-  braceJoint: 'gussetPlate',
-};
-
-const BRACE_SHAPES = new Set(['FL', 'L', 'CHS', 'RHS']);
-
-/**
- * Rule-based connection placement. Only members with a profile take part.
- * Existing connections on the same member end are kept. Returns ids created.
- */
-export function autoConnect(p: Project, o: AutoConnectOptions = AUTO_DEFAULTS, onlyMembers?: Set<Id>): Id[] {
-  const created: Id[] = [];
-  // Indexed once (connections are added, members never change here): linear in the model size.
-  const membersAt = membersAtNodeIndex(p);
-  const coveredKeys = new Set(Object.values(p.connections).map((c) => `${c.node}|${c.secondary[0]}`));
-  const covered = (node: Id, sec: Id) => coveredKeys.has(`${node}|${sec}`);
-  const add = (...args: Parameters<typeof addConnection>) => {
-    const id = addConnection(...args);
-    const c = p.connections[id];
-    coveredKeys.add(`${c.node}|${c.secondary[0]}`);
-    created.push(id);
-  };
-
-  for (const node of Object.values(p.nodes)) {
-    const at = membersAt(node.id).filter(
-      (x) => x.member.profile && (!onlyMembers || onlyMembers.has(x.member.id)),
-    );
-    if (!at.length) continue;
-    const z = node.p.z;
-    const otherZ = (m: { start: Id; end: Id }) => p.nodes[m.start === node.id ? m.end : m.start].p.z;
-    const vertical = at.filter((x) => memberDirection(p, x.member) === 'vertical');
-
-    // Mullion slab brackets.
-    if (o.mullionBrackets) {
-      const mullions = vertical.filter((x) => x.member.role === 'mullion' && x.at !== 'through');
-      const below = mullions.find((x) => otherZ(x.member) < z);
-      const above = mullions.find((x) => otherZ(x.member) > z);
-      if (below && !covered(node.id, below.member.id)) {
-        add(p, 'slabBracket', node.id, null, [below.member.id, ...(above ? [above.member.id] : [])], {
-          mount: 'edge',
-          side: o.slabSide,
-          standoff: o.standoff,
-        });
-      } else if (!below && above && !covered(node.id, above.member.id)) {
-        add(p, 'slabBracket', node.id, null, [above.member.id], {
-          mount: 'top',
-          side: o.slabSide,
-          standoff: o.standoff,
-        });
-      }
-    }
-
-    // Post base plates.
-    if (o.postBases) {
-      for (const x of vertical) {
-        if (x.member.role !== 'post' || x.at === 'through') continue;
-        const isBottom = otherZ(x.member) > z && !vertical.some((y) => y !== x && otherZ(y.member) < z);
-        if (isBottom && !covered(node.id, x.member.id)) {
-          add(p, 'baseplate', node.id, null, [x.member.id]);
-        }
-      }
-    }
-
-    // Member-to-member joints.
-    if (o.joint !== 'none') {
-      for (const x of at) {
-        if (x.at === 'through') continue;
-        if (memberDirection(p, x.member) === 'vertical') continue;
-        if (covered(node.id, x.member.id)) continue;
-        const candidates = at.filter((y) => y.member.id !== x.member.id && !collinear(p, x.member, y.member));
-        const isV = (y: (typeof at)[number]) => memberDirection(p, y.member) === 'vertical';
-        const main =
-          candidates.find((y) => y.at === 'through' && isV(y)) ??
-          candidates.find((y) => isV(y) && otherZ(y.member) > z) ??
-          candidates.find(isV) ??
-          candidates.find((y) => y.at === 'through');
-        if (!main) continue;
-        const braceJoint = o.braceJoint ?? 'none';
-        if (braceJoint !== 'none' && x.member.role === 'brace' && BRACE_SHAPES.has(getProfile(x.member.profile)?.shape.type ?? '')) {
-          add(p, braceJoint, node.id, main.member.id, [x.member.id]);
-          continue;
-        }
-        // Put cleats/fins on the side of the secondary where the main member continues.
-        const params: Record<string, number> = {};
-        const ys = memberAxes(p.nodes[x.member.start].p, p.nodes[x.member.end].p, x.member).y;
-        if (main.at !== 'through' && isV(main) && Math.abs(ys.z) > 0.7) {
-          const up = otherZ(main.member) > z ? 1 : -1;
-          params.side = Math.sign(ys.z) * up;
-        }
-        add(p, o.joint, node.id, main.member.id, [x.member.id], params);
-      }
-    }
-  }
-  return created;
-}
+export { AUTO_DEFAULTS, AUTO_RULES, applyAutoPlan, autoConnect, planAutoConnect } from './autoConnect';
+export type { AutoConnectOptions, AutoItem, AutoPlan, AutoRule, StructureElement } from './autoConnect';
 
 function collinear(p: Project, a: { start: Id; end: Id }, b: { start: Id; end: Id }): boolean {
   const d = (m: { start: Id; end: Id }) => {
@@ -256,7 +144,8 @@ export function applyConnection(p: Project, memberIds: Id[], o: ApplyOptions): I
   const ids = new Set(memberIds);
   const params = o.params ?? {};
   if (o.type === 'slabBracket') {
-    const made = autoConnect(p, { ...AUTO_DEFAULTS, joint: 'none', postBases: false, mullionBrackets: true }, ids);
+    const only = { ...AUTO_DEFAULTS, joint: 'none', postBases: false, mullionBrackets: true, braceJoint: 'none', stackJoint: 'none', structureBracket: 'none', stubEnd: 'none', stubJoint: 'none' } as const;
+    const made = autoConnect(p, only, ids);
     for (const id of made) p.connections[id].params = { ...p.connections[id].params, ...params };
     return made;
   }
@@ -297,6 +186,7 @@ export function applyConnection(p: Project, memberIds: Id[], o: ApplyOptions): I
       for (const c of old) delete p.connections[c.id];
       if (old.length) byNode.set(node, atNode(node).filter((c) => !old.includes(c)));
       const id = addConnection(p, o.type, node, main, [mid], { ...params });
+      pinConnection(p, p.connections[id]);
       created.push(id);
       byNode.set(node, [...atNode(node), p.connections[id]]);
     }

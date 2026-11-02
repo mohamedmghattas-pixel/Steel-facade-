@@ -97,7 +97,10 @@ Auto slots are capped, and the cap is reported:
 ### Slab brackets
 
 One bracket per mullion carries the dead load (**fixed**); the others are **sliding** (restraint
-only). *Support: auto* picks the highest bracket on the mullion — the usual hung stick system;
+only). *Support: auto* picks the highest bracket on the mullion — the usual hung stick system
+("highest", "above" and "below" are measured along the bracket's vertical: its mullion axis
+pointing up when `upSign` is set, as auto-connect and every transform set it, else world Z, which
+is the same on a plumb mullion);
 set *fixed (dead load)* / *sliding* explicitly to change it. A second fixed bracket on the same
 member is flagged (`move.restraint`), as is a member with no fixed bracket.
 
@@ -140,6 +143,10 @@ Every connection with *Auto slots* off uses its manual values unchanged.
 ### Splices
 
 Splice plates (`splice.ts`) keep their manual gap and slot; they are not in the report yet.
+Auto-connect gives the sleeve splices at the stack joints the wireframe check kept the measured
+gap (rounded up to 0.1 mm), so the drawn member ends stay where they are; a gap parameter larger
+than the drawn gap cuts the ends back by the difference ([CONNECTIONS.md](CONNECTIONS.md)
+"Splices across a drawn gap").
 
 ## Movement report and checks
 

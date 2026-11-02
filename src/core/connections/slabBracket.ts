@@ -1,18 +1,22 @@
 import { getBolt, boltLength } from '../library/bolts';
-import { add, dot, madd, scale, sub, toLocal, toWorld } from '../model/geometry';
-import type { Vec3 } from '../model/types';
+import { add, dot, madd, memberAxes, scale, sub, toLocal, toWorld } from '../model/geometry';
+import type { Connection, ParamValue, Project, Vec3 } from '../model/types';
 import { slabBracketMovement } from '../movement/provisions';
 import {
   centreAt,
   emptyOut,
+  exactAxis,
   num,
   plateOn,
   rect,
   str,
+  upSignOf,
+  worldUpSign,
   type ConnCtx,
   type ConnectionDef,
   type Hole2D,
 } from './common';
+import { P } from './kit';
 
 /**
  * Facade slab bracket: a fin plate bolted to the side of a mullion, welded to a
@@ -28,6 +32,12 @@ import {
  * bracket) along the bracket's own axes: out = zN (mullion local z towards the
  * slab), vert = the mullion axis pointing up, along = the mullion's local +y —
  * the same axes the survey deviation is decomposed on (bracketReference).
+ *
+ * "Up" is the mullion axis pointing up: `upSign` ±1 along local x (set by
+ * auto-connect / apply and pinned before every transform), or with 'auto' the
+ * world-up rule. With `upSign` set, the edge-mount height offset `dz` runs
+ * along that axis; with 'auto' it is a world-Z offset projected on the axis
+ * (the pin converts it, so the parts stay where they are).
  */
 export const slabBracket: ConnectionDef = {
   type: 'slabBracket',
@@ -35,12 +45,13 @@ export const slabBracket: ConnectionDef = {
   description: 'Mullion-to-slab bracket with slotted fin and anchored back plate.',
   needsMain: false,
   gravity: true,
+  pin: pinSlabBracket,
   params: [
     { key: 'mount', label: 'Mount', kind: 'select', default: 'edge', options: ['edge', 'top'] },
     { key: 'side', label: 'Slab side (±1 along mullion depth)', kind: 'number', default: 1, flip: ['z'] },
     { key: 'finSide', label: 'Fin side (±1 along mullion local y)', kind: 'number', default: 1, flip: ['y'] },
     { key: 'standoff', label: 'Wire line to slab face', kind: 'number', default: 150, unit: 'mm' },
-    { key: 'dz', label: 'Height offset (edge mount)', kind: 'number', default: -100, unit: 'mm' },
+    { key: 'dz', label: 'Height offset along the mullion (edge mount; + up)', kind: 'number', default: -100, unit: 'mm' },
     { key: 'finT', label: 'Fin thickness', kind: 'number', default: 10, unit: 'mm' },
     { key: 'finH', label: 'Fin height', kind: 'number', default: 150, unit: 'mm' },
     { key: 'finBack', label: 'Fin overlap past bolt line', kind: 'number', default: 40, unit: 'mm' },
@@ -79,6 +90,7 @@ export const slabBracket: ConnectionDef = {
     { key: 'surveyOut', label: 'Survey adjustment, out of plane (+ towards slab)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'surveyVert', label: 'Survey adjustment, vertical (+ up)', kind: 'number', default: 0, unit: 'mm' },
     { key: 'surveyAlong', label: 'Survey adjustment, along facade (+ local y)', kind: 'number', default: 0, unit: 'mm', flip: ['y'] },
+    P.up('Up along mullion (auto = world up; ±1 = ±local x)'),
   ],
   trims(ctx) {
     const { c, node, geom } = ctx;
@@ -88,8 +100,10 @@ export const slabBracket: ConnectionDef = {
     return extra.flatMap((id) => {
       const g = geom(id);
       if (!g) return [];
-      const end = dot(sub(node, g.a), sub(node, g.a)) <= dot(sub(node, g.b), sub(node, g.b)) ? 'start' : 'end';
-      return [{ member: id, end, amount: gap }];
+      const atStart = dot(sub(node, g.a), sub(node, g.a)) <= dot(sub(node, g.b), sub(node, g.b));
+      // A member that already stops short of the node (a stack joint drawn with its gap) is cut back by the rest only.
+      const apart = Math.abs(dot(sub(atStart ? g.a : g.b, node), g.frame.x));
+      return [{ member: id, end: atStart ? 'start' : 'end', amount: apart > 0.5 ? Math.max(0, gap - apart) : gap }];
     });
   },
   build(ctx) {
@@ -126,7 +140,8 @@ export const slabBracket: ConnectionDef = {
     const { x, y: yM, z } = g.frame;
     const zN = scale(z, s); // towards the slab
     const y = scale(yM, fs); // fin side of the mullion
-    const up = dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
+    const us = upSignOf(v.upSign);
+    const up = us ? scale(x, us) : dot(x, { x: 0, y: 0, z: 1 }) >= 0 ? x : scale(x, -1);
     const upSign = dot(up, x) >= 0 ? 1 : -1;
 
     // Centre-line point at the middle of the fin.
@@ -135,7 +150,7 @@ export const slabBracket: ConnectionDef = {
       const base = centreAt(g, node);
       C = madd(base, up, backT + finH / 2);
     } else {
-      C = centreAt(g, add(node, { x: 0, y: 0, z: num(v.dz, -100) }));
+      C = centreAt(g, us ? madd(node, exactAxis(up), num(v.dz, -100)) : add(node, { x: 0, y: 0, z: num(v.dz, -100) }));
     }
     const cx = toLocal(g.frame, C).x;
     if (cx < -1 || cx > g.length + 1) out.warnings.push('Bracket lies outside the supported member.');
@@ -260,7 +275,8 @@ export function bracketReference(ctx: Pick<ConnCtx, 'c' | 'v' | 'node' | 'geom'>
   const vWire = -g.shift.y * s;
   const finT = num(v.finT, 10);
   const point = madd(madd(centreAt(g, node), zN, vWire + num(v.standoff, 150)), g.frame.y, fs * (g.w / 2 + finT / 2));
-  const up = dot(g.frame.x, { x: 0, y: 0, z: 1 }) >= 0 ? g.frame.x : scale(g.frame.x, -1);
+  const us = upSignOf(v.upSign);
+  const up = us ? scale(g.frame.x, us) : dot(g.frame.x, { x: 0, y: 0, z: 1 }) >= 0 ? g.frame.x : scale(g.frame.x, -1);
   return {
     point,
     out: zN,
@@ -268,4 +284,23 @@ export function bracketReference(ctx: Pick<ConnCtx, 'c' | 'v' | 'node' | 'geom'>
     along: g.frame.y,
     mount: str(v.mount, 'edge') === 'top' ? 'top' : 'edge',
   };
+}
+
+/**
+ * `ConnectionDef.pin`: the world-up rule as `upSign` along the mullion's local
+ * x, and the world-Z height offset `dz` as the same offset along the axis
+ * (dz·|x·Z|, unchanged on a plumb mullion), so the bracket stays where it is.
+ */
+export function pinSlabBracket(p: Project, c: Connection, v: Record<string, ParamValue>): Record<string, ParamValue> {
+  if (upSignOf(v.upSign)) return {};
+  const m = p.members[c.secondary[0]];
+  const a = m && p.nodes[m.start]?.p;
+  const b = m && p.nodes[m.end]?.p;
+  if (!m || !a || !b) return {};
+  const x = exactAxis(memberAxes(a, b, m).x);
+  const out: Record<string, ParamValue> = { upSign: String(worldUpSign(x)) };
+  const dz = num(v.dz, -100);
+  const along = dz * Math.abs(x.z);
+  if (along !== dz) out.dz = along;
+  return out;
 }

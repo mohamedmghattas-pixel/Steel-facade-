@@ -3,8 +3,7 @@ import { useStore } from '../../state/store';
 import { Field, Modal, NumberInput, ProfilePicker, Segmented, Select, TextInput, parseList } from '../widgets';
 import { copyMembers, facadeGrid, newId, ROLE_LABEL } from '../../core/model/ops';
 import { connectionSummaryText } from '../../core/model/connectionFollow';
-import { AUTO_DEFAULTS, runAutoConnectOptions } from './autoConnectOptions';
-import { runAutoConnect } from '../actions';
+import { AutoConnectDialog } from './AutoConnectDialog';
 import { DXF_JOIN_TOLERANCE, dxfWorldSegments, explodeDxf, importDxfWireframe, previewDxfImport, readDxf, UNIT_NAMES, type DxfImportOptions } from '../../core/io/dxfImport';
 import { MEMBER_ROLES, type MemberRole, type PlaneKind } from '../../core/model/types';
 import { putBlob } from '../../state/storage';
@@ -206,65 +205,6 @@ function GridPreview({ bays, rows, floors, floorTransoms }: { bays: number[]; ro
         <line key={`v${i}`} x1={u} x2={u} y1={0} y2={H} className="mullion" />
       ))}
     </svg>
-  );
-}
-
-function AutoConnectDialog({ onClose }: { onClose: () => void }) {
-  const selCount = useStore((s) => s.selection.members.length);
-  const [o, setO] = useState(AUTO_DEFAULTS);
-  return (
-    <Modal
-      title="Auto-connect"
-      onClose={onClose}
-      footer={
-        <button
-          className="primary-btn"
-          onClick={() => {
-            runAutoConnect(runAutoConnectOptions(o));
-            onClose();
-          }}
-        >
-          Place connections {selCount ? `on ${selCount} selected` : 'on the whole model'}
-        </button>
-      }
-    >
-      <p className="muted">Places connections where members meet. Existing connections are kept; edit any connection afterwards in Properties.</p>
-      <label className="check">
-        <input type="checkbox" checked={o.mullionBrackets} onChange={(e) => setO({ ...o, mullionBrackets: e.target.checked })} /> Slab brackets at mullion stack joints and
-        chain ends
-      </label>
-      <div className="row2">
-        <Field label="Slab side (along mullion depth)">
-          <Segmented
-            value={o.slabSide}
-            options={[
-              { value: 1, label: '+ side' },
-              { value: -1, label: '− side' },
-            ]}
-            onChange={(v) => setO({ ...o, slabSide: v })}
-          />
-        </Field>
-        <Field label="Wire line → slab face">
-          <NumberInput value={o.standoff} unit="mm" onChange={(v) => setO({ ...o, standoff: v })} />
-        </Field>
-      </div>
-      <label className="check">
-        <input type="checkbox" checked={o.postBases} onChange={(e) => setO({ ...o, postBases: e.target.checked })} /> Base plates under posts
-      </label>
-      <Field label="Where transoms / rails / braces end on another member">
-        <Select
-          value={o.joint}
-          options={[
-            { value: 'angleCleat', label: 'Angle cleat (bolted both sides)' },
-            { value: 'finPlate', label: 'Fin plate (shop welded to main)' },
-            { value: 'endPlate', label: 'End plate (through bolts)' },
-            { value: 'welded', label: 'Welded (one assembly)' },
-            { value: 'none', label: 'Nothing' },
-          ]}
-          onChange={(v) => setO({ ...o, joint: v })}
-        />
-      </Field>
-    </Modal>
   );
 }
 

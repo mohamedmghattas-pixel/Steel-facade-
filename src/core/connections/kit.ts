@@ -7,8 +7,8 @@
  * and AISC 360 so defaults pass the code checks whichever code the project uses.
  * Capacity is by the engineer of record.
  */
-import type { Id, ParamValue, Vec2, Vec3 } from '../model/types';
-import { cross, dot, madd, normalize, scale, sub, toLocal, v3, type Frame } from '../model/geometry';
+import type { Connection, Id, ParamValue, Project, Vec2, Vec3 } from '../model/types';
+import { cross, dot, madd, memberAxes, normalize, scale, sub, toLocal, v3, type Frame } from '../model/geometry';
 import { boltLength, getBolt, type BoltSize } from '../library/bolts';
 import { getProfile, type Profile } from '../library/profiles';
 import { anchorsOfType, type AnchorSize, type AnchorType } from '../library/fasteners';
@@ -21,6 +21,7 @@ import {
   halfExtent,
   inward,
   plateOn,
+  upSignOf,
   type ConnCtx,
   type ConnectionOut,
   type FlipFactor,
@@ -144,6 +145,9 @@ export function anchorSpacingWarning(out: ConnectionOut, typeLabel: string, size
 
 export const BOLT_GRADES_SHORT = ['8.8', '10.9', '4.6', '5.6', 'A4-70', 'A4-80', 'A2-70', 'A325', 'A490'];
 
+/** 'auto' value of the `upSign` parameter (P.up). */
+export const UP_AUTO = 'auto';
+
 export const P = {
   num: (key: string, label: string, d: number, unit = 'mm', help?: string): ParamSpec => ({ key, label, kind: 'number', default: d, unit, help }),
   count: (key: string, label: string, d: number, help?: string): ParamSpec => ({ key, label, kind: 'number', default: d, help }),
@@ -154,7 +158,21 @@ export const P = {
   anchorType: (d = 'expansion', options = ANCHOR_TYPES): ParamSpec => ({ key: 'anchorType', label: 'Anchor type', kind: 'select', default: d, options }),
   /** A ±1 side select; `flip` = the joint axes it is signed along (mirror / flip rule, default the member's local y). */
   side: (key = 'side', label = 'Side (±1)', d = 1, flip: readonly FlipFactor[] = ['y']): ParamSpec => ({ key, label, kind: 'select', default: String(d), options: ['1', '-1'], flip }),
+  /**
+   * "Up" along the supported member: 'auto' = the world-up rule of the type, '1' / '-1' = ±local x
+   * (member-local, set by auto-connect / apply and pinned before every transform; flips with x).
+   */
+  up: (label = 'Up along member (auto = world up; ±1 = ±local x)'): ParamSpec => ({
+    key: 'upSign',
+    label,
+    kind: 'select',
+    default: UP_AUTO,
+    options: [UP_AUTO, '1', '-1'],
+    flip: ['x'],
+    help: 'The bracket\'s vertical: the member axis pointing up. Auto takes it from world up; auto-connect, Apply and every mirror / rotate / reverse set it along the member, so the bracket follows the member on sloped facades and under any mirror.',
+  }),
 };
+
 
 /** A parameter spec with a mirror / flip rule (ParamSpec.flip). */
 export const flips = (spec: ParamSpec, ...flip: FlipFactor[]): ParamSpec => ({ ...spec, flip });
@@ -433,6 +451,23 @@ export function memberOf(ctx: ConnCtx, out?: ConnectionOut, label = 'Connection'
   return { g, dIn: dir, end };
 }
 
+/**
+ * Centre of a through-bolt hole in a main member: from `p` on the face the
+ * bolt enters, along the bolt direction `dir` to the member's centre plane
+ * (the plane through its axis parallel to that face). Square framing (`dir`
+ * along the face normal) gives `p − dir·depth/2` exactly as before; a bolt
+ * that runs skew to the face (a transom meeting a mullion at an angle in the
+ * facade) gets the point on its own line, so the holes of the joints on both
+ * sides of the main member, on one bolt line, coincide.
+ */
+export function throughHole(main: MemberGeom, p: Vec3, dir: Vec3, depth: number): Vec3 {
+  const faces = [main.frame.y, scale(main.frame.y, -1), main.frame.z, scale(main.frame.z, -1)];
+  const n = faces.reduce((b, f) => (dot(f, dir) > dot(b, dir) ? f : b), faces[0]);
+  const c = dot(dir, n);
+  if (c > 1 - 1e-9 || c < 0.2) return madd(p, dir, -depth / 2);
+  return madd(p, dir, -dot(sub(p, centreAt(main, p)), n) / c);
+}
+
 /** Section depth of a member through its centre along a direction. */
 export const depthAlong = (g: MemberGeom, dir: Vec3): number => 2 * halfExtent(g, dir);
 
@@ -457,8 +492,30 @@ export interface BracketFrame {
   zN: Vec3;
   /** Distance from C to the concrete face along zN. */
   D: number;
-  /** World up projected on the member axis (±x), or x for non-vertical members. */
+  /** The bracket's vertical along the member axis (±x): `upSign`, or world up projected on the axis (auto), or dIn for flat members. */
   up: Vec3;
+}
+
+/**
+ * `ConnectionDef.pin` of the bracket family: the world-up rule of
+ * `bracketFrame` written as `upSign` along the supported member's local x.
+ */
+export function pinBracketUp(p: Project, c: Connection, v: Record<string, ParamValue>): Record<string, ParamValue> {
+  if (upSignOf(v.upSign)) return {};
+  const m = p.members[c.secondary[0]];
+  const n = p.nodes[c.node]?.p;
+  const a = m && p.nodes[m.start]?.p;
+  const b = m && p.nodes[m.end]?.p;
+  if (!m || !n || !a || !b) return {};
+  const x = memberAxes(a, b, m).x;
+  const atStart = dot(sub(a, n), sub(a, n)) <= dot(sub(b, n), sub(b, n));
+  return { upSign: String(bracketUpSign(x, atStart ? x : scale(x, -1))) };
+}
+
+/** The world-up rule of `bracketFrame` as a sign along the member's local x (`upSign` pin). */
+export function bracketUpSign(x: Vec3, dIn: Vec3): 1 | -1 {
+  const upW = v3(0, 0, 1);
+  return Math.abs(dot(x, upW)) > 0.5 ? sgn(dot(x, upW)) : sgn(dot(dIn, x));
 }
 
 /**
@@ -466,7 +523,7 @@ export interface BracketFrame {
  * member, concrete face `standoff` mm from the wire line on the `side` of the
  * member's local z, bracket on the `finSide` of local y.
  */
-export function bracketFrame(ctx: ConnCtx, out: ConnectionOut, label: string, along: number, side: 1 | -1, finSide: 1 | -1, standoff: number): BracketFrame | null {
+export function bracketFrame(ctx: ConnCtx, out: ConnectionOut, label: string, along: number, side: 1 | -1, finSide: 1 | -1, standoff: number, upSign: 0 | 1 | -1 = 0): BracketFrame | null {
   const m = memberOf(ctx, out, label);
   if (!m) return null;
   const { g, dIn } = m;
@@ -476,7 +533,7 @@ export function bracketFrame(ctx: ConnCtx, out: ConnectionOut, label: string, al
   const zN = scale(g.frame.z, side);
   const D = -g.shift.y * side + standoff;
   const upW = v3(0, 0, 1);
-  const up = Math.abs(dot(g.frame.x, upW)) > 0.5 ? scale(g.frame.x, sgn(dot(g.frame.x, upW))) : dIn;
+  const up = upSign ? scale(g.frame.x, upSign) : Math.abs(dot(g.frame.x, upW)) > 0.5 ? scale(g.frame.x, sgn(dot(g.frame.x, upW))) : dIn;
   return { g, C, x: dIn, y: scale(g.frame.y, finSide), zN, D, up };
 }
 

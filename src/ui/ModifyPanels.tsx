@@ -4,6 +4,7 @@
  * of the member properties and the Flip side buttons of connection properties.
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useDismiss } from './useDismiss';
 import { create } from 'zustand';
 import { isModifyTool, useStore, type ModifyTool } from '../state/store';
 import type { Id, Vec3 } from '../core/model/types';
@@ -411,14 +412,7 @@ export function ModifyContextMenu() {
   const selConns = useStore((s) => s.selection.connections);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) closeModifyMenu();
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [menu]);
+  useDismiss(!!menu, ref, closeModifyMenu);
   useEffect(() => {
     if (!menu || !ref.current) return setPos(null);
     const r = ref.current.getBoundingClientRect();

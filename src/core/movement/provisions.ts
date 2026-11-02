@@ -13,7 +13,8 @@ import type { ConnCtx } from '../connections/common';
 import type { MemberGeom } from '../derive/memberGeom';
 import type { DesignCode } from '../codes/types';
 import { getBolt } from '../library/bolts';
-import { dot, dist, normalize, sub } from '../model/geometry';
+import { dot, dist, memberAxes, normalize, scale, sub } from '../model/geometry';
+import { exactAxis, upSignOf } from '../connections/common';
 import { movementSettings, type FacadeDir, type ResolvedMovement } from './settings';
 import { thermalMovement, type ThermalMovement } from './thermal';
 import { toleranceStack, type StackItem } from './tolerance';
@@ -174,7 +175,7 @@ const supportMode = (c: Connection): 'auto' | 'fixed' | 'sliding' => {
  */
 export function fixedBracketFor(p: Project, memberId: Id, idx?: ConnIndex): Connection | undefined {
   const list = bracketsOn(p, memberId, idx);
-  const z = (c: Connection) => p.nodes[c.node].p.z;
+  const z = (c: Connection) => dot(p.nodes[c.node].p, bracketUp(p, c));
   const explicit = list.filter((c) => supportMode(c) === 'fixed').sort((a, b) => z(b) - z(a));
   if (explicit.length) return explicit[0];
   return list.filter((c) => supportMode(c) === 'auto').sort((a, b) => z(b) - z(a))[0];
@@ -191,12 +192,31 @@ export function bracketRole(p: Project, c: Connection, idx?: ConnIndex): Bracket
   return supportMode(c) === 'fixed' ? 'restrained' : 'sliding';
 }
 
+const WORLD_UP: Vec3 = { x: 0, y: 0, z: 1 };
+
+/**
+ * The vertical of a slab bracket: its mullion axis pointing up when `upSign` is
+ * set (member-local, docs/CONNECTION_GEOMETRY.md §15), else world up. Heights,
+ * the fixed (highest) bracket and the member above / below a stack joint are
+ * measured along it, so the movement provisions follow the bracket under any
+ * map; on a plumb mullion it is world Z exactly.
+ */
+export function bracketUp(p: Project, c: Connection): Vec3 {
+  const s = upSignOf(c.params.upSign);
+  const m = s ? p.members[c.secondary[0]] : undefined;
+  const a = m && p.nodes[m.start]?.p;
+  const b = m && p.nodes[m.end]?.p;
+  if (!m || !a || !b) return WORLD_UP;
+  const x = exactAxis(memberAxes(a, b, m).x);
+  return s > 0 ? x : scale(x, -1);
+}
+
 /** Vertical movement of a member at a point, relative to its fixed bracket: thermal over the distance + slab deflection between floors. */
-function movementAt(p: Project, ms: ResolvedMovement, g: MemberGeom, at: Vec3, fixed: Connection | undefined): { items: StackItem[]; total: number; thermal: ThermalMovement; deflection: number } {
-  const fp = fixed ? p.nodes[fixed.node].p : g.a.z >= g.b.z ? g.a : g.b;
+function movementAt(p: Project, ms: ResolvedMovement, g: MemberGeom, at: Vec3, fixed: Connection | undefined, up: Vec3): { items: StackItem[]; total: number; thermal: ThermalMovement; deflection: number } {
+  const fp = fixed ? p.nodes[fixed.node].p : dot(g.a, up) >= dot(g.b, up) ? g.a : g.b;
   const along = Math.abs(dot(sub(at, fp), g.frame.x));
   const thermal = thermalMovement(along, g.member.material, ms);
-  const deflection = Math.abs(at.z - fp.z) > 50 ? ms.slabDeflection : 0;
+  const deflection = Math.abs(dot(at, up) - dot(fp, up)) > 50 ? ms.slabDeflection : 0;
   const items: StackItem[] = [];
   if (thermal.max > 0.005) items.push({ name: `Thermal ΔL over ${Math.round(along)} mm (+${r1(thermal.expansion)} / −${r1(thermal.contraction)})`, value: thermal.max });
   if (deflection > 0) items.push({ name: 'Slab-edge deflection between floors', value: deflection });
@@ -245,7 +265,7 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
   const out: Provision[] = [];
 
   // Fin slot along the member axis.
-  const mv = role === 'sliding' || role === 'unsupported' ? movementAt(p, ms, g, node, fixed) : { items: [], total: 0 };
+  const mv = role === 'sliding' || role === 'unsupported' ? movementAt(p, ms, g, node, fixed, bracketUp(p, c)) : { items: [], total: 0 };
   const nb = Math.max(1, Math.min(4, Math.round(numP(v.bolts, 2))));
   const pitch = numP(v.pitch, 70);
   const maxOff = nb === 1 ? 0 : ((nb - 1) / 2) * pitch;
@@ -280,7 +300,7 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
 
   // A second fixed bracket restrains the movement between the two.
   if (role === 'restrained') {
-    const m2 = movementAt(p, ms, g, node, fixed);
+    const m2 = movementAt(p, ms, g, node, fixed, bracketUp(p, c));
     out.push(
       provision({
         key: 'restraint',
@@ -424,7 +444,7 @@ export function slabBracketMovement(ctx: Pick<ConnCtx, 'p' | 'c' | 'v' | 'geom'>
   let gapValue = numP(v.gap, 20);
   const up = c.secondary[1] ? geom(c.secondary[1]) : undefined;
   if (up) {
-    gap = stackGap(p, ms, node, g, up, auto, gapValue, idx);
+    gap = stackGap(p, ms, node, g, up, auto, gapValue, idx, bracketUp(p, c));
     gapValue = gap.provided;
     out.push(gap);
   }
@@ -442,14 +462,15 @@ function slotRequired(half: number, ms: ResolvedMovement): number {
  * lower end comes down (thermal expansion below its fixed point, deflection of
  * the slab it hangs from) or the lower member's top end goes up.
  */
-function stackGap(p: Project, ms: ResolvedMovement, node: Vec3, lower: MemberGeom, upper: MemberGeom, auto: boolean, manual: number, idx: ConnIndex): Provision {
-  const topOf = (g: MemberGeom) => (g.a.z >= g.b.z ? g.a : g.b);
+function stackGap(p: Project, ms: ResolvedMovement, node: Vec3, lower: MemberGeom, upper: MemberGeom, auto: boolean, manual: number, idx: ConnIndex, up: Vec3): Provision {
+  const h = (q: Vec3) => dot(q, up);
+  const topOf = (g: MemberGeom) => (h(g.a) >= h(g.b) ? g.a : g.b);
   const fU = fixedBracketFor(p, upper.member.id, idx);
   const fL = fixedBracketFor(p, lower.member.id, idx);
-  const zFU = fU ? p.nodes[fU.node].p.z : topOf(upper).z;
-  const zFL = fL ? p.nodes[fL.node].p.z : topOf(lower).z;
-  const tU = thermalMovement(Math.max(0, zFU - node.z), upper.member.material, ms);
-  const tL = thermalMovement(Math.max(0, node.z - zFL), lower.member.material, ms);
+  const zFU = fU ? h(p.nodes[fU.node].p) : h(topOf(upper));
+  const zFL = fL ? h(p.nodes[fL.node].p) : h(topOf(lower));
+  const tU = thermalMovement(Math.max(0, zFU - h(node)), upper.member.material, ms);
+  const tL = thermalMovement(Math.max(0, h(node) - zFL), lower.member.material, ms);
   const deflection = Math.abs(zFU - zFL) > 50 ? ms.slabDeflection : 0;
   const items: StackItem[] = [];
   if (tU.expansion > 0.005) items.push({ name: `Member above: expansion over ${Math.round(tU.length)} mm below its fixed bracket`, value: tU.expansion });

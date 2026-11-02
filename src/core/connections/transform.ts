@@ -14,7 +14,27 @@
 import type { Connection, ParamValue, Project, Vec3 } from '../model/types';
 import { dot, memberAxes, sub, scale, type Frame } from '../model/geometry';
 import type { FlipFactor, JointFlip, ParamSpec } from './common';
-import { CONNECTIONS, paramSpecs } from './registry';
+import { CONNECTIONS, paramSpecs, resolveParams } from './registry';
+
+/**
+ * Member-local values for a connection's world-referenced 'auto' parameters
+ * (`ConnectionDef.pin`), computed on project `p` as it is: empty when the type
+ * has none or they are already set. Applying them does not move any part.
+ */
+export function pinFrameParams(p: Project, c: Connection): Record<string, ParamValue> {
+  const def = CONNECTIONS[c.type];
+  if (!def?.pin) return {};
+  try {
+    return def.pin(p, c, resolveParams(c, p));
+  } catch {
+    return {};
+  }
+}
+
+/** Write the member-local values of `pinFrameParams` into the connection (auto-connect, apply). */
+export function pinConnection(p: Project, c: Connection): void {
+  Object.assign(c.params, pinFrameParams(p, c));
+}
 
 type Axes = Omit<Frame, 'origin'>;
 
@@ -44,10 +64,14 @@ export function mirrorValue(spec: Pick<ParamSpec, 'swap'>, cur: ParamValue): Par
 
 /**
  * Transform the parameters of `c` for an operation that flipped the joint axes
- * `f`: the declarative rules first, then the type's own `transform`. Returns
- * the keys changed (empty when the connection is symmetric for this flip).
+ * `f`: the world-referenced 'auto' values are pinned to member-local ones first
+ * (`pinned`, computed before the operation; default: from `p` as it is, for an
+ * operation that leaves the members in place), then the declarative rules,
+ * then the type's own `transform`. Returns the keys changed (empty when the
+ * connection is symmetric for this flip; pinning alone is not a change).
  */
-export function transformParams(p: Project, c: Connection, f: JointFlip): string[] {
+export function transformParams(p: Project, c: Connection, f: JointFlip, pinned: Record<string, ParamValue> = pinFrameParams(p, c)): string[] {
+  Object.assign(c.params, pinned);
   const changed: string[] = [];
   for (const spec of paramSpecs(c, p)) {
     if (!spec.flip?.length || flipSign(spec.flip, f) > 0) continue;

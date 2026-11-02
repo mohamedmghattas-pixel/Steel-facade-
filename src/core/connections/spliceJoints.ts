@@ -6,10 +6,11 @@
  */
 import { getBolt } from '../library/bolts';
 import { PROFILES, getProfile, type Profile } from '../library/profiles';
-import type { Vec3 } from '../model/types';
-import { centreAt, emptyOut, inward, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type ProfilePartOut, type Trim } from './common';
+import type { Connection, ParamValue, Project, Vec3 } from '../model/types';
+import { memberAxes } from '../model/geometry';
+import { collinearEnds, emptyOut, halfCut, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type ProfilePartOut, type Trim } from './common';
 import type { MemberGeom } from '../derive/memberGeom';
-import { P, addBolts, addPlate, ceilTo, dot, edgeDist, holeAt, intOf, longSlot, madd, memberHole, offsets, pitchFor, profileHole, scale, sectionFrame, sideOf, v3 } from './kit';
+import { P, addBolts, addPlate, ceilTo, dot, edgeDist, holeAt, intOf, longSlot, madd, memberHole, offsets, pitchFor, profileHole, scale, sectionFrame, sideOf, sub, v3 } from './kit';
 
 interface Pair {
   a: MemberGeom;
@@ -18,7 +19,10 @@ interface Pair {
   dB: Vec3;
   endA: 'start' | 'end';
   endB: 'start' | 'end';
+  /** Joint centre: the node, or the middle of a gap the members are drawn with. */
   C: Vec3;
+  /** Distance the member ends are apart along the axis (0 at a shared node). */
+  apart: number;
 }
 
 function pairOf(ctx: ConnCtx, out?: ConnectionOut, label = 'Splice'): Pair | null {
@@ -28,21 +32,27 @@ function pairOf(ctx: ConnCtx, out?: ConnectionOut, label = 'Splice'): Pair | nul
     out?.warnings.push(`${label} needs two collinear members with profiles.`);
     return null;
   }
-  const ia = inward(a, ctx.node);
-  const ib = inward(b, ctx.node);
+  const { ia, ib, apart, C } = collinearEnds(a, b, ctx.node);
   if (dot(ia.dir, ib.dir) > -0.99) out?.warnings.push(`${label}: members are not collinear.`);
-  return { a, b, dA: ia.dir, dB: ib.dir, endA: ia.end, endB: ib.end, C: centreAt(b, ctx.node) };
+  return { a, b, dA: ia.dir, dB: ib.dir, endA: ia.end, endB: ib.end, C, apart };
 }
 
+/** Both member ends cut back by `amount`, less half the gap they are already drawn with. */
 const halfTrims = (ctx: ConnCtx, amount: number): Trim[] => {
   const p = pairOf(ctx);
+  const cut = p ? halfCut(amount, p.apart) : 0;
   return p
     ? [
-        { member: p.a.member.id, end: p.endA, amount },
-        { member: p.b.member.id, end: p.endB, amount },
+        { member: p.a.member.id, end: p.endA, amount: cut },
+        { member: p.b.member.id, end: p.endB, amount: cut },
       ]
     : [];
 };
+
+/** Warning when the members are drawn further apart than the joint closes (the parts are placed for the joint, centred on the gap). */
+function apartWarning(out: ConnectionOut, pr: Pair, joint: number, what: string) {
+  if (pr.apart > joint + 0.5) out.warnings.push(`The members are drawn ${Math.round(pr.apart * 10) / 10} mm apart, more than the ${Math.round(joint * 10) / 10} mm ${what}: the gap stays ${Math.round(pr.apart * 10) / 10} mm.`);
+}
 
 // ---------------------------------------------------------------------------
 
@@ -71,6 +81,7 @@ export const endPlateSplice: ConnectionDef = {
     const { a, b, dB, C } = pr;
     const t = num(v.t, 15);
     const pack = Math.max(0, num(v.pack, 0));
+    apartWarning(out, pr, 2 * t + pack, 'of the two end plates and the pack');
     const bolt = getBolt(str(v.bolt, 'M16'));
     const ed = Math.max(num(v.edge, 25), (bolt.washerOD ?? 2 * bolt.d) / 2 + 6);
     const m = edgeDist(bolt.name);
@@ -147,6 +158,27 @@ function best(list: Profile[], std: string, t: number): Profile | undefined {
   return [...list].sort((x, y) => score(y) - score(x))[0];
 }
 
+const SLIDES_AUTO = 'auto (upper)';
+
+/** The world-up rule of the sleeve splice: the supported member slides when it extends upwards, or when the joint is not steep. */
+function upperSlides(dB: Vec3): boolean {
+  const up = v3(0, 0, 1);
+  return Math.abs(dot(dB, up)) > 0.5 ? dot(dB, up) > 0 : true;
+}
+
+/** `ConnectionDef.pin` of the sleeve splice: the sliding member by identity (supported / main), not by world up. */
+function pinSlides(p: Project, c: Connection, v: Record<string, ParamValue>): Record<string, ParamValue> {
+  if (str(v.slides, SLIDES_AUTO) !== SLIDES_AUTO) return {};
+  const m = p.members[c.secondary[0]];
+  const n = p.nodes[c.node]?.p;
+  const a = m && p.nodes[m.start]?.p;
+  const b = m && p.nodes[m.end]?.p;
+  if (!m || !n || !a || !b) return {};
+  const x = memberAxes(a, b, m).x;
+  const atStart = dot(sub(a, n), sub(a, n)) <= dot(sub(b, n), sub(b, n));
+  return { slides: upperSlides(atStart ? x : scale(x, -1)) ? 'supported' : 'main' };
+}
+
 const SLEEVES = ['auto (fit inside)', 'SHS 80x80x5', 'SHS 80x80x8', 'SHS 70x70x5', 'SHS 60x60x5', 'RHS 80x40x4', 'RHS 100x50x5', 'CHS 48.3x4'];
 
 /**
@@ -172,7 +204,9 @@ export const sleeveSplice: ConnectionDef = {
     P.num('pitch', 'Bolt pitch (0 = auto)', 0),
     P.num('slot', 'Sleeve slot, sliding side (0 = long slot)', 0),
     P.side('boltSide', 'Bolt head side (±1 across member)'),
+    P.sel('slides', 'Sliding member (auto = the upper one)', [SLIDES_AUTO, 'supported', 'main'], SLIDES_AUTO, 'Which member slides on the long slots of the sleeve (the other is fixed to it). Auto: the upper member of a steep joint, else the supported one; auto-connect, Apply and every mirror / rotate / reverse set it, so it stays the same member under any map.'),
   ],
+  pin: pinSlides,
   trims: (ctx) => halfTrims(ctx, num(ctx.v.gap, 20) / 2),
   build(ctx) {
     const out = emptyOut();
@@ -199,16 +233,18 @@ export const sleeveSplice: ConnectionDef = {
     else if (clr > 6) out.warnings.push(`Sleeve ${prof.name} leaves ${Math.round(clr * 10) / 10} mm clearance — fit packs or choose a closer size.`);
     const Ls = num(v.length, 400);
     const gap = num(v.gap, 20);
+    apartWarning(out, pr, gap, 'movement gap');
+    const half = Math.max(gap, pr.apart) / 2;
     const bolt = getBolt(str(v.bolt, 'M12'));
     const sliding = str(v.mode, 'sliding') === 'sliding';
     const slot = sliding ? num(v.slot, 0) || longSlot(bolt.name) : 0;
     const n = intOf(v.bolts, 2, 1, 4);
     const pitch = num(v.pitch, 0) || pitchFor(bolt.name, slot);
     // The member extending downwards (or the main member) is fixed to the sleeve; the other slides.
-    const up = v3(0, 0, 1);
-    const bSlides = Math.abs(dot(dB, up)) > 0.5 ? dot(dB, up) > 0 : true;
+    const sl = str(v.slides, SLIDES_AUTO);
+    const bSlides = sl === 'supported' ? true : sl === 'main' ? false : upperSlides(dB);
     const eM = edgeDist(bolt.name);
-    const us = Array.from({ length: n }, (_, i) => gap / 2 + eM + i * pitch);
+    const us = Array.from({ length: n }, (_, i) => half + eM + i * pitch);
     const eS = edgeDist(bolt.name, { slot, towards: true });
     if (Ls / 2 - us[us.length - 1] < eS - 0.5) out.warnings.push('Sleeve too short for the bolt pattern — lengthen it.');
     const frame = sectionFrame(madd(C, dB, -Ls / 2), dB, b);

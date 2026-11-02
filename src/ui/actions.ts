@@ -22,7 +22,8 @@ import { handleModellingPoints } from './dialogs/modellingActions';
 import { dist, pointSegment, sub, worldToPlane } from '../core/model/geometry';
 import { connectionSummaryText, type ConnectionSummary } from '../core/model/connectionFollow';
 import { measureText } from './modifyActions';
-import { APPLY_END, applyConnection, autoConnect, CONNECTIONS } from '../core/connections/registry';
+import { APPLY_END, applyAutoPlan, applyConnection, CONNECTIONS, planAutoConnect, type AutoConnectOptions, type AutoRule, type StructureElement } from '../core/connections/registry';
+import { pinConnection } from '../core/connections/transform';
 import type { ConnectionType } from '../core/model/types';
 import { derived, useStore, type Tool } from '../state/store';
 import { askConfirm, askText } from './askState';
@@ -151,17 +152,31 @@ export function addConnectionFromSelection(type: ConnectionType) {
   let id = '';
   st().apply(`Add ${def.label}`, (p) => {
     id = addConnection(p, type, node!, main, secondary);
+    pinConnection(p, p.connections[id]);
   });
   st().select({ connections: [id] });
 }
 
-export function runAutoConnect(opts: Parameters<typeof autoConnect>[1]) {
+/**
+ * Auto-connect on the selected members (or the whole model) as one undo step:
+ * the plan is made again on the model as it is now (`planAutoConnect`) with
+ * the options, the reference-structure triangles and the rules switched on.
+ * Returns the number of connections placed, by type.
+ */
+export function runAutoConnect(opts: AutoConnectOptions, structure: StructureElement[] = [], rules?: ReadonlySet<AutoRule>): { created: number; byType: Partial<Record<ConnectionType, number>> } {
   const { selection } = st();
-  let n = 0;
+  let created: string[] = [];
+  const byType: Partial<Record<ConnectionType, number>> = {};
   st().apply('Auto-connect', (p) => {
-    n = autoConnect(p, opts, selection.members.length ? new Set(selection.members) : undefined).length;
+    created = applyAutoPlan(p, planAutoConnect(p, opts, selection.members.length ? new Set(selection.members) : undefined, structure), rules);
+    for (const id of created) byType[p.connections[id].type] = (byType[p.connections[id].type] ?? 0) + 1;
   });
-  notify(n ? `Added ${n} connection${n === 1 ? '' : 's'}.` : 'No new connections were needed.');
+  const n = created.length;
+  const what = Object.entries(byType)
+    .map(([t, k]) => `${k} ${CONNECTIONS[t as ConnectionType]?.label.toLowerCase() ?? t}`)
+    .join(', ');
+  notify(n ? `Added ${n} connection${n === 1 ? '' : 's'}: ${what}.` : 'No new connections were needed.');
+  return { created: n, byType };
 }
 
 export function setTool(t: Tool) {
@@ -332,6 +347,11 @@ export function drawingsFor(kind?: Drawing['kind']): Drawing[] {
   const p = st().project;
   const all = drawingsOf(p, derived(p));
   return kind ? all.filter((d) => d.kind === kind) : all;
+}
+
+/** The drawing set of a derived model if it is already generated (nothing is generated here). */
+export function cachedDrawingsOf(dm: DerivedModel): Drawing[] | undefined {
+  return drawingCache.get(dm);
 }
 
 /** The drawing set of a project state and its derived model, from the same cache (the export package uses it too). */

@@ -23,14 +23,15 @@ import {
   type PackageResult,
   type PlanCache,
 } from '../core/export/package';
-import { activeExportTemplate, isBuiltinTemplate, packageSettings, templateIssues } from '../core/export/template';
-import type { ExportPackageSettings, ExportTemplate, FormTemplate, PackageIssue, QafMapping, VcfMapping } from '../core/export/types';
+import { activeExportTemplate, expandPattern, isBuiltinTemplate, packageSettings, packageTokens, revisionFromDrawings, sanitizePath, sanitizeSegment, templateIssues, walkFolders } from '../core/export/template';
+import type { ExportItem, ExportPackageSettings, ExportTemplate, FormTemplate, PackageIssue, QafMapping, VcfMapping } from '../core/export/types';
+import type { TokenValues } from '../core/export/catalog';
 import { currentIssue } from '../core/export/package';
 import { defaultQafMapping, defaultVcfMapping } from '../core/export/forms';
 import { readXlsxCells } from '../core/io/xlsxTemplate';
 import type { SvgPainter } from '../core/export/pdfBook';
 import { svgPainter } from './pdf';
-import { drawingsOf } from './actions';
+import { cachedDrawingsOf, drawingsOf } from './actions';
 import { askConfirm } from './askState';
 
 const st = () => useStore.getState();
@@ -69,7 +70,63 @@ export interface PackageRequest {
   skip?: string[];
 }
 
-/** Plan the package of the current project (no files are made yet). */
+/** What the Export package dialog shows before the package is planned: cheap to make at any model size. */
+export interface PackageOutline {
+  /** Package folder name and the package-level tokens. */
+  root: string;
+  tokens: TokenValues;
+  /** Revision from the drawing revisions recorded in the project (the plan takes it from the drawing set). */
+  autoRev: string;
+  /** Every template item with its folder in the package. */
+  items: { item: ExportItem; folder: string }[];
+  counts: {
+    members: number;
+    parts: number;
+    partMarks: number;
+    assemblies: number;
+    assemblyMarks: number;
+    /** Sheets of the drawing set when it is already generated (e.g. the Drawings tab was opened), else null. */
+    drawings: number | null;
+  };
+}
+
+/**
+ * The package outline of the current project: items, folders, tokens and model
+ * counts, without generating the drawing set or any output (planCurrentPackage
+ * does that, on request). Opening the dialog stays instant on large models.
+ */
+export function outlineCurrentPackage(req: PackageRequest = {}): PackageOutline {
+  const p = st().project;
+  const dm = derived(p);
+  const settings = { ...packageSettings(p), ...(req.settings ?? {}) };
+  const template = req.template ?? activeExportTemplate(p);
+  const autoRev = revisionFromDrawings(Object.values(p.drawings?.revisions ?? {}).map((revisions) => ({ revisions })));
+  const base = packageTokens(p, settings, autoRev);
+  const root = sanitizeSegment(expandPattern(template.root.name, base).text);
+  const tokens: TokenValues = { ...base, package: root };
+  const items: PackageOutline['items'] = [];
+  for (const e of walkFolders(template)) {
+    const folder = e.path.length ? sanitizePath(e.path.map((n) => expandPattern(n, tokens).text).join('/')) : '';
+    for (const item of e.folder.items) items.push({ item, folder });
+  }
+  const drawings = cachedDrawingsOf(dm);
+  return {
+    root,
+    tokens,
+    autoRev,
+    items,
+    counts: {
+      members: Object.keys(p.members).length,
+      parts: dm.parts.length,
+      partMarks: new Set(dm.parts.map((x) => x.mark)).size,
+      assemblies: dm.assemblies.length,
+      assemblyMarks: new Set(dm.assemblies.map((a) => a.mark)).size,
+      drawings: drawings ? drawings.length : dm.parts.length ? null : 0,
+    },
+  };
+}
+
+/** Plan the package of the current project (no files are made yet; the drawing set is generated if it is not cached). */
 export function planCurrentPackage(req: PackageRequest = {}): PackagePlan {
   const p = st().project;
   const dm = derived(p);

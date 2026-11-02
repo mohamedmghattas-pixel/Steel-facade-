@@ -11,7 +11,7 @@
 import { getBolt } from '../library/bolts';
 import { anchorsOfType } from '../library/fasteners';
 import type { Vec3 } from '../model/types';
-import { centreAt, emptyOut, num, rect, str, type ConnCtx, type ConnectionDef, type ConnectionOut, type ProfilePartOut } from './common';
+import { centreAt, emptyOut, num, rect, str, upSignOf, type ConnCtx, type ConnectionDef, type ConnectionOut, type ProfilePartOut } from './common';
 import {
   P,
   addBolts,
@@ -38,6 +38,7 @@ import {
   onLegB,
   onLegH,
   pitchFor,
+  pinBracketUp,
   placeAngle,
   profileHole,
   scale,
@@ -78,6 +79,7 @@ export const helpingHand: ConnectionDef = {
   description: 'Rainscreen L bracket: angle anchored to the wall or slab edge, mullion bolted to the projecting leg (fixed or sliding point).',
   needsMain: false,
   gravity: true,
+  pin: pinBracketUp,
   params: [
     P.sel('variant', 'Variant', ['fixed point', 'sliding point']),
     P.sel('angle', 'Bracket angle (projecting leg × wall leg)', HH_ANGLES, 'L 150x100x10'),
@@ -97,11 +99,12 @@ export const helpingHand: ConnectionDef = {
     P.num('anchorPitch', 'Anchor pitch', 80),
     P.num('anchorSlot', 'Anchor slot, vertical (extra)', 0),
     P.num('anchorLen', 'Anchor length (0 = typical)', 0),
+    P.up(),
   ],
   build(ctx) {
     const out = emptyOut();
     const { v } = ctx;
-    const bf = bracketFrame(ctx, out, 'Helping-hand bracket', num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 120));
+    const bf = bracketFrame(ctx, out, 'Helping-hand bracket', num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 120), upSignOf(v.upSign));
     if (!bf) return out;
     const a = angleOf(str(v.angle, 'L 150x100x10'));
     if (!a) {
@@ -178,6 +181,7 @@ export const castInChannel: ConnectionDef = {
   description: 'Bracket on a cast-in anchor channel (slab edge or slab top) with T-bolts; adjustable in three directions.',
   needsMain: false,
   gravity: true,
+  pin: pinBracketUp,
   params: [
     P.sel('mount', 'Mount', ['slab edge', 'slab top']),
     P.sel('channel', 'Channel (width/height)', CHANNELS, '40/22'),
@@ -199,6 +203,7 @@ export const castInChannel: ConnectionDef = {
     P.count('bolts', 'Bolts to member', 2),
     P.num('pitch', 'Bolt pitch', 60),
     P.num('finSlot', 'Fin slot (extra)', 17),
+    P.up(),
   ],
   build(ctx) {
     const out = emptyOut();
@@ -210,7 +215,7 @@ export const castInChannel: ConnectionDef = {
     const finH = num(v.finH, 150);
     const backT = num(v.backT, 10);
     const along = top ? backT + finH / 2 : num(v.along, 150);
-    const bf = bracketFrame(ctx, out, 'Cast-in channel bracket', along, side, finSide, num(v.standoff, 150));
+    const bf = bracketFrame(ctx, out, 'Cast-in channel bracket', along, side, finSide, num(v.standoff, 150), upSignOf(v.upSign));
     if (!bf) return out;
     const { g, C, y, zN, D, up } = bf;
     const ch = str(v.channel, '40/22');
@@ -324,6 +329,7 @@ export const embedPlate: ConnectionDef = {
   description: 'Cast-in plate with headed studs, flush in the slab edge or top, with a welded fin bolted to the mullion.',
   needsMain: false,
   gravity: true,
+  pin: pinBracketUp,
   params: [
     P.sel('mount', 'Mount', ['slab edge', 'slab top']),
     P.sel('finWeld', 'Fin weld', ['site weld', 'shop weld']),
@@ -346,6 +352,7 @@ export const embedPlate: ConnectionDef = {
     P.count('bolts', 'Bolts to member', 2),
     P.num('pitch', 'Bolt pitch', 60),
     P.num('slot', 'Fin slot along member (extra)', 0),
+    P.up(),
   ],
   build(ctx) {
     const out = emptyOut();
@@ -353,7 +360,7 @@ export const embedPlate: ConnectionDef = {
     const top = str(v.mount, 'slab edge') === 'slab top';
     const finT = num(v.finT, 10);
     const finH = num(v.finH, 150);
-    const bf = bracketFrame(ctx, out, 'Embed plate', top ? finH / 2 : num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 150));
+    const bf = bracketFrame(ctx, out, 'Embed plate', top ? finH / 2 : num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 150), upSignOf(v.upSign));
     if (!bf) return out;
     const { g, C, y, zN, D, up } = bf;
     const tE = num(v.embedT, 12);
@@ -663,6 +670,7 @@ export const adjustableBracket: ConnectionDef = {
   description: 'Wall angle + slide bracket with slots in three directions (along, out of plane, vertical); optional serrated plates.',
   needsMain: false,
   gravity: true,
+  pin: pinBracketUp,
   params: [
     P.sel('angle', 'Wall angle', ADJ_ANGLES, 'L 100x100x10'),
     P.side('side', 'Concrete side (±1 along member depth)', 1, ['z']),
@@ -688,11 +696,12 @@ export const adjustableBracket: ConnectionDef = {
     P.num('slotZ', 'Slide slot, in/out (extra)', 17),
     P.bool('serrated', 'Serrated washer plates', true),
     P.num('serrT', 'Serrated plate thickness', 6),
+    P.up(),
   ],
   build(ctx) {
     const out = emptyOut();
     const { v } = ctx;
-    const bf = bracketFrame(ctx, out, '3-way bracket', num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 150));
+    const bf = bracketFrame(ctx, out, '3-way bracket', num(v.along, 150), sideOf(v.side), sideOf(v.finSide), num(v.standoff, 150), upSignOf(v.upSign));
     if (!bf) return out;
     const a = angleOf(str(v.angle, 'L 100x100x10'));
     if (!a) {

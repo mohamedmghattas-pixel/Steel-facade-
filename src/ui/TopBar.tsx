@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useRef, useState, type ReactNode } from 'react';
+import { useDismiss } from './useDismiss';
 import { useStore } from '../state/store';
 import { Icon } from './icons';
 import {
@@ -32,15 +33,13 @@ interface Item {
 function Menu({ label, icon, items }: { label: string; icon: string; items: (Item | '-')[] }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [open]);
+  const btn = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  // Outside press or Esc closes the menu; Esc returns focus to its button.
+  useDismiss(open, ref, close, btn);
   return (
     <div className="menu" ref={ref}>
-      <button className={`menu-btn ${open ? 'on' : ''}`} onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button ref={btn} className={`menu-btn ${open ? 'on' : ''}`} onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="menu">
         <Icon name={icon} size={16} /> {label}
       </button>
       {open && (

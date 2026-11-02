@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useDismiss } from './useDismiss';
 import { PROFILES, getProfile, profileLibraryRevision, profileMassIn, searchProfiles, type Standard } from '../core/library/profiles';
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {
@@ -137,14 +138,9 @@ export function ProfilePicker({
   const [q, setQ] = useState('');
   const [std, setStd] = useState<Standard | 'all'>('all');
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [open]);
+  const btn = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, ref, close, btn);
   const list = useMemo(
     () => searchProfiles(q, std === 'all' ? undefined : std).filter((p) => !filter || filter(p.name)).slice(0, 120),
     // The catalogue revision: custom profiles come and go with the project.
@@ -153,7 +149,7 @@ export function ProfilePicker({
   const label = mixed ? '— mixed —' : value ? value : allowNone ? 'Wireframe (no profile)' : 'Choose profile';
   return (
     <div className="profile-picker" ref={ref}>
-      <button type="button" className="picker-btn" onClick={() => setOpen(!open)}>
+      <button ref={btn} type="button" className="picker-btn" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span>{label}</span>
         <span className="muted">{value && getProfile(value) ? `${profileMassIn(getProfile(value)!).toFixed(1)} kg/m` : ''}</span>
       </button>

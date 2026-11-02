@@ -416,11 +416,15 @@ patches, 5 folds, 266 members turned): 0.1 s.
   and are not proposed again.
 - **Partial overlaps, near-misses and crossings of one family are flagged,
   never fixed.** Collinear gaps (stack joints) are never closed.
-- **With *Cut mullions at transoms*,** every transom node is a mullion end.
-  Auto-connect treats ends of **vertical** mullions as stack joints and would
-  place slab brackets there. On vertical facades, untick *Slab brackets* in
-  Auto-connect, or use *Keep mullions continuous*. Sloped mullions are not
-  vertical (more than 5.7° from plumb), so they get no automatic slab brackets.
+- **With *Cut mullions at transoms*,** every transom node is a mullion end,
+  and a floor split with no transom is merged away. Auto-connect reads the
+  result by role and topology ([CONNECTIONS.md "Auto-connect"](CONNECTIONS.md)):
+  transom joints at every T-junction, splices at the kept stack joints, and
+  mullion brackets at the reference structure or on bracket stubs. Its level
+  brackets (vertical mullions only) go to chain ends and levels, never to a
+  transom junction where a mullion was cut (earlier versions placed a slab
+  bracket at every one of them). Sloped mullions get their brackets from the
+  structure or from stubs.
 - **The fingerprint does not cover connections, materials or finishes.** Moves
   below about 0.05 mm may not change it (0.1 mm rounding).
 - **The analysis runs synchronously** when a rule changes: about 2 s on 20k

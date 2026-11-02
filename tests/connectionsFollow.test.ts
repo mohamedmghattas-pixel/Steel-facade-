@@ -211,14 +211,20 @@ function joint(cs: Case) {
 const plane = (point: Vec3, normal: Vec3) => ({ point, normal: normalize(normal) });
 const MIRRORS = [plane(v3(137, 52, 0), v3(1, 0.35, 0)), plane(v3(0, -40, 0), v3(0, 1, 0))];
 
-/** Types whose geometry is referenced to world up (ConnectionDef.gravity) need vertical mirror planes: all MIRRORS are. */
+/**
+ * Maps that turn world up: a mirror about a horizontal plane, a mirror about a plane that turns a plumb
+ * member 29° off vertical (a vertical facade becomes a sloped one), a rotation of 29° about a horizontal
+ * axis. The types placed from world up (ConnectionDef.gravity) pin their 'auto' parameters to the member
+ * frames first (ConnectionDef.pin), so their parts are the image too.
+ */
+const TILT = (29 * Math.PI) / 180;
+const TILT_MIRRORS = [plane(v3(0, 0, 400), v3(0, 0, 1)), plane(v3(60, -30, 120), v3(0, Math.cos(TILT / 2), -Math.sin(TILT / 2)))];
 
 /**
- * Flip-side exceptions: the reflection plane of the flip turns world up (a seat stays under its member),
- * or the main member is not symmetric about it (an inclined brace's xy plane).
+ * Flip-side exceptions: the main member is not symmetric about the reflection plane (an inclined brace's
+ * xy plane).
  */
 const FLIP_SKIP: Partial<Record<ConnectionType, ('y' | 'z')[]>> = {
-  seatedAngle: ['y'],
   gussetPlate: ['z'],
   crossBrace: ['z'],
 };
@@ -236,6 +242,23 @@ describe('mirror: the parts are the mirror image (every type and variant)', () =
       expect(warn(p)).toEqual(w0);
       sameGeo(`${cs.name} mirror`, geometry(p, cid), want);
     }
+  });
+});
+
+describe('mirror about planes that turn world up, rotate about a horizontal axis: the parts are the image (every type and variant)', () => {
+  it.each(CASES.map((c) => [c.name, c] as const))('%s', (_n, cs) => {
+    for (const pl of TILT_MIRRORS) {
+      const { p, cid, members } = joint(cs);
+      const want = mapGeo(geometry(p, cid), mirrorMap(pl).point);
+      const r = mirrorMembers(p, members, pl, { copy: false });
+      expect(r.warnings, cs.name).toEqual([]);
+      sameGeo(`${cs.name} mirror n=${JSON.stringify(pl.normal)}`, geometry(p, cid), want);
+    }
+    const { p, cid, members } = joint(cs);
+    const R: RigidMap = rotationMap(v3(100, -50, 300), v3(1, 0.2, 0), 29);
+    const before = geometry(p, cid);
+    rotateMembers(p, members, v3(100, -50, 300), v3(1, 0.2, 0), 29);
+    sameGeo(`${cs.name} rotate about a horizontal axis`, geometry(p, cid), mapGeo(before, R.point));
   });
 });
 

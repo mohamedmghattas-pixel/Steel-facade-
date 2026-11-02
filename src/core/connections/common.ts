@@ -162,11 +162,20 @@ export interface ConnectionDef {
    */
   faceGap?: string;
   /**
-   * Geometry referenced to world up (a seat under the member, a bracket's
-   * vertical, the sliding upper member): kept under maps that do not reverse
-   * world Z; a map that turns the vertical rebuilds it by the same rule.
+   * The type has parameters whose default ('auto') is referenced to world up
+   * (a seat under the member, a bracket's vertical, the sliding upper member).
+   * `pin` turns them into member-local values (a sign along the member axis, a
+   * section face, a member) that give the same parts; auto-connect and apply
+   * write them, and every transform pins them first, so the parts follow the
+   * member frames under any map (docs/CONNECTION_GEOMETRY.md §15).
    */
   gravity?: boolean;
+  /**
+   * Member-local values for the world-referenced 'auto' parameters of `c` in
+   * project `p` (empty when they are already set). Must reproduce the current
+   * parts exactly.
+   */
+  pin?(p: Project, c: Connection, v: Record<string, ParamValue>): Record<string, ParamValue>;
 }
 
 export const emptyOut = (): ConnectionOut => ({
@@ -267,6 +276,35 @@ export function inward(g: MemberGeom, node: Vec3): { dir: Vec3; end: 'start' | '
   return { dir: atStart ? g.frame.x : scale(g.frame.x, -1), end: atStart ? 'start' : 'end' };
 }
 
+/**
+ * The joint of two collinear members `a` and `b` at a node. Their ends there
+ * may be apart (a stack joint drawn with its gap: two end nodes): `apart` is
+ * the distance between the two wire ends along the axis (0 when they share the
+ * node, within 0.5 mm) and `C` the joint centre on b's section centre line —
+ * the node, or the middle of the gap.
+ */
+export function collinearEnds(a: MemberGeom, b: MemberGeom, node: Vec3) {
+  const ia = inward(a, node);
+  const ib = inward(b, node);
+  const Ea = ia.end === 'start' ? a.a : a.b;
+  const Eb = ib.end === 'start' ? b.a : b.b;
+  const d = dot(sub(Eb, Ea), ib.dir);
+  const apart = d > 0.5 ? d : 0;
+  const C = apart ? centreAt(b, scale(add(Ea, Eb), 0.5)) : centreAt(b, node);
+  return { ia, ib, apart, C };
+}
+
+/**
+ * Cut-back of each member end of a collinear joint whose members are `apart`:
+ * the part of `amount` the gap does not already give (none below 0.05 mm, so
+ * a gap entered as the measured one rounded up to 0.1 mm keeps the drawn ends).
+ */
+export function halfCut(amount: number, apart: number): number {
+  if (!apart) return amount;
+  const cut = amount - apart / 2;
+  return cut > 0.05 ? cut : 0;
+}
+
 /** Clearances of an end slot around the inserted plate: total across, and past the plate end, mm (typical practice). */
 export const END_SLOT_CLEAR = { width: 2, length: 5 };
 
@@ -289,3 +327,28 @@ export function holeFor(size: string, oversize = 0): number {
 
 export const Z_UP = v3(0, 0, 1);
 export { add };
+
+/**
+ * A normalised direction with its rounding removed when it lies on a world
+ * axis: (0, 0, 0.9999999999999999) → (0, 0, 1). Offsets along a plumb member
+ * axis then equal the same offsets along world Z to the last bit.
+ */
+export function exactAxis(v: Vec3): Vec3 {
+  if (v.x === 0 && v.y === 0 && v.z !== 0) return v3(0, 0, Math.sign(v.z));
+  if (v.x === 0 && v.z === 0 && v.y !== 0) return v3(0, Math.sign(v.y), 0);
+  if (v.y === 0 && v.z === 0 && v.x !== 0) return v3(Math.sign(v.x), 0, 0);
+  return v;
+}
+
+/**
+ * Sign of the "up" direction along a member axis `x` stored in a connection
+ * parameter (`upSign`): '1' / '-1' (or ±1) = ±x, member-local; anything else
+ * ('auto') = 0, the world-up rule of the type.
+ */
+export function upSignOf(v: ParamValue | undefined): 0 | 1 | -1 {
+  const n = typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN;
+  return Number.isFinite(n) && n !== 0 ? (n < 0 ? -1 : 1) : 0;
+}
+
+/** World-up rule of the bracket types: +x when the axis points up (or is level), else −x. */
+export const worldUpSign = (x: Vec3): 1 | -1 => (dot(x, Z_UP) >= 0 ? 1 : -1);

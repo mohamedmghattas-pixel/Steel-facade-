@@ -1,6 +1,6 @@
 import { boltLength, getBolt } from '../library/bolts';
 import { madd, scale } from '../model/geometry';
-import { centreAt, emptyOut, inward, num, plateOn, rect, str, type ConnCtx, type ConnectionDef } from './common';
+import { collinearEnds, emptyOut, halfCut, num, plateOn, rect, str, type ConnCtx, type ConnectionDef } from './common';
 
 /**
  * Bolted splice between two collinear members (e.g. a mullion stack joint or a
@@ -25,12 +25,16 @@ export const splicePlates: ConnectionDef = {
     { key: 'boltSide', label: 'Bolt head side (±1 across member)', kind: 'select', default: '1', options: ['1', '-1'], flip: ['y'] },
   ],
   trims(ctx) {
-    const out = [];
-    for (const id of [ctx.c.main, ctx.c.secondary[0]]) {
-      const g = id ? ctx.geom(id) : undefined;
-      if (g) out.push({ member: g.member.id, end: inward(g, ctx.node).end, amount: num(ctx.v.gap, 10) / 2 });
-    }
-    return out;
+    const a = ctx.c.main ? ctx.geom(ctx.c.main) : undefined;
+    const b = ctx.geom(ctx.c.secondary[0]);
+    if (!a || !b) return [];
+    // Members drawn with a gap (two end nodes) are cut back by the rest of the joint gap only.
+    const { ia, ib, apart } = collinearEnds(a, b, ctx.node);
+    const cut = halfCut(num(ctx.v.gap, 10) / 2, apart);
+    return [
+      { member: a.member.id, end: ia.end, amount: cut },
+      { member: b.member.id, end: ib.end, amount: cut },
+    ];
   },
   build(ctx: ConnCtx) {
     const out = emptyOut();
@@ -47,15 +51,17 @@ export const splicePlates: ConnectionDef = {
     const n = Math.max(1, Math.round(num(ctx.v.bolts, 2)));
     const pitch = num(ctx.v.pitch, 60);
     const slot = num(ctx.v.slot, 0);
-    const { dir: dB } = inward(b, ctx.node);
-    const C = centreAt(b, ctx.node);
+    const { ib, apart, C } = collinearEnds(a, b, ctx.node);
+    const dB = ib.dir;
+    const gap = num(ctx.v.gap, 10);
+    if (apart > gap + 0.5) out.warnings.push(`The members are drawn ${Math.round(apart * 10) / 10} mm apart, more than the ${gap} mm joint gap: the gap stays ${Math.round(apart * 10) / 10} mm.`);
     const Y = b.frame.y;
     const Z = b.frame.z;
     // Bolt heads on the boltSide plate.
     const Yh = scale(Y, Number(ctx.v.boltSide) < 0 ? -1 : 1);
     const e = Math.max(2 * bolt.hole, 30);
     // Bolt positions along the axis (from the node): first group into b, second into a.
-    const along = (sign: number) => Array.from({ length: n }, (_, i) => sign * (num(ctx.v.gap, 10) / 2 + e + i * pitch));
+    const along = (sign: number) => Array.from({ length: n }, (_, i) => sign * (Math.max(gap, apart) / 2 + e + i * pitch));
     const xs = [...along(1), ...along(-1)];
     if (Math.max(...xs.map(Math.abs)) + e > L / 2) out.warnings.push('Splice plates are too short for the bolt pattern.');
     for (const side of [1, -1]) {

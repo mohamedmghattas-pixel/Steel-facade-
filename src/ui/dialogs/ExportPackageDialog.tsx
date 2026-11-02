@@ -3,7 +3,7 @@
  * tree, items, file-name patterns with a live path preview), item checklist with
  * counts and sizes, and the two ways to write the package (folder / ZIP).
  */
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useStore } from '../../state/store';
 import { download, pickFile } from '../../state/storage';
 import { Modal } from '../widgets';
@@ -39,7 +39,9 @@ import {
   canExportToFolder,
   cancelExportPackage,
   deleteExportTemplate,
+  outlineCurrentPackage,
   planCurrentPackage,
+  type PackageOutline,
   runExportPackage,
   saveExportTemplate,
   setActiveExportTemplate,
@@ -67,6 +69,18 @@ function LiveInput({ value, onChange, placeholder, mono, label }: { value: strin
 
 const size = (n: number, exact: boolean) => (n ? `${exact ? '' : '≈ '}${formatBytes(n)}` : '');
 
+/**
+ * Up to this many parts the package is planned as the dialog opens and on every change (live sizes); larger
+ * models plan it on "Calculate sizes" (the drawing set and the cheap outputs take seconds there).
+ */
+const LIVE_PLAN_PARTS = 300;
+
+/** The plan for the inputs it was made from: fresh while the project, template, fields and choices are the same. */
+interface Planned {
+  plan: PackagePlan;
+  inputs: unknown[];
+}
+
 export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
   const project = useStore((s) => s.project);
   const notify = useStore((s) => s.notify);
@@ -85,7 +99,31 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
 
   const seqNum = Math.max(0, Math.floor(Number(seq) || 0));
   const settings = useMemo(() => ({ code, seq: seqNum, rev: rev.trim() }), [code, seqNum, rev]);
-  const plan = useMemo(() => planCurrentPackage({ template: tpl, settings, skip: [...skip] }), [project, tpl, settings, skip]);
+  // Opening is instant at any size: the outline (items, folders, tokens, model counts) needs no drawing set.
+  const outline = useMemo(() => outlineCurrentPackage({ template: tpl, settings, skip: [...skip] }), [project, tpl, settings, skip]);
+  const inputs = [project, tpl, settings, skip];
+  const [planned, setPlanned] = useState<Planned | null>(null);
+  const [calculating, setCalculating] = useState(false);
+  const plan = planned && planned.inputs.every((x, i) => x === inputs[i]) ? planned.plan : null;
+  const live = outline.counts.parts <= LIVE_PLAN_PARTS;
+  const calculate = () => {
+    setCalculating(true);
+    const req = { template: tpl, settings, skip: [...skip] };
+    const at = [...inputs];
+    // A tick first, so the busy state shows before the drawing set and the outputs are planned.
+    setTimeout(() => {
+      try {
+        setPlanned({ plan: planCurrentPackage(req), inputs: at });
+      } catch (e) {
+        notify(`Could not plan the package: ${(e as Error).message}`, 'error');
+      } finally {
+        setCalculating(false);
+      }
+    }, 20);
+  };
+  useEffect(() => {
+    if (live && !plan && !calculating) setPlanned({ plan: planCurrentPackage({ template: tpl, settings, skip: [...skip] }), inputs: [project, tpl, settings, skip] });
+  }, [live, project, tpl, settings, skip]);
   const issues = useMemo(() => templateIssues(tpl), [tpl]);
   const builtin = isBuiltinTemplate(tpl.id);
   const stored = exportTemplates(project);
@@ -148,7 +186,13 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
   };
 
   const errors = issues.filter((i) => i.level === 'error');
-  const files = plan.files.length + 1;
+  const files = plan ? plan.files.length + 1 : 0;
+  const c = outline.counts;
+  const calcBtn = (
+    <button className="secondary-btn" data-testid="xp-calculate" disabled={calculating} onClick={calculate} title="Plan every file of the package: the drawing set, file names and sizes">
+      {calculating ? 'Calculating…' : planned ? 'Recalculate sizes' : 'Calculate sizes'}
+    </button>
+  );
 
   return (
     <Modal
@@ -173,17 +217,18 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
           </>
         ) : (
           <>
-            <span className="muted">
-              {files} files · {size(plan.size, false)}
+            <span className="muted" data-testid="xp-summary">
+              {plan ? `${files} files · ${size(plan.size, false)}` : `${outline.items.length} items · sizes not calculated`}
               {errors.length ? <span className="xp-err"> · {errors[0].text}</span> : null}
             </span>
             <span className="row-inline">
+              {!plan && calcBtn}
               {canExportToFolder() && (
-                <button className="secondary-btn" disabled={!!errors.length || !plan.files.length} onClick={() => void run('folder')} title="Write the folder tree into a folder you choose (Chrome / Edge)">
+                <button className="secondary-btn" disabled={!!errors.length || (!!plan && !plan.files.length)} onClick={() => void run('folder')} title="Write the folder tree into a folder you choose (Chrome / Edge)">
                   <Icon name="file" size={15} /> Export to folder…
                 </button>
               )}
-              <button className="primary-btn" disabled={!!errors.length || !plan.files.length} onClick={() => void run('zip')} title="One ZIP with the whole package folder">
+              <button className="primary-btn" disabled={!!errors.length || (!!plan && !plan.files.length)} onClick={() => void run('zip')} title="One ZIP with the whole package folder">
                 <Icon name="export" size={15} /> Download ZIP
               </button>
             </span>
@@ -200,12 +245,12 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
           <label className="field">
             <span className="field-label">Sequence</span>
             <LiveInput value={seq} onChange={(v) => setSeq(v.replace(/[^0-9]/g, ''))} placeholder="1" label="Sequence" />
-            <span className="field-hint">{plan.tokens.seq}</span>
+            <span className="field-hint">{outline.tokens.seq}</span>
           </label>
           <label className="field">
             <span className="field-label">Revision</span>
-            <LiveInput value={rev} onChange={setRev} placeholder={plan.ctx.autoRev} label="Revision" />
-            <span className="field-hint">{rev.trim() ? 'Set by hand' : `From the drawing revisions: ${plan.ctx.autoRev}`}</span>
+            <LiveInput value={rev} onChange={setRev} placeholder={plan?.ctx.autoRev ?? outline.autoRev} label="Revision" />
+            <span className="field-hint">{rev.trim() ? 'Set by hand' : `From the drawing revisions: ${plan?.ctx.autoRev ?? outline.autoRev}`}</span>
           </label>
           <label className="field xp-tpl-pick">
             <span className="field-label">Template</span>
@@ -229,8 +274,12 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
           </label>
         </div>
         <div className="xp-root">
-          Package folder <code>{plan.root}</code>
-          {plan.warnings.length > 0 && (
+          Package folder <code>{outline.root}</code>
+          <span className="muted xp-counts" data-testid="xp-counts">
+            {c.members.toLocaleString()} wire lines · {c.parts.toLocaleString()} parts ({c.partMarks.toLocaleString()} marks) · {c.assemblies.toLocaleString()} assemblies (
+            {c.assemblyMarks.toLocaleString()} marks) · {c.drawings === null ? 'drawing set made when you calculate sizes or export' : `${c.drawings.toLocaleString()} drawing sheets`}
+          </span>
+          {plan && plan.warnings.length > 0 && (
             <span className="xp-warn" title={plan.warnings.join('\n')}>
               <Icon name="warn" size={13} /> {plan.warnings.length} warning{plan.warnings.length === 1 ? '' : 's'}
             </span>
@@ -252,11 +301,24 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
 
-        {tab === 'items' && <ItemsTab plan={plan} skip={skip} toggle={toggle} setSkip={setSkip} />}
+        {!plan && tab !== 'template' && (
+          <div className="xp-calc" data-testid="xp-calc-bar">
+            <span className="muted">
+              {calculating
+                ? 'Planning the package: drawing set, file names and sizes…'
+                : planned
+                  ? 'The sizes are out of date (the template, the fields or the model changed).'
+                  : `Files and sizes are not calculated yet: planning makes the drawing set${c.parts ? ` of ${c.parts.toLocaleString()} parts` : ''}, which takes a while on large models. The export plans them anyway.`}
+            </span>
+            {calcBtn}
+          </div>
+        )}
+        {tab === 'items' && <ItemsTab outline={outline} plan={plan} skip={skip} toggle={toggle} setSkip={setSkip} />}
         {tab === 'template' && (
           <TemplateTab
             tpl={tpl}
             plan={plan}
+            outline={outline}
             sel={sel}
             setSel={setSel}
             edit={editTpl}
@@ -276,9 +338,9 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
             setTokensOpen={setTokensOpen}
           />
         )}
-        {tab === 'tree' && <TreeTab plan={plan} />}
-        {tab === 'forms' && <QaFormsTab plan={plan} />}
-        {plan.warnings.length > 0 && tab !== 'template' && (
+        {tab === 'tree' && plan && <TreeTab plan={plan} />}
+        {tab === 'forms' && plan && <QaFormsTab plan={plan} />}
+        {plan && plan.warnings.length > 0 && tab !== 'template' && (
           <ul className="xp-warnings">
             {plan.warnings.slice(0, 5).map((w) => (
               <li key={w}>{w}</li>
@@ -292,8 +354,8 @@ export function ExportPackageDialog({ onClose }: { onClose: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-function ItemsTab({ plan, skip, toggle, setSkip }: { plan: PackagePlan; skip: Set<string>; toggle: (id: string) => void; setSkip: (s: Set<string>) => void }) {
-  const all = plan.items.map((i) => i.item.id);
+function ItemsTab({ outline, plan, skip, toggle, setSkip }: { outline: PackageOutline; plan: PackagePlan | null; skip: Set<string>; toggle: (id: string) => void; setSkip: (s: Set<string>) => void }) {
+  const all = outline.items.map((i) => i.item.id);
   return (
     <div className="xp-items">
       <div className="xp-items-bar">
@@ -316,22 +378,23 @@ function ItemsTab({ plan, skip, toggle, setSkip }: { plan: PackagePlan; skip: Se
           </tr>
         </thead>
         <tbody>
-          {plan.items.map((ip) => {
-            const m = outputMeta(ip.item.output);
-            const on = !skip.has(ip.item.id);
+          {outline.items.map(({ item, folder }) => {
+            const m = outputMeta(item.output);
+            const on = !skip.has(item.id);
+            const ip = plan?.items.find((x) => x.item.id === item.id);
             return (
-              <tr key={ip.item.id} className={ip.skip || !on ? 'off' : ''}>
+              <tr key={item.id} className={ip?.skip || !on ? 'off' : ''}>
                 <td>
-                  <input type="checkbox" checked={on} onChange={() => toggle(ip.item.id)} aria-label={`Include ${m.label}`} />
+                  <input type="checkbox" checked={on} onChange={() => toggle(item.id)} aria-label={`Include ${m.label}`} />
                 </td>
                 <td>
                   {m.label} <span className="muted">{m.format}</span>
-                  {ip.item.drawings?.length ? <span className="muted"> · {ip.item.drawings.map((g) => DRAWING_GROUP_LABEL[g]).join(', ')}</span> : null}
-                  {ip.skip && <div className="xp-skip">Skipped: {ip.skip}</div>}
+                  {item.drawings?.length ? <span className="muted"> · {item.drawings.map((g) => DRAWING_GROUP_LABEL[g]).join(', ')}</span> : null}
+                  {ip?.skip && <div className="xp-skip">Skipped: {ip.skip}</div>}
                 </td>
-                <td className="mono xp-folder">{ip.folder || '(package folder)'}</td>
-                <td className="num">{ip.off || ip.skip ? '–' : ip.files.length}</td>
-                <td className="num">{ip.off || ip.skip ? '' : size(ip.size, ip.exact)}</td>
+                <td className="mono xp-folder">{folder || '(package folder)'}</td>
+                <td className="num">{!on || ip?.skip ? '–' : ip ? ip.files.length : '…'}</td>
+                <td className="num">{!on || ip?.off || ip?.skip ? '' : ip ? size(ip.size, ip.exact) : ''}</td>
               </tr>
             );
           })}
@@ -369,7 +432,8 @@ const CATEGORIES: OutputCategory[] = ['Drawings', 'Models', 'Project', 'Fabricat
 
 function TemplateTab(props: {
   tpl: ExportTemplate;
-  plan: PackagePlan;
+  plan: PackagePlan | null;
+  outline: PackageOutline;
   sel: string;
   setSel: (id: string) => void;
   edit: (fn: (t: ExportTemplate) => ExportTemplate) => void;
@@ -382,14 +446,14 @@ function TemplateTab(props: {
   tokensOpen: boolean;
   setTokensOpen: (v: boolean) => void;
 }) {
-  const { tpl, plan, sel, setSel, edit, builtin, dirty, issues } = props;
+  const { tpl, plan, outline, sel, setSel, edit, builtin, dirty, issues } = props;
   const folders = walkFolders(tpl);
   const folder = findFolder(tpl, sel) ?? tpl.root;
   const isRoot = folder.id === tpl.root.id;
   /** The folder's path in this package (tokens expanded, names made safe). */
   const pathOf = (id: string) => {
     const e = folders.find((x) => x.folder.id === id);
-    return e && e.depth ? sanitizePath(e.path.map((n) => expandPattern(n, plan.tokens).text).join('/')) : '';
+    return e && e.depth ? sanitizePath(e.path.map((n) => expandPattern(n, outline.tokens).text).join('/')) : '';
   };
   const issueFor = (id: string) => issues.filter((i) => i.id === id);
   // A folder cannot move into itself or its own sub-folders.
@@ -474,7 +538,7 @@ function TemplateTab(props: {
           <label className="field">
             <span className="field-label">{isRoot ? 'Package folder name' : 'Folder name'}</span>
             <LiveInput value={folder.name} mono onChange={(v) => editSel((t, id) => renameFolder(t, id, v))} label="Folder name" />
-            <span className="field-hint">→ {isRoot ? plan.root : `${plan.root}/${pathOf(folder.id)}`}</span>
+            <span className="field-hint">→ {isRoot ? outline.root : `${outline.root}/${pathOf(folder.id)}`}</span>
           </label>
           {!isRoot && (
             <label className="field">
@@ -501,7 +565,7 @@ function TemplateTab(props: {
           {!folder.items.length && <p className="muted">No items — add an output below.</p>}
           {folder.items.map((it) => {
             const m = outputMeta(it.output);
-            const ip = plan.items.find((x) => x.item.id === it.id);
+            const ip = plan?.items.find((x) => x.item.id === it.id);
             return (
               <div className="xp-item" key={it.id}>
                 <div className="xp-item-head">
@@ -547,6 +611,7 @@ function TemplateTab(props: {
                   </p>
                 ))}
                 <ul className="xp-paths">
+                  {!plan && <li className="muted">The file names show once the sizes are calculated.</li>}
                   {ip?.skip && <li className="muted">Skipped for this project: {ip.skip}</li>}
                   {ip?.files.slice(0, 3).map((f) => (
                     <li key={f.path} className="mono">

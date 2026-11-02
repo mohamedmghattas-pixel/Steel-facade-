@@ -9,6 +9,7 @@
  * Kept apart from the modify UI so both evolve independently.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useDismiss } from './useDismiss';
 import { create } from 'zustand';
 import { derived, useStore } from '../state/store';
 import { assemblyByPart, uniqueAssemblies, type Assembly, type DerivedModel } from '../core/derive/model';
@@ -158,19 +159,7 @@ export function PartContextMenu() {
   const menu = usePartMenu((s) => s.menu);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
-  useEffect(() => {
-    if (!menu) return;
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) closePartMenu();
-    };
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && closePartMenu();
-    window.addEventListener('mousedown', close);
-    window.addEventListener('keydown', esc);
-    return () => {
-      window.removeEventListener('mousedown', close);
-      window.removeEventListener('keydown', esc);
-    };
-  }, [menu]);
+  useDismiss(!!menu, ref, closePartMenu);
   useEffect(() => {
     if (!menu || !ref.current) return setPos(null);
     const r = ref.current.getBoundingClientRect();
@@ -501,13 +490,7 @@ export function AssembliesView() {
 
 function RowMenu({ at, items, onClose }: { at: { x: number; y: number }; items: { label: string; run: () => unknown }[]; onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    window.addEventListener('mousedown', close);
-    return () => window.removeEventListener('mousedown', close);
-  }, [onClose]);
+  useDismiss(true, ref, onClose);
   return (
     <div ref={ref} className="ctx-menu" role="menu" style={{ left: Math.min(at.x, window.innerWidth - 270), top: Math.min(at.y, window.innerHeight - 40 - items.length * 28) }}>
       <div className="ctx-group">

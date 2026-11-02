@@ -6,6 +6,7 @@ import { boltLength, getBolt } from '../library/bolts';
 import { getProfile } from '../library/profiles';
 import { cross, madd, scale } from '../model/geometry';
 import type { MemberGeom } from '../derive/memberGeom';
+import { throughHole } from './kit';
 import { jointMovement } from '../movement/provisions';
 import {
   centreAt,
@@ -248,7 +249,7 @@ export const angleCleat: ConnectionDef = {
     for (const o of offs) {
       const p = madd(madd(corner, zp, g), xp, o);
       holes.push({ pos: madd(p, dIn, t / 2), dir: dIn, d: bolt.hole });
-      const onMain = madd(p, dIn, -mainDepth / 2);
+      const onMain = throughHole(main, p, dIn, mainDepth);
       out.memberHoles.push({ member: main.member.id, hole: { pos: onMain, dir: dIn, d: bolt.hole } });
     }
     out.profiles.push({ key: 'cleat', name: 'Cleat', profile: prof.name, frame, length: Lc, holes });
@@ -305,7 +306,7 @@ export const endPlate: ConnectionDef = {
         positions.push(madd(madd(madd(faceCentre, ys, by), zs, bz), dIn, t));
         out.memberHoles.push({
           member: main.member.id,
-          hole: { pos: madd(madd(madd(faceCentre, ys, by), zs, bz), dIn, -mainDepth / 2), dir: dIn, d: bolt.hole },
+          hole: { pos: throughHole(main, madd(madd(faceCentre, ys, by), zs, bz), dIn, mainDepth), dir: dIn, d: bolt.hole },
         });
       }
     }

@@ -18,7 +18,7 @@ see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
 | Runtime | Browser only: no server and no account. Delivered three ways (§3.12). |
 | Language / stack | TypeScript 5.9 (strict), React 19, Three.js 0.187, Zustand 5, Vite 8, Vitest 5 |
 | Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), rhino3dm 8.35.0 (Rhino .3dm, MIT, loaded on demand), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
-| History | 23 iterations, 2026-10-30 → 2026-11-03, 98 commits on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
+| History | 23 iterations, 2026-10-30 → 2026-11-03, 99 commits on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
 | Tests | 2,372 Vitest tests in 58 files (17.6k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
 | Connections | 30 parametric types plus user templates with formula parameters; auto-connect by roles and topology |
@@ -110,7 +110,7 @@ Feedback from the user then starts the next cycle.
 | 20 | Auto-connect sloped facades; drawings on demand; Esc closes menus; assembly profiles from DXF; close-out QA | Auto-connect by roles and topology; drawing index without drawing; composite profile assemblies; memory budgets, balloon spacing, extrusions in the package, sliced STEP | `9483671` … `19f2820` |
 | 21 | Client notes: keep mullions whole and find intersections; auto-cut transoms on profile insertion; fit with the slope both ways; split over stock length at the nearest transom; unfold the drawings; the company title block | Continuous mullions, junction division, stock split (D41); slope-following end fits and auto-cut (D42); unfolded elevation and flat patterns (D43); DXF title block and designer (D44) — four parallel workstreams | `527c7b9`, `d3d5d7e`, `47574bf`, `65afec4`, `84b87d0` |
 | 22 | Uploaded assembly details: every profile got its own insertion point; show the assembly behind each profile | One base point per detail on upload, each profile shown in its detail, *Position in assembly* on component part drawings (D45) | `fb91670` |
-| 23 | The company title block from a whole drawing sheet; every bent sheet unfolded, extrusions not (sample unfold of a U flashing) | Title block found in a whole sheet, full-width strip, OLE logo, its own revision rows, values beside labels (D46); bent / extruded / rolled decides the unfold, V-groove development, unfold DXF per part in the shop's layers (D47) | `05c0064`, next |
+| 23 | The company title block from a whole drawing sheet; every bent sheet unfolded, extrusions not (sample unfold of a U flashing) | Title block found in a whole sheet, full-width strip, OLE logo, its own revision rows, values beside labels (D46); bent / extruded / rolled decides the unfold, V-groove development, unfold DXF per part in the shop's layers (D47) | `05c0064`, `4613ec9` |
 
 ### 2.3 Parallel milestone method (iterations 6, 20 and 21)
 

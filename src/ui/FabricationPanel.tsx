@@ -13,6 +13,7 @@ import { galvanizingReport } from '../core/fabrication/galvanizing';
 import { paintAreas } from '../core/fabrication/paint';
 import { fmtDims } from '../core/fabrication/geometry';
 import { planBars } from '../core/optimize/barNesting';
+import { unfoldDxfFiles } from '../core/fabrication/plateDxf';
 import {
   exportGalvanizing,
   exportLabels,
@@ -24,6 +25,8 @@ import {
   exportPlateNc,
   exportPurchaseList,
   exportStockCsv,
+  exportUnfoldDxf,
+  unfoldLayersFromSample,
   importStockCsv,
   setFabSettings,
   setStock,
@@ -151,6 +154,53 @@ export function StockEditor() {
 
 const LAYOUTS = Object.values(LABEL_LAYOUTS).map((l) => ({ value: l.id, label: l.name }));
 
+/** Unfold of the bent parts: fold method, unfold DXF layers (or from a sample of the folding shop), export. */
+function UnfoldCard() {
+  const project = useStore((s) => s.project);
+  const dm = derived(project);
+  const s = fabSettings(project);
+  const files = useMemo(() => unfoldDxfFiles(project, dm).filter((f) => f.name.endsWith('.dxf')).length, [project, dm]);
+  const L = s.unfoldLayers;
+  const setLayer = (k: keyof typeof L, v: string) => v.trim() && setFabSettings({ unfoldLayers: { ...L, [k]: v.trim() } }, 'Unfold DXF layers');
+  return (
+    <section className="fab-card" data-testid="unfold-card">
+      <h4>Unfold (bent parts)</h4>
+      <p className="muted">
+        {files} bent part mark{files === 1 ? '' : 's'} with an unfold: bent plates and sections folded from sheet. Extruded and rolled sections are not unfolded (set how a custom profile is made in Library → its profile).
+      </p>
+      <div className="fab-row">
+        <Segmented
+          value={s.unfoldMethod}
+          options={[
+            { value: 'k-factor', label: 'Press brake (K-factor)' },
+            { value: 'outside', label: 'V-groove (outside dims)' },
+          ]}
+          onChange={(v) => setFabSettings({ unfoldMethod: v }, 'Fold method')}
+        />
+      </div>
+      <div className="fab-row">
+        <span className="fab-inline" title="Layer of the blank outline and its holes">
+          Blank <TextInput value={L.cut} onChange={(v) => setLayer('cut', v)} />
+        </span>
+        <span className="fab-inline" title="Layer of the fold lines (dashed)">
+          Folds <TextInput value={L.bend} onChange={(v) => setLayer('bend', v)} />
+        </span>
+        <span className="fab-inline" title="Layer of the part mark">
+          Mark <TextInput value={L.text} onChange={(v) => setLayer('text', v)} />
+        </span>
+        <button className="secondary-btn" onClick={() => void unfoldLayersFromSample()} title="Read the layer names from an unfold DXF of the folding shop">
+          From sample DXF…
+        </button>
+      </div>
+      <div className="fab-row">
+        <Btn onClick={() => void exportUnfoldDxf()} disabled={!files}>
+          Unfold DXF per part
+        </Btn>
+      </div>
+    </section>
+  );
+}
+
 /** The Fabrication outputs tab. */
 export function FabricationView() {
   const project = useStore((s) => s.project);
@@ -201,6 +251,8 @@ export function FabricationView() {
           </label>
         </div>
       </section>
+
+      <UnfoldCard />
 
       <section className="fab-card">
         <h4>Part labels</h4>

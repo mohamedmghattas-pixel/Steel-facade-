@@ -4,7 +4,8 @@
  * names, units for DXF, and per-profile "Edit in sketcher".
  */
 import { useMemo } from 'react';
-import { profileFromDef, profileMassIn, type Profile } from '../core/library/profiles';
+import { PROFILE_PROCESSES, profileFromDef, profileMassIn, type Profile, type ProfileProcess } from '../core/library/profiles';
+import { bentStrip, profileProcess } from '../core/library/forming';
 import { MATERIALS } from '../core/library/materials';
 import { Field, Modal, Select } from './widgets';
 import { SectionPreview } from './SectionPreview';
@@ -53,7 +54,7 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
   /** Read the file again (units, insertion rule), keeping the names typed and the selection. */
   const reread = (unitScale: number | undefined, sharedBase: boolean) => {
     const r = reviewFromText(review.fileName, review.text, unitScale, sharedBase);
-    r.items = r.items.map((it, i) => (review.items[i] ? { ...it, include: review.items[i].include && !it.error, def: { ...it.def, name: review.items[i].def.name, family: review.items[i].def.family, material: review.items[i].def.material } } : it));
+    r.items = r.items.map((it, i) => (review.items[i] ? { ...it, include: review.items[i].include && !it.error, def: { ...it.def, name: review.items[i].def.name, family: review.items[i].def.family, material: review.items[i].def.material, process: review.items[i].def.process } } : it));
     useProfileUi.setState({ review: r });
   };
   // Outlines of each detail in its base-point coordinates (for the previews: the outline in its detail).
@@ -112,6 +113,13 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
         <Field label="Material (all)">
           <Select value={review.items[0]?.def.material ?? ''} options={[{ value: '', label: 'Steel (member material)' }, ...MATERIALS.map((m) => ({ value: m.name, label: m.name }))]} onChange={(v) => setAll({ material: v || undefined })} />
         </Field>
+        <Field label="Made by (all)" hint="Bent parts get an unfold; extruded and rolled ones do not">
+          <Select<string>
+            value={review.items[0]?.def.process ?? ''}
+            options={[{ value: '', label: 'Auto (constant-thickness strips: bent)' }, ...PROFILE_PROCESSES]}
+            onChange={(v) => setAll({ process: (v || undefined) as ProfileProcess | undefined })}
+          />
+        </Field>
       </div>
       {review.kind === 'dxf' && (
         <p className="muted">
@@ -155,6 +163,7 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
                   <div className="pi-props mono">
                     {p.b.toFixed(1)} × {p.h.toFixed(1)} mm · {(p.area / 100).toFixed(2)} cm² · {profileMassIn(p).toFixed(2)} kg/m{p.material ? ` (${p.material})` : ''} · Iy {(p.Iy / 1e4).toFixed(1)} cm⁴ · Iz {(p.Iz / 1e4).toFixed(1)} cm⁴
                     {it.def.shape.type === 'POLY' && ` · ${(it.def.shape.holes ?? []).length} hole${(it.def.shape.holes ?? []).length === 1 ? '' : 's'}`}
+                    {madeText(p)}
                   </div>
                 ) : (
                   <p className="warning">{b.err}</p>
@@ -177,4 +186,12 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
       </div>
     </Modal>
   );
+}
+
+/** " · bent from 2 mm sheet, unfold 468" / " · extruded": what the part drawings will show for the profile. */
+function madeText(p: Profile): string {
+  const info = profileProcess(p);
+  if (info.process !== 'bent') return ` · ${info.process}${info.auto ? ' (no unfold)' : ''}`;
+  const st = bentStrip(p);
+  return ` · bent${info.t ? ` from ${Math.round(info.t * 100) / 100} mm sheet` : ''}${st ? `, unfold ${Math.round(st.width)}` : ''}`;
 }

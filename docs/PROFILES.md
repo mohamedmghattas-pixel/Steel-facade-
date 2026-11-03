@@ -175,6 +175,24 @@ Accuracy, from the tests:
 - an IPE 200 drawn as an outline with root-radius fillets: area, Iy, Iz and Wy within 1 % of
   the parametric IPE 200, and within 2 % of the catalogue mass.
 
+### 3.2 Bent, extruded or rolled
+
+How a section is made decides whether its parts are unfolded: every part **bent from sheet**
+gets its flat pattern (developed strip) on the part drawing and an unfold DXF; **extruded** and
+**rolled** sections do not ([DRAWING_STANDARDS.md](DRAWING_STANDARDS.md) *Flat patterns*).
+
+| Profile | Made | Why |
+| --- | --- | --- |
+| `process` set on the custom profile | as set | Library → the profile → *Made*; the import review (*Made by (all)*); JSON key `process`: `bent`, `extruded`, `rolled` |
+| Lipped C and Z, L and U with an outer corner radius `ro` | bent | cold-formed |
+| POLY: an open strip of constant thickness | bent | sheet thickness `t`, or found from the outline (`inferSheetThickness`: its short edges as candidates, checked by developing the strip; up to 8 mm) |
+| POLY with chambers (holes), solid or of varying wall | extruded | not a strip |
+| Everything else (I, hot-rolled U and L, T, flats, bars, hollow sections) | rolled | — |
+
+An extrusion that happens to be a constant-thickness strip (a plain extruded channel) is set to
+*extruded* on its profile. The profile panel shows the decision and the unfold width
+(*open strip, constant 2 mm wall · unfold 468 wide, 4 folds*). Code: `src/core/library/forming.ts`.
+
 ## 4. Uploading profiles
 
 Library → **Import profiles (DXF / JSON / CSV)…** opens the file, finds the profiles and shows
@@ -216,6 +234,7 @@ profile assembly…* is still the right path: the profile upload reads an inner 
 ] }
 ```
 
+- `process` (optional): `bent`, `extruded` or `rolled` (§3.2).
 - A bare array of definitions, or a single definition, is accepted too.
 - Each definition is checked with `profileFromDef`; invalid ones are listed and skipped.
 - Library → **Export JSON** writes every custom profile, sketches included.

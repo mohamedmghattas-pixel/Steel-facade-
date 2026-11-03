@@ -19,11 +19,13 @@ export function defaultFabricationSettings(): FabricationSettings {
     ],
     paintLoss: 0,
     dstvHollowThrough: 'one',
+    unfoldMethod: 'k-factor',
+    unfoldLayers: { cut: 'CUT', bend: 'BEND', text: 'TEXT' },
   };
 }
 
 export function fabSettings(p: Project): FabricationSettings {
   const d = defaultFabricationSettings();
   const s = p.settings.fabrication ?? {};
-  return { ...d, ...s, paintCoats: s.paintCoats ?? d.paintCoats };
+  return { ...d, ...s, paintCoats: s.paintCoats ?? d.paintCoats, unfoldLayers: { ...d.unfoldLayers, ...(s.unfoldLayers ?? {}) } };
 }

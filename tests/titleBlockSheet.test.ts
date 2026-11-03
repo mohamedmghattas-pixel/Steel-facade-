@@ -256,8 +256,8 @@ describe('a full-width title block on the sheets', () => {
   it('draws it across the bottom of every sheet, with the views and tables above it and no separate revision table', () => {
     expect(ds.length).toBeGreaterThan(10);
     for (const d of ds) {
-      const f = frameRect(d.sheetSize);
-      const floor = sheetFurniture(tpl, d.sheetSize).floor;
+      const f = frameRect(d.sheetSize as SheetSize);
+      const floor = sheetFurniture(tpl, d.sheetSize as SheetSize).floor;
       expect(d.regions?.titleBlock).toEqual({ x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y0 + floor });
       expect(checkSheetLayout(d)).toEqual([]);
       const t = shown(d);

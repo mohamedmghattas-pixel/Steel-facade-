@@ -42,6 +42,7 @@ export const OUTPUT_IDS = [
   'plates-csv',
   'nested-dxf',
   'flat-patterns-dxf',
+  'unfold-dxf',
   'labels-pdf',
   'packing-xlsx',
   'packing-pdf',

@@ -8,7 +8,7 @@ review, maintain or extend FacadeSteel. It explains:
 
 For the geometry of members and connection parts (frames, points, planes),
 see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
-2026-11-03, commit after `fb91670` (iterations 1–22 in §2.2).
+2026-11-03, commit after `05c0064` (iterations 1–23 in §2.2).
 
 ## 1. System at a glance
 
@@ -18,8 +18,8 @@ see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
 | Runtime | Browser only: no server and no account. Delivered three ways (§3.12). |
 | Language / stack | TypeScript 5.9 (strict), React 19, Three.js 0.187, Zustand 5, Vite 8, Vitest 5 |
 | Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), rhino3dm 8.35.0 (Rhino .3dm, MIT, loaded on demand), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
-| History | 22 iterations, 2026-10-30 → 2026-11-03, 95 commits on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
-| Tests | 2,342 Vitest tests in 56 files (16.9k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
+| History | 23 iterations, 2026-10-30 → 2026-11-03, 98 commits on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
+| Tests | 2,372 Vitest tests in 58 files (17.6k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
 | Connections | 30 parametric types plus user templates with formula parameters; auto-connect by roles and topology |
 | Detailing rules | 46 catalogued rules (AISC 360-22, EN 1993-1-8, EN 1090-2, EN ISO 1461, ASTM A123) plus 8 movement rules |
@@ -29,23 +29,23 @@ Source size by area (TypeScript lines):
 
 | Area | Lines | Responsibility |
 | --- | ---: | --- |
-| `src/core/model` | 6,220 | Types, geometry helpers, wireframe operations, facade grid, modify toolkit, profiles by role |
+| `src/core/model` | 6,248 | Types, geometry helpers, wireframe operations, facade grid, modify toolkit, profiles by role |
 | `src/core/wireframe` | 3,154 | Wireframe check: roles from topology, cuts, surfaces and normals, client confirmation |
-| `src/core/library` | 5,790 | Profiles (incl. POLY outlines, insertion points, sketcher, profile assemblies), sections, materials, bolts, standards |
+| `src/core/library` | 5,881 | Profiles (incl. POLY outlines, insertion points, sketcher, profile assemblies, bent / extruded / rolled), sections, materials, bolts, standards |
 | `src/core/connections` | 7,135 | Connection framework, 30 types, registry, templates, catalogue, transforms, follow, auto-connect |
 | `src/core/derive` | 1,487 | Wireframe + connections → parts, holes, bolts, assemblies, accessories, marks |
-| `src/core/geometry` | 1,383 | End preparations, bent plates, stiffeners, arcs |
+| `src/core/geometry` | 1,473 | End preparations, bent plates, stiffeners, arcs |
 | `src/core/codes` | 2,128 | Detailing-rule engine and tables |
 | `src/core/movement`, `survey` | 2,015 | Thermal / deflection / tolerance stack, slot sizing, survey matching |
-| `src/core/drawings` | 13,588 | ISO drawing set, layout engine, zoning, on-demand set, edits, templates, erection sheets, cuts, navigation, SVG/DXF |
-| `src/core/io` | 6,701 | DXF reader (3D), IFC4 writer and reader, Rhino 3dm, wire import, BCF, DWG detection, ZIP read/write, XLSX templates, GUIDs |
-| `src/core/export` | 4,315 | Export package: catalogue, templates, planning, building, PDF books and pages, STEP / OBJ, QA forms |
-| `src/core/fabrication`, `optimize`, `reports` | 3,437 | DSTV, extrusions, plate CNC, labels, packing, galvanizing, paint, MIS, nesting, BOM |
+| `src/core/drawings` | 14,234 | ISO drawing set, layout engine, zoning, on-demand set, edits, templates, erection sheets, cuts, navigation, SVG/DXF |
+| `src/core/io` | 6,912 | DXF reader (3D), IFC4 writer and reader, Rhino 3dm, wire import, BCF, DWG detection, ZIP read/write, XLSX templates, GUIDs, OLE pictures (BMP → PNG) |
+| `src/core/export` | 4,332 | Export package: catalogue, templates, planning, building, PDF books and pages, STEP / OBJ, QA forms |
+| `src/core/fabrication`, `optimize`, `reports` | 3,518 | DSTV, extrusions, plate CNC, unfold DXF, labels, packing, galvanizing, paint, MIS, nesting, BOM |
 | `src/core/clash`, `management` | 1,489 | Clash detection, phases/batches, marks |
 | `src/viewer` | 3,068 | Three.js scene, instancing, spatial index, picking, snapping, previews, outline LOD |
 | `src/state` | 741 | Store, undo/redo with memory budget, derived-model LRU, autosave, IndexedDB blobs |
-| `src/ui` (+ `dialogs`) | 20,561 | React panels, dialogs, drawing editor, connection library, sketcher, export dialog |
-| `src/assistant` | 5,095 | Chat sessions, tool definitions, 13 feature tool modules |
+| `src/ui` (+ `dialogs`) | 20,883 | React panels, dialogs, drawing editor, connection library, sketcher, export dialog |
+| `src/assistant` | 5,126 | Chat sessions, tool definitions, 13 feature tool modules |
 | `src/platform` | 79 | claude.ai host bridge |
 
 ## 2. Process cycle
@@ -110,6 +110,7 @@ Feedback from the user then starts the next cycle.
 | 20 | Auto-connect sloped facades; drawings on demand; Esc closes menus; assembly profiles from DXF; close-out QA | Auto-connect by roles and topology; drawing index without drawing; composite profile assemblies; memory budgets, balloon spacing, extrusions in the package, sliced STEP | `9483671` … `19f2820` |
 | 21 | Client notes: keep mullions whole and find intersections; auto-cut transoms on profile insertion; fit with the slope both ways; split over stock length at the nearest transom; unfold the drawings; the company title block | Continuous mullions, junction division, stock split (D41); slope-following end fits and auto-cut (D42); unfolded elevation and flat patterns (D43); DXF title block and designer (D44) — four parallel workstreams | `527c7b9`, `d3d5d7e`, `47574bf`, `65afec4`, `84b87d0` |
 | 22 | Uploaded assembly details: every profile got its own insertion point; show the assembly behind each profile | One base point per detail on upload, each profile shown in its detail, *Position in assembly* on component part drawings (D45) | `fb91670` |
+| 23 | The company title block from a whole drawing sheet; every bent sheet unfolded, extrusions not (sample unfold of a U flashing) | Title block found in a whole sheet, full-width strip, OLE logo, its own revision rows, values beside labels (D46); bent / extruded / rolled decides the unfold, V-groove development, unfold DXF per part in the shop's layers (D47) | `05c0064`, next |
 
 ### 2.3 Parallel milestone method (iterations 6, 20 and 21)
 
@@ -192,7 +193,7 @@ additive only, one decision number reserved per workstream, the lead merges):
 | Gate | Tool | Catches | When |
 | --- | --- | --- | --- |
 | Types | `tsc -b` (strict) | Contract breaks across layers, unhandled union cases (e.g. `WorkPlane.kind: 'custom'`) | Every change |
-| Unit | Vitest (2,342 tests) | Geometry, numbering, code rules, writers (IFC re-read with web-ifc), parsers, nesting, assistant loop with a fake model, host adapters | Every change |
+| Unit | Vitest (2,372 tests) | Geometry, numbering, code rules, writers (IFC re-read with web-ifc), parsers, nesting, assistant loop with a fake model, host adapters | Every change |
 | Build | `vite build` | Bundling, dynamic imports, asset handling | Every merge |
 | Browser | Playwright on `vite preview` or `file://` | Runtime errors, broken UI paths, picking, downloads, IFC/PDF loading, preview updates | Every UI change and every merge |
 | Performance | Benchmark tests (20k members < 15 s, 21k-member junction division), CPU profiles of browser runs, heap after forced GC | Quadratic hot spots, freezes, memory growth | Merges touching derivation, drawings or exports |
@@ -373,10 +374,13 @@ lists and NC files cannot disagree.
   folds as chain lines with their angle, zoned like the GA (`-GA-04` and zone
   sheets). **Flat patterns** (`flatPattern.ts`): bent plates with bend lines and
   a bend table, cold-formed sections as developed strips.
-- **Title block (D44,** `template.ts`, `titleBlockDxf.ts`**):** the sheet template is
-  free content: linework, fixed texts and live fields, imported from the
-  company's DXF title block (placeholders and attributes become fields) or drawn
-  in the designer; the layout reserves its real size.
+- **Title block (D44, D46,** `template.ts`, `titleBlockDxf.ts`, `io/bitmap.ts`**):** the
+  sheet template is free content: linework, fixed texts and live fields, imported
+  from the company's DXF title block (placeholders, attributes and values beside
+  labels become fields; from a whole sheet the title block block is found) or drawn
+  in the designer; the layout reserves its real size. A full-width strip scales to
+  every frame and raises the layout floor (`Sheet.floor`, `sheetFurniture`); a block
+  with its own revision rows takes the revisions.
 - **Composite components (D45,** `assemblyKey.ts`**):** a *Position in assembly*
   view on each component's part drawing: the composite section, this part
   hatched, BP marked.
@@ -463,6 +467,10 @@ lists and NC files cannot disagree.
   about one base point. A profile upload of such a drawing re-bases every
   outline of a detail on that base point too (D45, `shareDetailBasePoints`), and
   previews draw each profile in its detail (`ui/profileContext.ts`).
+- **Bent, extruded or rolled (D47,** `forming.ts`**):** the profile's `process`, else the
+  section (cold-formed C / Z / L / U, constant-thickness POLY strips with the sheet
+  thickness found) decides whether parts get a flat strip and an unfold DXF; the
+  fold method (K-factor or V-groove) is a fabrication setting.
 
 ## 4. Decision record
 
@@ -513,6 +521,8 @@ lists and NC files cannot disagree.
 | D43 | Unfolded elevation as a rigid development of the GA's facade planes: each facade part (refitted on its members' axes, vertical within 1°) turned about the fold line it shares with the previous one into the drawing plane, one view frame per part, the strip turned to vertical folds; zoned on the strip like a GA view; its own drawing family (`-GA-04`, measured for the index, keyed by the parts it draws). Flat patterns of folded sections by the bent-plate method (outside legs and bend deductions for C / Z / L / U, mid-line of POLY thin-wall outlines) | The client asked to "unfold the drawings" in both senses; a rigid placement per plane keeps true shapes and lengths and makes the planes meet exactly at the folds, and reusing the facade parts keeps the names (*facade A, B*) of the GA's normal views | Arc-length development along the plan line (exact only for cylindrical facades, breaks members that span a fold); zoning each facade plane separately (a sheet per facet); unfolding folded sections from their outlines only | Planar facades get no new sheet (sample fixtures unchanged); curved facades are developed as at most eight best-fit planes; one assembly is drawn in one plane even where it crosses a fold; bent plates' part drawings show the formed shape instead of the flat edge view ([DRAWING_STANDARDS.md](DRAWING_STANDARDS.md) *Unfolded elevation*, *Flat patterns*) |
 | D44 | The client's own title block as free template content: `SheetTemplate` gains optional linework, free texts (a field source, fixed text or text with {PLACEHOLDERS}), a logo rectangle and a border flag; a DXF title block is read in 2D (`titleBlockDxf.ts`: lines, polylines, arcs, circles, ellipses, splines, solids, solid hatches, TEXT / MTEXT, INSERT with ATTDEF / ATTRIB, units) into that content, placeholders and attribute tags becoming live fields; the layout reserves the block's actual (fitted) size | One title-block model for imported, designed and grid templates, drawn by the same function into SVG, PDF and DXF; CAD title blocks carry their fields as placeholder texts or attributes, which map to the existing field sources | Embedding the DXF as an underlay (no live fields, no PDF / DXF parity); converting the DXF to grid cells (loses arbitrary linework) | Old templates and the ISO 7200 default draw exactly as before (additive model, migration sanitises); fingerprints exclude the title block (D15), so a block of the same size keeps every fingerprint; CAD fonts, line types, pattern hatches and images are not carried over (logo uploaded separately) |
 | D45 | Uploaded assembly details share one base point: the profile upload re-bases every outline of a detail (the assembly import's details: POINTs and marker blocks, clustered outlines) on that detail's base point, insertion point (0, 0) for all, with a group per detail (`ProfileDef.group`); every component is shown in its detail (previews, *Position in assembly* on part drawings) | The upload looked for each outline's insertion point within a quarter of its own size, so outlines of one detail got different insertion points (21 of 30 on the client's file had none) and were not extruded and cut about one line | Telling users to use only the assembly import; a manual common point in the review | A drawing without base points reads as before; the review can go back to one point per outline; inner loops are still holes in the profile upload (gaskets in grooves need the assembly import) |
+| D46 | A title block may come from a whole drawing sheet: the top-level block insert with the most title-block labels is taken (another block, the whole sheet or a dragged area on request); a strip along the sheet bottom becomes a full-width template (`span: 'width'`, scaled uniformly to every frame, at most a quarter of its height) that raises the layout floor; an OLE2FRAME picture inside it becomes the logo (BMP or PNG found in the OLE bytes, re-encoded as compressed PNG with fflate); a REV + DATE / description header with rows becomes the block's revision table; values in the same cell as a label become fields (cells from the linework); new sources mark, material, finish | The client exports drawings from Tekla: the title block exists only inside a whole sheet, edge to edge, with an embedded logo, its own revision rows and filled-in values | Asking for a title-block-only DXF; keeping our revision table above the strip; manual mapping of every text; a logo upload only | One import gives the company sheet with its logo and live fields; layout code reads the furniture (column width, block height, revision height, floor) instead of the template size; small lettering on A3 (1.7 mm labels for the client strip) is reported in the review |
+| D47 | Unfold by how a part is made: `ProfileDef.process` (bent / extruded / rolled), else from the section — cold-formed C, Z, L / U with `ro`, POLY open strips of constant thickness (thickness inferred, ≤ 8 mm) are bent; chambers, solids and rolled sections are not. Folded sections develop by K-factor (press brake, default) or by outside dimensions (V-groove, fold lines at the outer corners from the mid-line's virtual sharps). One unfold DXF per bent part (blank, dashed fold lines, mark) with layer names from the settings or a shop's sample file | The client: every bent sheet needs its unfold, extrusions none; their unfold of a lipped U flashing is the sum of the outside dimensions (V-groove), on layers CUT / Grouve / Text | Unfold only with a declared sheet thickness (the old POLY rule: imported flashings got none); material-based rules (all library aluminium alloys are extrusion alloys); one K-factor for everything | Imported sheet profiles are unfolded without extra input and extrusions are left alone; a plain constant-wall extrusion must be marked extruded; holes of folded sections are not mapped onto the strip |
 
 ## 5. Known limits and open items
 
@@ -537,6 +547,11 @@ lists and NC files cannot disagree.
   graphics.
 - **Platform:** no cloud projects, sharing or approval workflow; GitHub Pages
   needs one repository setting.
+- **Title block and unfold (D46, D47):** a full-width strip drawn for a large sheet
+  gets small lettering on A3 (the review lists it per size); CAD fonts, colours and
+  line types of an imported block are not carried over. Holes of folded sections are
+  not mapped onto their developed strip; a constant-thickness extrusion is unfolded
+  unless its profile is marked *extruded*.
 - **Per feature:** each reference keeps its own limits section:
   - wireframe check and continuous mullions: [WIREFRAME_CHECK.md §13](WIREFRAME_CHECK.md);
   - modify tools: [MODIFY.md](MODIFY.md) *Limits*;

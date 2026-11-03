@@ -63,9 +63,10 @@ items are created empty, as in the reference.
 │   │   ├───Plates
 │   │   │   ├───DSTV   {project}-{mark}.nc1 per plate
 │   │   │   └───DXF    {mark}.dxf per plate, NEST-{nnn}-S{w}x{h}.dxf per nested sheet
-│   │   └───Profiles
-│   │       ├───DSTV   {project}-{mark}.nc1 per member / profile part
-│   │       └───DXF    Extrusion cutting list.csv + <profile>.dxf per aluminium section (composite members; else empty)
+│   │   ├───Profiles
+│   │   │   ├───DSTV   {project}-{mark}.nc1 per member / profile part
+│   │   │   └───DXF    Extrusion cutting list.csv + <profile>.dxf per aluminium section (composite members; else empty)
+│   │   └───Unfold     {mark}.dxf per bent part (blank, dashed fold lines, mark) + unfold.csv (nothing bent: empty)
 │   ├───IFC   {code}-{seq} Model.ifc
 │   ├───STP   {code}-{seq} Model.stp
 │   └───MIS   {code}-{seq} MIS.json + parts / assemblies / bolts / operations / welds / coatings .csv
@@ -77,7 +78,8 @@ items are created empty, as in the reference.
         Wireframe confirmation .pdf / .txt, Clash report .pdf / .csv, Clashes.bcfzip
 ```
 
-Additions to the client's tree, all marked as ours: `06-Exports/MIS` (MIS/ERP export), the
+Additions to the client's tree, all marked as ours: `06-Exports/MIS` (MIS/ERP export),
+`06-Exports/CNC/Unfold` (unfolds of bent parts, [FABRICATION.md](FABRICATION.md) §1.1), the
 clash files in `10-Quality Check List`, the setting-out table in `01-Setting Out`, the
 Excel reports beside the cutting list. Packing lists are in `05-Reports` (EXCEL and PDF).
 

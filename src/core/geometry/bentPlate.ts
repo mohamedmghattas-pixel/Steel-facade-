@@ -346,10 +346,20 @@ export interface StripLine {
   ba: number;
 }
 
+/**
+ * How a folded section is developed: 'k-factor' (press brake: bend allowance
+ * BA = θ·(Ri + K·t)), or 'outside' (V-groove folding: the groove leaves the outer
+ * skin, the developed width is the sum of the outside dimensions and the fold
+ * lines lie at the outer corners).
+ */
+export type UnfoldMethod = 'k-factor' | 'outside';
+
 /** The developed (flat) strip of a folded open section. */
 export interface FlatStrip {
   /** Developed width across the bend lines. */
   width: number;
+  /** Development method used. */
+  method: UnfoldMethod;
   /** Sheet thickness and K-factor. */
   t: number;
   k: number;
@@ -367,7 +377,7 @@ export interface FlatStrip {
  * the first bend (bend 1 UP). Same method as the bent plates: outside legs, bend
  * deductions with the K-factor.
  */
-export function profileStrip(shape: Shape | undefined, k = DEFAULT_K_FACTOR): FlatStrip | null {
+export function profileStrip(shape: Shape | undefined, k = DEFAULT_K_FACTOR, method: UnfoldMethod = 'k-factor'): FlatStrip | null {
   if (!shape) return null;
   let legs: number[];
   let signs: number[];
@@ -399,16 +409,26 @@ export function profileStrip(shape: Shape | undefined, k = DEFAULT_K_FACTOR): Fl
       signs = [1, 1];
       break;
     case 'POLY':
-      return polyStrip(shape, k);
+      return polyStrip(shape, k, method);
     default:
       return null;
   }
   if (!(t > 0)) return null;
   const bends: StripBend[] = signs.map((sg) => ({ angle: 90 * sg, radius: Math.max(0, r) }));
+  if (method === 'outside') {
+    // V-groove: the outside dimensions laid end to end, fold lines at the outer corners.
+    let at = 0;
+    const lines: StripLine[] = bends.map((b, i) => {
+      at += legs[i];
+      return { s: at, angle: b.angle, radius: b.radius, ba: 0 };
+    });
+    return { width: legs.reduce((a, b) => a + b, 0), method, t, k, bends: lines, legs, source: source as FlatStrip['source'] };
+  }
   try {
     const flat = stripFlatPattern(legs, bends, 1, t, k);
     return {
       width: flat.length,
+      method,
       t,
       k,
       bends: flat.bends.map((b, i) => ({ s: b.a.x, angle: bends[i].angle, radius: bends[i].radius, ba: bendAllowance(bends[i].angle, bends[i].radius, t, k) })),
@@ -450,7 +470,7 @@ function nearestOn(poly: Vec2[], q: Vec2): Vec2 {
  * mid-line, arcs grouped) and the developed width (mid-line length less the shift
  * of the neutral fibre from mid-thickness to K·t at each bend).
  */
-function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
+function polyStrip(shape: PolyShape, k: number, method: UnfoldMethod = 'k-factor'): FlatStrip | null {
   const t = shape.t ?? 0;
   if (!(t > 0) || shape.holes?.length) return null;
   const pts = polyOutline(shape, 1).outer;
@@ -487,8 +507,11 @@ function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
   B.reverse();
   const mid = (a: Vec2, b: Vec2) => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
   const M: Vec2[] = [mid(pts[i], pts[(i + 1) % n])];
-  for (const a of A) {
-    const m = mid(a, nearestOn(B, a));
+  // Sides with corresponding corners (a sharp or offset outline): corner to corner. Else each
+  // point of one side to the nearest point of the other (at a sharp corner that point is ambiguous).
+  const paired = A.length === B.length && A.every((a, q) => dist2(a, B[q]) <= 3 * t);
+  for (let q = 0; q < A.length; q++) {
+    const m = mid(A[q], paired ? B[q] : nearestOn(B, A[q]));
     if (dist2(M[M.length - 1], m) > 0.01) M.push(m);
   }
   const end = mid(pts[j], pts[(j + 1) % n]);
@@ -500,7 +523,7 @@ function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
   const area = Math.abs(polygonArea(pts));
   if (Math.abs(area / t - Lmid) > 0.15 * Lmid) return null;
   // Bends: turning of the mid-line, consecutive turning vertices (an arc) grouped.
-  type G = { theta: number; s0: number; s1: number; n: number };
+  type G = { theta: number; s0: number; s1: number; n: number; q0: number; q1: number };
   const groups: G[] = [];
   let cur: G | null = null;
   for (let q = 1; q + 1 < M.length; q++) {
@@ -513,10 +536,11 @@ function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
     if (cur && s[q] - cur.s1 <= Math.max(1.5 * t, 2) && Math.sign(tau) === Math.sign(cur.theta)) {
       cur.theta += tau;
       cur.s1 = s[q];
+      cur.q1 = q;
       cur.n++;
     } else {
       if (cur) groups.push(cur);
-      cur = { theta: tau, s0: s[q], s1: s[q], n: 1 };
+      cur = { theta: tau, s0: s[q], s1: s[q], n: 1, q0: q, q1: q };
     }
   }
   if (cur) groups.push(cur);
@@ -525,15 +549,81 @@ function polyStrip(shape: PolyShape, k: number): FlatStrip | null {
   const shift = (g: G) => Math.abs(g.theta) * (0.5 - k) * t;
   // Seen from the inside of the first bend: bend 1 UP.
   const sign = Math.sign(bendsG[0].theta) || 1;
+  const rMidOf = (g: G) => (g.n > 1 ? ((g.s1 - g.s0) * g.n) / ((g.n - 1) * Math.abs(g.theta)) : 0);
+  if (method === 'outside') {
+    // V-groove: the outside dimensions between the outer virtual sharps. The straight runs of the
+    // mid-line meet at the mid-line's virtual sharps; each leg then gains t/2·tan(θ/2) per fold.
+    const runs: [Vec2, Vec2][] = [];
+    let from = 0;
+    for (const g of bendsG) {
+      runs.push([M[from], M[g.q0]]);
+      from = g.q1;
+    }
+    runs.push([M[from], M[M.length - 1]]);
+    const sharps: Vec2[] = [];
+    for (let b = 0; b < bendsG.length; b++) {
+      const [a0, a1] = runs[b];
+      const [b0, b1] = runs[b + 1];
+      const d1 = { x: a1.x - a0.x, y: a1.y - a0.y };
+      const d2 = { x: b1.x - b0.x, y: b1.y - b0.y };
+      const den = d1.x * d2.y - d1.y * d2.x;
+      // Parallel runs (no corner found): the middle of the bend zone.
+      if (Math.abs(den) < 1e-9 * (Math.hypot(d1.x, d1.y) * Math.hypot(d2.x, d2.y) || 1)) sharps.push({ x: (a1.x + b0.x) / 2, y: (a1.y + b0.y) / 2 });
+      else {
+        const u = ((b0.x - a0.x) * d2.y - (b0.y - a0.y) * d2.x) / den;
+        sharps.push({ x: a0.x + d1.x * u, y: a0.y + d1.y * u });
+      }
+    }
+    const pts = [M[0], ...sharps, M[M.length - 1]];
+    const ext = bendsG.map((g) => (t / 2) * Math.tan(Math.min(Math.abs(g.theta), 179 * DEG) / 2));
+    const legs = pts.slice(1).map((q, i) => dist2(pts[i], q) + (i > 0 ? ext[i - 1] : 0) + (i < ext.length ? ext[i] : 0));
+    let at = 0;
+    const bends: StripLine[] = bendsG.map((g, i) => {
+      at += legs[i];
+      return { s: at, angle: (g.theta / DEG) * sign, radius: Math.max(0, rMidOf(g) - t / 2), ba: 0 };
+    });
+    return { width: legs.reduce((a, b) => a + b, 0), method, t, k, bends, legs, source: 'POLY' };
+  }
   let before = 0;
   const bends: StripLine[] = bendsG.map((g) => {
-    const rMid = g.n > 1 ? ((g.s1 - g.s0) * g.n) / ((g.n - 1) * Math.abs(g.theta)) : 0;
+    const rMid = rMidOf(g);
     const radius = Math.max(0, rMid - t / 2);
     const sc = (g.s0 + g.s1) / 2 - before - shift(g) / 2;
     before += shift(g);
     return { s: sc, angle: (g.theta / DEG) * sign, radius, ba: bendAllowance(g.theta / DEG, radius, t, k) };
   });
-  return { width: Lmid - before, t, k, bends, legs: [], source: 'POLY' };
+  return { width: Lmid - before, method, t, k, bends, legs: [], source: 'POLY' };
+}
+
+/** Thickest sheet taken as folded from sheet when a POLY outline gives no thickness, mm. */
+export const MAX_SHEET_T = 8;
+
+/**
+ * Sheet thickness of a POLY outline that is a folded sheet (an open strip of
+ * constant thickness: two short end caps, sides of nearly equal length, area =
+ * mid-line × t), or null: the candidates are its short edges (the end caps are t
+ * long), checked by developing the strip. Outlines with holes (chambers) are not.
+ */
+export function inferSheetThickness(shape: PolyShape): number | null {
+  if (shape.t && shape.t > 0) return shape.t;
+  if (shape.holes?.length) return null;
+  const pts = polyOutline(shape, 1).outer;
+  const n = pts.length;
+  if (n < 4) return null;
+  let P = 0;
+  const lens: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const l = dist2(pts[i], pts[(i + 1) % n]);
+    lens.push(l);
+    P += l;
+  }
+  const area = Math.abs(polygonArea(pts));
+  // A strip: area ≈ (P / 2) · t, so t ≈ 2A / P (end caps make it a little less).
+  const est = (2 * area) / P;
+  if (!(est > 0) || est > MAX_SHEET_T * 1.2) return null;
+  const cands = [...new Set(lens.filter((l) => l > 0.2 && l <= MAX_SHEET_T + 1e-6 && Math.abs(l - est) <= 0.35 * est).map((l) => Math.round(l * 1000) / 1000))].sort((a, b) => Math.abs(a - est) - Math.abs(b - est));
+  for (const t of cands) if (polyStrip({ ...shape, t }, DEFAULT_K_FACTOR)) return t;
+  return null;
 }
 
 // ---------------------------------------------------------------------------

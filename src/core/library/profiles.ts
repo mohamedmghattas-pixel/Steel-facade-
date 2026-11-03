@@ -27,6 +27,19 @@ export const STANDARDS_LIST: readonly { value: Standard; label: string; descript
 
 export type MassSource = 'catalogue' | 'computed' | 'user';
 
+/**
+ * How a section is made: folded from flat sheet or strip ('bent': press brake, roll
+ * forming, V-groove folding — it has a flat pattern), 'extruded' (aluminium or steel
+ * extrusion) or 'rolled' (hot-rolled, cut from a bar). Absent: from the section
+ * (profileProcess).
+ */
+export type ProfileProcess = 'bent' | 'extruded' | 'rolled';
+export const PROFILE_PROCESSES: { value: ProfileProcess; label: string }[] = [
+  { value: 'bent', label: 'Bent from sheet (unfolded)' },
+  { value: 'extruded', label: 'Extruded (no unfold)' },
+  { value: 'rolled', label: 'Hot-rolled (no unfold)' },
+];
+
 export interface Profile extends SectionProps {
   /** Unique name, also used as the profile id (e.g. "SHS 100x100x5", "HSS4x4x1/4"). */
   name: string;
@@ -56,6 +69,8 @@ export interface Profile extends SectionProps {
   insertion?: Vec2;
   /** Material the section is made of (custom profiles), e.g. "6063 T6"; `mass` stays on the steel basis. */
   material?: string;
+  /** How the section is made, when set (custom profiles); see profileProcess for the default. */
+  process?: ProfileProcess;
 }
 
 export const STEEL_DENSITY = 7850; // kg/m³
@@ -75,6 +90,7 @@ interface BuildOpts {
   custom?: boolean;
   insertion?: Vec2;
   material?: string;
+  process?: ProfileProcess;
 }
 
 function buildProfile(name: string, standard: Standard, family: string, shape: Shape, o: BuildOpts = {}): Profile {
@@ -100,6 +116,7 @@ function buildProfile(name: string, standard: Standard, family: string, shape: S
     p.insertion = { x: o.insertion.x - c.x, y: o.insertion.y - c.y };
   }
   if (o.material) p.material = o.material;
+  if (o.process) p.process = o.process;
   return p;
 }
 
@@ -344,6 +361,8 @@ export interface ProfileDef {
   insertion?: Vec2;
   /** Section material (e.g. "6063 T6"): mass is computed with its density and new members of this profile get it. */
   material?: string;
+  /** How the section is made: 'bent' from sheet (gets a flat pattern), 'extruded' or 'rolled' (absent: from the section). */
+  process?: ProfileProcess;
   /** Editable sketch the outline was made from (ProfileSketcher); opaque to the catalogue. */
   sketch?: unknown;
   /**
@@ -363,6 +382,7 @@ export function profileFromDef(def: ProfileDef): Profile {
   if (def.mass !== undefined && !(Number.isFinite(def.mass) && def.mass > 0)) throw new Error(`${name}: mass must be > 0`);
   if (def.insertion !== undefined && !(def.insertion && Number.isFinite(def.insertion.x) && Number.isFinite(def.insertion.y))) throw new Error(`${name}: insertion point must be {x, y} numbers`);
   if (def.material !== undefined && !findMaterial(def.material)) throw new Error(`${name}: unknown material "${def.material}"`);
+  if (def.process !== undefined && !PROFILE_PROCESSES.some((x) => x.value === def.process)) throw new Error(`${name}: process must be bent, extruded or rolled`);
   // Mass is stored on the steel basis (members scale it by their material's density).
   const mass = def.mass === undefined ? undefined : (def.mass * STEEL_DENSITY) / densityOf(def.material);
   return buildProfile(name, def.standard ?? 'Custom', def.family?.trim() || (def.shape.type === 'POLY' ? 'Custom outline' : `Custom ${def.shape.type}`), { ...def.shape }, {
@@ -372,6 +392,7 @@ export function profileFromDef(def: ProfileDef): Profile {
     custom: true,
     insertion: def.insertion ? { x: def.insertion.x, y: def.insertion.y } : undefined,
     material: def.material ? findMaterial(def.material)!.name : undefined,
+    process: def.process,
   });
 }
 
@@ -762,7 +783,7 @@ export function parseProfileJson(text: string): { defs: ProfileDef[]; errors: st
       return void errors.push(`${label}: ${(e as Error).message.replace(`${d.name.trim()}: `, '')}`);
     }
     const def: ProfileDef = { name: d.name.trim(), shape: d.shape };
-    for (const k of ['standard', 'family', 'mass', 'spec', 'insertion', 'material', 'sketch', 'group'] as const) if (d[k] !== undefined) (def as unknown as Record<string, unknown>)[k] = d[k];
+    for (const k of ['standard', 'family', 'mass', 'spec', 'insertion', 'material', 'sketch', 'group', 'process'] as const) if (d[k] !== undefined) (def as unknown as Record<string, unknown>)[k] = d[k];
     if (def.material) def.material = findMaterial(def.material)!.name;
     seen.add(def.name);
     defs.push(def);

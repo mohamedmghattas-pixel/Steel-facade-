@@ -795,6 +795,14 @@ export interface FabricationSettings {
    * DXF sections only.
    */
   dstvAluminium?: boolean;
+  /**
+   * How sections folded from sheet are developed: 'k-factor' (press brake, bend
+   * allowance with K = 0.33) or 'outside' (V-groove folding: outside dimensions end
+   * to end, fold lines at the outer corners). Bent plates keep their own K-factor.
+   */
+  unfoldMethod: 'k-factor' | 'outside';
+  /** Layer names of the unfold DXF per bent part: blank outline and holes, fold lines, mark. */
+  unfoldLayers: { cut: string; bend: string; text: string };
 }
 
 // ---------------------------------------------------------------------------

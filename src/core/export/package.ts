@@ -9,7 +9,7 @@ import type { Project } from '../model/types';
 import { uniqueParts, type DerivedModel } from '../derive/model';
 import { drawingSet, drawingToSvg, sheetFileStem, yieldMacrotask, type DrawingSet, type SheetEntry } from '../drawings';
 import type { Drawing, SheetRecord } from '../drawings/types';
-import { exportPlateDxfAll, flatPatternsDxf } from '../fabrication/plateDxf';
+import { exportPlateDxfAll, flatPatternsDxf, unfoldDxfFiles } from '../fabrication/plateDxf';
 import { hasDstv } from '../fabrication/dstv';
 import { extrusionFiles } from '../fabrication/extrusions';
 import { buildBom, toCsv } from '../reports/bom';
@@ -636,6 +636,20 @@ function planOutput(ctx: PackageContext, id: OutputId, item?: ExportItem): Plan 
         .filter((f) => f.name.endsWith('.dxf'))
         .map((f) => ({ name: f.name, data: f.content }));
       if (!files.length) return { skip: 'there are no plates' };
+      const ctxs = partContext(ctx);
+      return {
+        sources: fromFiles(files, (f) => {
+          const mark = splitExt(f.name.split('/').pop()!).base;
+          return { mark, ...(ctxs.get(mark) ?? {}) };
+        }),
+      };
+    }
+    case 'unfold-dxf': {
+      if (!parts) return { skip: NO_PARTS };
+      const files = unfoldDxfFiles(p, dm)
+        .filter((f) => f.name.endsWith('.dxf'))
+        .map((f) => ({ name: f.name, data: f.content }));
+      if (!files.length) return { skip: 'there are no bent plates or parts folded from sheet' };
       const ctxs = partContext(ctx);
       return {
         sources: fromFiles(files, (f) => {

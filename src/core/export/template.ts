@@ -250,6 +250,7 @@ export const DEFAULT_TEMPLATE_SPEC: TemplateSpec = {
     ],
     '06-Exports/CNC/Profiles/DSTV': [['nc1-members', '{project}-{mark}.{ext}']],
     '06-Exports/CNC/Profiles/DXF': [['extrusions', '{item}.{ext}']],
+    '06-Exports/CNC/Unfold': [['unfold-dxf', '{mark}.{ext}']],
     '06-Exports/IFC': [['ifc', '{code}-{seq} Model.{ext}']],
     '06-Exports/STP': [['step', '{code}-{seq} Model.{ext}']],
     '06-Exports/MIS': [

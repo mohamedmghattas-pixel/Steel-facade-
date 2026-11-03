@@ -170,6 +170,7 @@ describe('export template model', () => {
       '06-Exports/CNC/Profiles',
       '06-Exports/CNC/Profiles/DSTV',
       '06-Exports/CNC/Profiles/DXF',
+      '06-Exports/CNC/Unfold',
       '06-Exports/IFC',
       '06-Exports/STP',
       '06-Exports/MIS',
@@ -241,11 +242,12 @@ describe('export package of the sample facade (client tree)', () => {
 
   it('writes every applicable item at the client paths', () => {
     expect(plan.root).toBe(pkg);
-    // Only the section / detail sheets (the sample has no GA cuts) and the aluminium extrusions (no composite members) are missing.
+    // Only the section / detail sheets (the sample has no GA cuts), the aluminium extrusions (no composite members) and the unfolds (nothing bent) are missing.
     expect(plan.items.filter((i) => i.skip).map((i) => `${i.item.id}: ${i.skip}`)).toEqual([
       'drawing-dxf-combined-4: no sheets of the chosen drawing types',
       'drawings-pdf-combined-6: no sheets of the chosen drawing types',
       'extrusions: no member carries aluminium or other non-steel components',
+      'unfold-dxf: there are no bent plates or parts folded from sheet',
     ]);
     const used = new Set(templateItems(DEFAULT_EXPORT_TEMPLATE).map((x) => x.item.output));
     expect(OUTPUTS.filter((o) => !used.has(o.id)).map((o) => o.id).sort()).toEqual(['anchors-csv', 'bom-csv', 'nc1-all', 'nesting-csv', 'plates-csv', 'qc-checklist-pdf', 'qc-checklist-xlsx', 'register-csv', 'revision-log-csv']);
@@ -341,7 +343,7 @@ describe('export package of the sample facade (client tree)', () => {
     const q = planFor(bare, addItem(DEFAULT_EXPORT_TEMPLATE, 'f-10-quality-check-list', 'drawing-pdf', `${'x'.repeat(230)}{drawingNo}.{ext}`).template);
     const skip = Object.fromEntries(q.items.filter((i) => i.skip).map((i) => [i.item.id, i.skip]));
     expect(Object.keys(skip).sort()).toEqual(
-      ['bcf', 'clashes-csv', 'clashes-pdf', 'drawing-dxf-combined-4', 'drawings-pdf-combined-6', 'extrusions', 'paint-xlsx', 'references', 'revision-log-xlsx', 'setting-out-csv', 'setting-out-xlsx', 'stock-csv', 'survey-csv', 'wireframe-pdf', 'wireframe-txt'].sort(),
+      ['bcf', 'clashes-csv', 'clashes-pdf', 'drawing-dxf-combined-4', 'drawings-pdf-combined-6', 'extrusions', 'paint-xlsx', 'references', 'revision-log-xlsx', 'setting-out-csv', 'setting-out-xlsx', 'stock-csv', 'survey-csv', 'unfold-dxf', 'wireframe-pdf', 'wireframe-txt'].sort(),
     );
     expect(skip['setting-out-csv']).toMatch(/survey/);
     expect(q.warnings.some((w) => /longer than 240/.test(w))).toBe(true);

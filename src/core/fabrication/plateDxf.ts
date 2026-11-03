@@ -16,11 +16,13 @@ import type { Project, Vec2 } from '../model/types';
 import { bbox2, polygonArea } from '../model/geometry';
 import type { Hole2D } from '../connections/common';
 import { DxfWriter } from '../io/dxfWriter';
+import { gNum, gStr, readDxf } from '../io/dxfReader';
 import { uniqueParts, type DerivedModel, type Part } from '../derive/model';
 import type { PlateGroup, PlateSheetResult } from '../optimize/plateNesting';
 import { toCsv, type Row } from '../reports/bom';
 import { fabSettings } from './settings';
-import { profileStrip } from '../geometry/bentPlate';
+import { bentStrip } from '../library/forming';
+import { getProfile } from '../library/profiles';
 
 export const CNC_LAYERS = {
   outline: 'OUTLINE',
@@ -267,8 +269,11 @@ function plateBendLines(part: Part): FlatItem['bends'] {
  * The developed strip of a folded (cold-formed) linear part: the blank W × L (x along
  * the part, y across the developed width) with its bend lines along the length.
  */
-function stripItem(part: Part, qty: number): FlatItem | null {
-  const st = part.shape ? profileStrip(part.shape) : null;
+function stripItem(p: Project, part: Part, qty: number): FlatItem | null {
+  if (part.kind === 'plate' || !part.shape) return null;
+  const prof = getProfile(part.profile);
+  // Bent parts only (extruded and rolled sections have no flat pattern), developed by the project's fold method.
+  const st = bentStrip({ shape: part.shape, ...(prof?.process ? { process: prof.process } : {}) }, fabSettings(p).unfoldMethod);
   if (!st) return null;
   const L = part.length;
   const W = st.width;
@@ -294,6 +299,57 @@ function stripItem(part: Part, qty: number): FlatItem | null {
 }
 
 /**
+ * The unfold of one bent part for the folding shop, as the shop's own files are
+ * made: the blank (closed outline) and its holes on the cut layer, the fold lines
+ * across it on the bend layer (dashed), the mark in the middle on the text layer.
+ * Full size, mm, bounding box at (0, 0); layer names from the fabrication settings.
+ */
+export function unfoldToDxf(it: FlatItem, layers: { cut: string; bend: string; text: string }): string {
+  const w = new DxfWriter([
+    { name: layers.cut, color: 3 },
+    { name: layers.bend, color: 1, linetype: 'DASHED' },
+    { name: layers.text, color: 6 },
+  ]);
+  const { fp } = it;
+  w.polyline(fp.outline, true, layers.cut);
+  for (const h of fp.holes) {
+    if (!isSlot(h)) w.circle(h.x, h.y, h.d / 2, layers.cut);
+    else w.polyline(slotPolyline(h), true, layers.cut);
+  }
+  for (const b of it.bends) w.line(b.a.x, b.a.y, b.b.x, b.b.y, layers.bend);
+  const th = Math.max(3, Math.min(120, 0.2 * Math.min(fp.w, fp.h)));
+  w.text(fp.w / 2, fp.h / 2 - th / 2, th, fp.mark, { layer: layers.text, align: 'center' });
+  return w.toString();
+}
+
+/**
+ * One unfold DXF per unique bent part (bent plates and parts folded from sheet —
+ * extruded and rolled sections have none), named by its mark, plus a list (CSV).
+ */
+export function unfoldDxfFiles(p: Project, dm: DerivedModel): { name: string; content: string }[] {
+  const layers = fabSettings(p).unfoldLayers;
+  const files: { name: string; content: string }[] = [];
+  const rows: Row[] = [['Mark', 'Qty', 'Kind', 'Thickness (mm)', 'Material', 'Blank width (mm)', 'Blank length (mm)', 'Folds', 'File']];
+  for (const { part, qty } of uniqueParts(dm)) {
+    let it: FlatItem | null = null;
+    let kind = '';
+    if (part.kind === 'plate' && part.bends?.length && part.outline?.length) {
+      it = { fp: flatPlate(part), bends: plateBendLines(part), label: '' };
+      kind = 'bent plate';
+    } else {
+      it = stripItem(p, part, qty);
+      kind = 'folded section';
+    }
+    if (!it) continue;
+    const name = `${safe(part.mark)}.dxf`;
+    files.push({ name, content: unfoldToDxf(it, layers) });
+    rows.push([part.mark, qty, kind, it.fp.t, part.material, r1(it.fp.h), r1(it.fp.w), it.bends.length, name]);
+  }
+  if (files.length) files.push({ name: 'unfold.csv', content: toCsv(rows) });
+  return files;
+}
+
+/**
  * Every unique plate's flat pattern in one DXF, laid out in rows (largest first,
  * 50 mm apart) with a label under each plate on the SHEET layer: mark,
  * thickness, material and quantity. Bent plates carry their bend lines (layer
@@ -312,7 +368,7 @@ export function flatPatternsDxf(p: Project, dm: DerivedModel, override: Partial<
     })
     .sort((a, b) => b.fp.h - a.fp.h || a.fp.mark.localeCompare(b.fp.mark));
   const strips = uniq
-    .map(({ part, qty }) => (part.kind !== 'plate' ? stripItem(part, qty) : null))
+    .map(({ part, qty }) => (part.kind !== 'plate' ? stripItem(p, part, qty) : null))
     .filter((x): x is FlatItem => !!x)
     .sort((a, b) => b.fp.h - a.fp.h || a.fp.mark.localeCompare(b.fp.mark));
   const items: FlatItem[] = [...plates, ...strips];
@@ -351,4 +407,27 @@ export function flatPatternsDxf(p: Project, dm: DerivedModel, override: Partial<
   }
   w.text(0, gap, label * 1.4, `${p.info.number || p.info.name} flat patterns - ${plates.length} plate marks${strips.length ? `, ${strips.length} folded profile marks` : ''}`, { layer: CNC_LAYERS.sheet });
   return w.toString();
+}
+
+/**
+ * The layer names of a sample unfold DXF from the folding shop: the layer of the
+ * closed outline (the blank), of the lines (fold lines) and of the texts (mark).
+ * Null for what the file does not show. Model space, top level only.
+ */
+export function unfoldLayersFromDxf(text: string): { cut?: string; bend?: string; text?: string } {
+  const doc = readDxf(text);
+  const count = (pred: (type: string, closed: boolean) => boolean) => {
+    const m = new Map<string, number>();
+    for (const e of doc.entities) {
+      const closed = (e.type === 'LWPOLYLINE' || e.type === 'POLYLINE') && (gNum(e, 70) & 1) !== 0;
+      if (gNum(e, 67) === 1 || !pred(e.type, closed)) continue;
+      const l = gStr(e, 8, '0') || '0';
+      m.set(l, (m.get(l) ?? 0) + 1);
+    }
+    return [...m.entries()].sort((a, b) => b[1] - a[1])[0]?.[0];
+  };
+  const cut = count((t, closed) => closed || t === 'CIRCLE');
+  const bend = count((t) => t === 'LINE') ;
+  const txt = count((t) => t === 'TEXT' || t === 'MTEXT');
+  return { ...(cut ? { cut } : {}), ...(bend && bend !== cut ? { bend } : {}), ...(txt ? { text: txt } : {}) };
 }

@@ -139,7 +139,7 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
     const bt = bendTable(part, { x: ob.minX, y: ob.minY });
     if (bt) blocks.push(bt);
   }
-  const strip = partStrip(part);
+  const strip = partStrip(part, p);
   if (strip) blocks.push(flatStripBlock(strip, part.length));
   // A component of a composite member: where it sits in the assembly section, about the shared base point.
   if (part.component) {

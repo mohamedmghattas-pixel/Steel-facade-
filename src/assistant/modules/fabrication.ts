@@ -80,7 +80,7 @@ export const fabricationModule: ToolModule = {
     {
       name: 'set_fabrication_settings',
       description:
-        'Change fabrication settings: DXF part-mark text (dxfMarking, markHeight mm), plate cutting kerf for nesting (plateKerf mm), label layout and per piece/mark, galvanizing bath inside size (galvBath mm) and clearance, paint coats (name, dft µm, solids %) and application loss %, DSTV through holes of hollow sections on one face or both faces (dstvHollowThrough).',
+        'Change fabrication settings: DXF part-mark text (dxfMarking, markHeight mm), plate cutting kerf for nesting (plateKerf mm), label layout and per piece/mark, galvanizing bath inside size (galvBath mm) and clearance, paint coats (name, dft µm, solids %) and application loss %, DSTV through holes of hollow sections on one face or both faces (dstvHollowThrough), fold method of sections bent from sheet (unfoldMethod: k-factor press brake / outside = V-groove, outside dimensions) and the unfold DXF layer names (unfoldLayers cut, bend, text).',
       input_schema: {
         type: 'object',
         properties: {
@@ -94,6 +94,8 @@ export const fabricationModule: ToolModule = {
           paintCoats: { type: 'array', items: { type: 'object', properties: { name: str, dft: num, solids: num }, required: ['dft', 'solids'] } },
           paintLoss: num,
           dstvHollowThrough: { type: 'string', enum: ['one', 'both'] },
+          unfoldMethod: { type: 'string', enum: ['k-factor', 'outside'] },
+          unfoldLayers: { type: 'object', properties: { cut: str, bend: str, text: str } },
         },
       },
     },
@@ -240,6 +242,13 @@ export const fabricationModule: ToolModule = {
       }
       if (input.paintLoss !== undefined && Number.isFinite(Number(input.paintLoss))) patch.paintLoss = Math.min(90, Math.max(0, Number(input.paintLoss)));
       if (input.dstvHollowThrough === 'one' || input.dstvHollowThrough === 'both') patch.dstvHollowThrough = input.dstvHollowThrough;
+      if (input.unfoldMethod === 'k-factor' || input.unfoldMethod === 'outside') patch.unfoldMethod = input.unfoldMethod;
+      const ul = input.unfoldLayers as Json | undefined;
+      if (ul && typeof ul === 'object') {
+        const cur = fabSettings(st().project).unfoldLayers;
+        const name = (v: unknown, d: string) => (typeof v === 'string' && v.trim() ? v.trim() : d);
+        patch.unfoldLayers = { cut: name(ul.cut, cur.cut), bend: name(ul.bend, cur.bend), text: name(ul.text, cur.text) };
+      }
       if (Object.keys(patch).length) setFabSettings(patch);
       const bath = input.galvBath as Json | undefined;
       if (bath && typeof bath === 'object') {

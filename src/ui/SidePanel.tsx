@@ -11,7 +11,9 @@ import type { DivideResult } from '../core/model/junctions';
 import { alignModeOf } from '../core/model/geometry';
 import { MATERIALS } from '../core/library/materials';
 import { BOLT_SIZES } from '../core/library/bolts';
-import { PROFILES, getProfile, profileFamilies, profileMassIn, type ProfileDef, type Standard } from '../core/library/profiles';
+import { PROFILES, PROFILE_PROCESSES, getProfile, profileFamilies, profileMassIn, type ProfileDef, type ProfileProcess, type Standard } from '../core/library/profiles';
+import { bentStrip, profileProcess } from '../core/library/forming';
+import { fabSettings } from '../core/fabrication/settings';
 import { CONNECTIONS, paramSpecs, resolveParams } from '../core/connections/registry';
 import { templateFor } from '../core/connections/custom';
 import { dist } from '../core/model/geometry';
@@ -583,6 +585,46 @@ function ProjectProps() {
 
 // ---------------------------------------------------------------------------
 
+const PROCESS_LABEL: Record<ProfileProcess, string> = { bent: 'Bent from sheet', extruded: 'Extruded', rolled: 'Rolled' };
+
+/** How the section is made (set on a custom profile, else from the section), with its unfold width when bent. */
+function ProfileMade({ p }: { p: NonNullable<ReturnType<typeof getProfile>> }) {
+  const def = useStore((s) => (p.custom ? (s.project.library.profiles as unknown as ProfileDef[]).find((d) => d.name === p.name) : undefined));
+  const method = useStore((s) => fabSettings(s.project).unfoldMethod);
+  const apply = useStore((s) => s.apply);
+  const info = profileProcess(p);
+  const strip = info.process === 'bent' ? bentStrip(p, method) : null;
+  const unfold = strip ? `unfold ${Math.round(strip.width * 10) / 10} wide, ${strip.bends.length} fold${strip.bends.length === 1 ? '' : 's'}` : info.process === 'bent' ? 'no unfold (outline not developable)' : 'no unfold';
+  return (
+    <>
+      <dt>Made</dt>
+      <dd>
+        {def ? (
+          <Select<string>
+            value={def.process ?? ''}
+            options={[{ value: '', label: `Auto: ${PROCESS_LABEL[profileProcess({ shape: p.shape }).process].toLowerCase()}` }, ...PROFILE_PROCESSES]}
+            onChange={(v) =>
+              apply('Profile made by', (q) => {
+                const d = (q.library.profiles as unknown as ProfileDef[]).find((x) => x.name === p.name);
+                if (!d) return;
+                if (v) d.process = v as ProfileProcess;
+                else delete d.process;
+              })
+            }
+          />
+        ) : (
+          PROCESS_LABEL[info.process]
+        )}
+        <span className="muted asm-small" data-testid="profile-made">
+          {' '}
+          {info.auto ? `${info.reason} · ` : ''}
+          {unfold}
+        </span>
+      </dd>
+    </>
+  );
+}
+
 function ProfilePreview({ name }: { name: string }) {
   const p = getProfile(name);
   const lib = useStore((s) => s.project.library);
@@ -619,6 +661,7 @@ function ProfilePreview({ name }: { name: string }) {
         </dd>
         <dt>Surface</dt>
         <dd>{p.surface.toFixed(3)} m²/m</dd>
+        <ProfileMade p={p} />
         {p.insertion && (
           <>
             <dt>Insertion</dt>

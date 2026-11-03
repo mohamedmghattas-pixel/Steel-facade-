@@ -27,6 +27,8 @@ import {
   type OutFile,
 } from '../core/export/outputs';
 import { svgPagesToPdf } from './pdf';
+import { unfoldDxfFiles, unfoldLayersFromDxf } from '../core/fabrication/plateDxf';
+import { fabSettings } from '../core/fabrication/settings';
 
 const st = () => useStore.getState();
 const notify = (t: string, k: 'info' | 'error' = 'info') => st().notify(t, k);
@@ -57,6 +59,38 @@ export function exportPlateDxf(): number {
   const n = files.length - 1;
   notify(`Exported ${n} plate DXF file${n === 1 ? '' : 's'} (1:1 mm, layers OUTLINE / HOLES / MARKING).`);
   return n;
+}
+
+/** One unfold DXF per bent part (blank, fold lines, mark), zipped with the list. */
+export function exportUnfoldDxf(): number {
+  if (!guard()) return 0;
+  const p = st().project;
+  const files = unfoldDxfFiles(p, derived(p)).map((f) => ({ name: f.name, data: f.content }));
+  if (!files.length) {
+    notify('There are no bent plates or parts folded from sheet: extruded and rolled sections have no unfold.', 'error');
+    return 0;
+  }
+  zipDownload(`${fileBase()}-unfold-dxf.zip`, files);
+  const n = files.length - 1;
+  const L = fabSettings(p).unfoldLayers;
+  notify(`Exported ${n} unfold DXF file${n === 1 ? '' : 's'} (1:1 mm, layers ${L.cut} / ${L.bend} / ${L.text}).`);
+  return n;
+}
+
+/** Layer names of the unfold DXF taken from a sample file of the folding shop. */
+export async function unfoldLayersFromSample(): Promise<void> {
+  const f = await pickFile('.dxf');
+  if (!f) return;
+  try {
+    const got = unfoldLayersFromDxf(await f.text());
+    if (!got.cut && !got.bend && !got.text) return notify('No outline, lines or text found in the sample DXF.', 'error');
+    const cur = fabSettings(st().project).unfoldLayers;
+    const next = { ...cur, ...got };
+    setFabSettings({ unfoldLayers: next }, 'Unfold DXF layers');
+    notify(`Unfold DXF layers from ${f.name}: blank ${next.cut}, fold lines ${next.bend}, mark ${next.text}.`);
+  } catch (e) {
+    notify(`Could not read ${f.name}: ${(e as Error).message}`, 'error');
+  }
 }
 
 export function exportNestedDxf(): number {

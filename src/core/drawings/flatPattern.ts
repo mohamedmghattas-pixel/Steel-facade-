@@ -18,9 +18,12 @@
  * The method is the one of the bent plates: bend allowance BA = θ·(Ri + K·t), with
  * outside leg dimensions to the outer mould lines (DIN 6935). Pure: no DOM.
  */
-import type { PlateBend, Vec2 } from '../model/types';
+import type { PlateBend, Project, Vec2 } from '../model/types';
 import type { Part } from '../derive/model';
-import { bendAllowance, bendAxes, DEFAULT_K_FACTOR, formedProfile, profileStrip, type FlatStrip, type FormedProfile } from '../geometry/bentPlate';
+import { bendAllowance, bendAxes, DEFAULT_K_FACTOR, formedProfile, type FlatStrip, type FormedProfile } from '../geometry/bentPlate';
+import { fabSettings } from '../fabrication/settings';
+import { bentStrip } from '../library/forming';
+import { getProfile } from '../library/profiles';
 import { dimLinear, drawTable, tableSize, wrap, type Sheet, type TableSpec } from './dims';
 import { tableBlock, type Block } from './layout';
 import { ISO_SCALES, TEXT, scaleLabel } from './standards';
@@ -32,14 +35,40 @@ const dir = (a: number) => (a >= 0 ? 'UP' : 'DOWN');
 
 export { formedProfile, profileStrip, type FlatStrip, type FormedProfile, type StripLine } from '../geometry/bentPlate';
 
-/** The developed strip of a linear part, when its section is a folded one. */
-export const partStrip = (part: Part): FlatStrip | null => (part.kind !== 'plate' && part.shape ? profileStrip(part.shape) : null);
+/**
+ * The developed strip of a linear part made by bending (library/forming.ts: the
+ * profile's process, else from the section); null for extruded and rolled parts.
+ * The project's fold method (K-factor press brake or V-groove) applies.
+ */
+export function partStrip(part: Part, p?: Project): FlatStrip | null {
+  if (part.kind === 'plate' || !part.shape) return null;
+  const prof = getProfile(part.profile);
+  const method = p ? fabSettings(p).unfoldMethod : 'k-factor';
+  return bentStrip({ shape: part.shape, ...(prof?.process ? { process: prof.process } : {}) }, method);
+}
+
+/** Widths between the fold lines of a strip, first edge to last ("13 | 177 | 88 | 177 | 13"). */
+export function stripSegments(strip: FlatStrip): number[] {
+  const at = [0, ...strip.bends.map((b) => b.s), strip.width];
+  return at.slice(1).map((v, i) => Math.round((v - at[i]) * 10) / 10);
+}
 
 /** Smallest ISO 5455 scale at which `extent` fits `max` mm on paper. */
 const fitScale = (extent: number, max: number) => ISO_SCALES.find((d) => extent / d <= max) ?? ISO_SCALES[ISO_SCALES.length - 1];
 
 /** The bend lines of a developed strip as a table: direction, angle, inner radius, bend allowance and position from the first edge. */
 export function stripBendTable(strip: FlatStrip, title?: string): TableSpec {
+  if (strip.method === 'outside')
+    return {
+      title,
+      cols: [
+        { head: 'Fold', w: 11 },
+        { head: 'Dir', w: 13 },
+        { head: 'Angle', w: 13, align: 'end' },
+        { head: 'At', w: 15, align: 'end' },
+      ],
+      rows: strip.bends.map((b, i) => [`B${i + 1}`, dir(b.angle), fmtA(b.angle), fmt1(b.s)]),
+    };
   return {
     title,
     cols: [
@@ -72,7 +101,12 @@ export function flatStripBlock(strip: FlatStrip, length: number, maxW = 176): Bl
   const broken = full > lmax;
   const lp = broken ? lmax : Math.max(full, 30);
   const title = `FLAT STRIP (DEVELOPED) ${Math.round(W)} × ${Math.round(length)}   ${scaleLabel(den)}`;
-  const notes = wrap(`Developed width by bend allowance BA = θ·(Ri + K·t), K = ${strip.k}, t = ${fmt1(strip.t)}; "At": bend line from the first edge. UP: towards the viewer. Bend lines run along the length.`, maxW - 2, TEXT.label);
+  const seg = `Strips between the fold lines: ${stripSegments(strip).join(' | ')} = ${fmt1(W)}.`;
+  const how =
+    strip.method === 'outside'
+      ? `Developed from the outside dimensions (V-groove folding), t = ${fmt1(strip.t)}; fold lines at the outer corners; "At": from the first edge. UP: towards the viewer.`
+      : `Developed width by bend allowance BA = θ·(Ri + K·t), K = ${strip.k}, t = ${fmt1(strip.t)}; "At": bend line from the first edge. UP: towards the viewer. Bend lines run along the length.`;
+  const notes = wrap(`${how} ${seg}`, maxW - 2, TEXT.label);
   const w = Math.min(maxW, Math.max(lp + 26 + tsz.w, textExtent(title, TEXT.small, true), ...notes.map((l) => textExtent(l, TEXT.label))) + 2);
   const H = 8 + Math.max(h + 12.5, tsz.h + 3) + notes.length * 3;
   return {

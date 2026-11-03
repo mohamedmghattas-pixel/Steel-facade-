@@ -69,14 +69,40 @@ flat pattern in one DXF, largest first, labelled on the SHEET layer (`pl1  PL10 
 
 - Bent plates carry their **bend lines** on layer `BEND` (long-dash dotted, colour 2,
   never cut) with a note per bend on SHEET (`UP 90 R5`, `DOWN 90 R5`).
-- Folded (cold-formed) profile parts — lipped C and Z, cold-formed L and U, POLY thin-wall
-  outlines with a sheet thickness — follow as **developed strips**: the blank developed
+- Parts bent from sheet — lipped C and Z, cold-formed L and U, POLY open strips of constant
+  thickness, and any profile set to *bent from sheet*; never extruded or rolled sections
+  ([PROFILES.md](PROFILES.md) §3.2) — follow as **developed strips**: the blank developed
   width × cut length on OUTLINE, the bend lines along the length on BEND, labelled
-  `a1  C 200x75x20x2 t2 S355  x1  375x3000 developed`. Developed by bend allowance with
-  K = 0.33 (`profileStrip`, `src/core/geometry/bentPlate.ts`; see DRAWING_STANDARDS.md,
-  *Flat patterns*). Holes and end cuts of the strips are not drawn.
+  `a1  C 200x75x20x2 t2 S355  x1  375x3000 developed`. Developed by the fold method of the
+  *Unfold* settings: bend allowance with K = 0.33 (press brake, default) or the outside
+  dimensions end to end (V-groove) (`profileStrip`, `src/core/geometry/bentPlate.ts`; see
+  DRAWING_STANDARDS.md, *Flat patterns*). Holes and end cuts of the strips are not drawn.
 - The heading counts both: `… flat patterns - 12 plate marks, 3 folded profile marks`.
   Without bends or folded sections the file is as before (no BEND layer).
+
+### 1.1 Unfold DXF per bent part
+
+*Fabrication → Unfold → Unfold DXF per part* (and the package output `unfold-dxf`, folder
+`06-Exports/CNC/Unfold`): one file per unique bent part — bent plates and parts bent from
+sheet — named by its mark, plus `unfold.csv` (mark, qty, kind, thickness, material, blank
+width and length, folds, file). It is laid out as a folding shop's own unfold:
+
+| Item | Convention |
+|---|---|
+| Format | ASCII DXF R12, mm, full size, bounding box at (0, 0) |
+| Blank layer (default `CUT`, colour 3) | The blank as one closed `POLYLINE`; holes of bent plates as `CIRCLE` / slot polylines |
+| Fold layer (default `BEND`, colour 1, `DASHED`) | Fold lines across the blank: along the length of a folded section, at the bend lines of a bent plate |
+| Mark layer (default `TEXT`, colour 6) | The part mark centred on the blank, height 20 % of its smaller side (3–120 mm) |
+
+The layer names are set in the *Unfold* card, or read from a sample unfold of the folding
+shop (*From sample DXF…*: the layer of its closed outline, of its lines and of its text —
+`CUT`, `Grouve`, `Text` for the client's file). The *fold method* sets how folded sections
+are developed: *Press brake (K-factor)* or *V-groove (outside dims)* — the outside dimensions
+end to end with the fold lines at the outer corners (a 2 mm lipped U 88 × 177 with 13 mm lips:
+468 wide, folds at 13, 190, 278, 455). Extruded and rolled sections have no unfold. Holes of
+folded sections are not mapped onto their strip (see the part drawing's hole table). Code:
+`unfoldDxfFiles`, `unfoldToDxf`, `unfoldLayersFromDxf` in `src/core/fabrication/plateDxf.ts`.
+Settings: `settings.fabrication.unfoldMethod`, `unfoldLayers`.
 
 ## 2. DSTV NC1 for plates
 

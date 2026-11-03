@@ -8,7 +8,8 @@ import type { ToolModule, Json } from './types';
 import { useStore } from '../../state/store';
 import type { AlignMode, Id, MemberRole, Vec2 } from '../../core/model/types';
 import { MEMBER_ROLES } from '../../core/model/types';
-import { getProfile, profileFromDef, profileMassIn, type ProfileDef } from '../../core/library/profiles';
+import { getProfile, profileFromDef, profileMassIn, type ProfileDef, type ProfileProcess } from '../../core/library/profiles';
+import { profileProcess } from '../../core/library/forming';
 import { findMaterial } from '../../core/library/materials';
 import { INSERTION_PRESETS, insertionPreset, loopId, sketchToDef, type InsertionPreset, type Sketch, type SketchVertex } from '../../core/library/sketch';
 import { parseProfileDxf } from '../../core/library/profileDxf';
@@ -51,7 +52,17 @@ function summary(name: string) {
     WzCm3: r2(p.Wz / 1e3),
     surfaceM2PerM: Math.round(p.surface * 1000) / 1000,
     insertionFromBoxCentre: p.insertion ? { y: r2(p.insertion.x), z: r2(p.insertion.y) } : null,
+    made: (() => {
+      const m = profileProcess(p);
+      return { process: m.process, auto: m.auto, reason: m.reason, unfold: m.process === 'bent' };
+    })(),
   };
+}
+
+/** A making process from tool input (bent / extruded / rolled). */
+function processOf(v: unknown): ProfileProcess {
+  if (v === 'bent' || v === 'extruded' || v === 'rolled') return v;
+  throw new Error('process must be bent, extruded or rolled.');
 }
 
 /** Add or replace definitions in the project library (one undo step). */
@@ -77,6 +88,7 @@ export const profilesModule: ToolModule = {
           name: str,
           family: str,
           material: { type: 'string', description: 'e.g. S355, 6063 T6 (mass uses its density)' },
+          process: { type: 'string', enum: ['bent', 'extruded', 'rolled'], description: 'how it is made: bent from sheet gets an unfold (default: constant-thickness strips bent, else extruded)' },
           mode: { type: 'string', enum: ['outline', 'thin_wall'] },
           outer: loop,
           holes: { type: 'array', items: loop },
@@ -97,7 +109,7 @@ export const profilesModule: ToolModule = {
         'Import custom profiles from DXF text: closed polylines (bulges kept), circles and joined lines/arcs; the largest loops are outlines, loops inside are holes. Names from TEXT/MTEXT inside or near each outline, insertion point from a POINT or a marker on an INSERT/INS/REF layer, else the origin. Units from $INSUNITS unless unitScale (mm per drawing unit) is given. only: import just these names.',
       input_schema: {
         type: 'object',
-        properties: { dxf: str, fileName: str, unitScale: num, family: str, material: str, only: { type: 'array', items: str }, replace: { type: 'boolean' } },
+        properties: { dxf: str, fileName: str, unitScale: num, family: str, material: str, process: { type: 'string', enum: ['bent', 'extruded', 'rolled'] }, only: { type: 'array', items: str }, replace: { type: 'boolean' } },
         required: ['dxf'],
       },
     },
@@ -153,6 +165,7 @@ export const profilesModule: ToolModule = {
       const ins = input.insertion;
       if (Array.isArray(ins)) sketch.insertion = { x: Number(ins[0]), y: Number(ins[1]) };
       const def = sketchToDef(sketch, { name, family: (input.family as string) || undefined, material: input.material ? findMaterial(input.material as string)!.name : undefined });
+      if (input.process !== undefined) def.process = processOf(input.process);
       if (typeof ins === 'string') {
         if (!PRESETS.includes(ins as InsertionPreset)) throw new Error(`insertion preset must be one of ${PRESETS.join(', ')}.`);
         if (def.shape.type === 'POLY') {
@@ -176,7 +189,8 @@ export const profilesModule: ToolModule = {
       const only = (input.only as string[] | undefined)?.map((s) => s.toLowerCase());
       const ok = r.profiles.filter((f) => !f.error && (!only || only.includes(f.def.name.toLowerCase())));
       const bad = r.profiles.filter((f) => f.error).map((f) => ({ name: f.def.name, error: f.error }));
-      if (ok.length) addDefs(ok.map((f) => f.def), 'Assistant: import DXF profiles', !!input.replace);
+      const proc = input.process !== undefined ? processOf(input.process) : undefined;
+      if (ok.length) addDefs(ok.map((f) => (proc ? { ...f.def, process: proc } : f.def)), 'Assistant: import DXF profiles', !!input.replace);
       return {
         imported: ok.map((f) => ({ ...summary(f.def.name), nameFrom: f.nameFrom, insertionFrom: f.insertionFrom, warnings: f.warnings })),
         rejected: bad,

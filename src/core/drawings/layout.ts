@@ -27,6 +27,12 @@ export function frameRect(size: SheetSize): Rect {
   return { x0: 20, y0: 10, x1: s.w - 10, y1: s.h - 10 };
 }
 
+/** The frame as the layout sees it: above a full-width title block strip (`Sheet.floor`). */
+export function layoutRect(s: { floor: number }, size: SheetSize): Rect {
+  const f = frameRect(size);
+  return s.floor > 0 ? { ...f, y0: f.y0 + s.floor } : f;
+}
+
 /** ISO 5457 frame with grid reference zones and centring marks. */
 export function drawFrame(s: Sheet, size: SheetSize) {
   const f = frameRect(size);
@@ -103,7 +109,9 @@ export function projectionSymbol(s: Sheet, x: number, y: number, method: 'first'
 
 /** Revision table directly above the title block: header at the bottom, entries upwards (latest 4). */
 export function drawRevisionTable(s: Sheet, size: SheetSize, revisions: DrawingRevision[]) {
-  const f = frameRect(size);
+  // The template has its own revision rows.
+  if (s.tb.rev <= 0) return;
+  const f = layoutRect(s, size);
   const W = s.tb.w;
   const x0 = f.x1 - W;
   const y0 = f.y0 + s.tb.h;
@@ -271,11 +279,14 @@ export interface PackResult {
 
 /** Reserved regions of a sheet that blocks must keep clear of: title block with the revision table, centring marks. */
 export function reservedRects(s: Sheet, size: SheetSize): PlacedBlock[] {
-  const f = frameRect(size);
+  const fr = frameRect(size);
+  const f = layoutRect(s, size);
   const mx = s.w / 2;
   const my = s.h / 2;
   return [
-    { id: 'title-block', rect: { x0: f.x1 - s.tb.w, y0: f.y0, x1: f.x1, y1: f.y0 + s.tb.h + REV_H } },
+    // The block (with its revision table) at the bottom right — on a strip, the revision table on top of it.
+    { id: 'title-block', rect: { x0: f.x1 - s.tb.w, y0: fr.y0, x1: f.x1, y1: f.y0 + s.tb.h + s.tb.rev } },
+    ...(s.floor > 0 ? [{ id: 'title-strip', rect: { x0: fr.x0, y0: fr.y0, x1: fr.x1, y1: f.y0 } }] : []),
     { id: 'centring-mark:bottom', rect: { x0: mx - 0.5, y0: f.y0, x1: mx + 0.5, y1: f.y0 + 5 } },
     { id: 'centring-mark:top', rect: { x0: mx - 0.5, y0: f.y1 - 5, x1: mx + 0.5, y1: f.y1 } },
     { id: 'centring-mark:left', rect: { x0: f.x0, y0: my - 0.5, x1: f.x0 + 5, y1: my + 0.5 } },
@@ -318,11 +329,11 @@ function usedGroups(s: Sheet): Map<string, number> {
  * next sheet of the drawing.
  */
 export function packBlocks(s: Sheet, size: SheetSize, input: Block[], o: PackOptions = {}): PackResult {
-  const f = frameRect(size);
+  const f = layoutRect(s, size);
   const H = f.y1 - f.y0;
   const gap = 4;
   const rightMax = o.rightMax ?? f.y0 + H * 0.66;
-  let rightTop = f.y0 + s.tb.h + REV_H;
+  let rightTop = f.y0 + s.tb.h + s.tb.rev;
   const xr = f.x1 - s.tb.w;
   const seen = usedGroups(s);
   const placed: PlacedBlock[] = [];
@@ -413,7 +424,7 @@ export function packBlocks(s: Sheet, size: SheetSize, input: Block[], o: PackOpt
  * blocks that did not fit on this sheet either.
  */
 export function packColumns(s: Sheet, size: SheetSize, input: Block[], region?: Rect): Block[] {
-  const f = frameRect(size);
+  const f = layoutRect(s, size);
   const gap = 4;
   const r: Rect = region ?? { x0: f.x0 + 6, y0: f.y0 + 6, x1: f.x1 - 6, y1: f.y1 - 6 };
   // Reserved regions; the title block keeps a gap to the blocks beside it.

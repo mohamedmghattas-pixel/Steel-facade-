@@ -23,6 +23,7 @@ import type { Assembly, DerivedModel, Part } from '../derive/model';
 import { defaultZoning } from '../model/ops';
 import { GA_AXES } from './cuts';
 import { frameRect, type Rect } from './layout';
+import { sheetFurniture } from './template';
 import { centroid, partCorners } from './project';
 import { ISO_SCALES, TEXT } from './standards';
 import type { DrawCtx } from './compose';
@@ -494,8 +495,10 @@ export interface ZoneSheetLayout {
  * holds the key plan at the top and notes and legends above the revision table;
  * the bottom band left of it holds the tables; the view takes the rest.
  */
-export function zoneSheetLayout(size: SheetSize, tb: { w: number; h: number }): ZoneSheetLayout {
-  const f = frameRect(size);
+export function zoneSheetLayout(size: SheetSize, tb: { w: number; h: number; floor?: number }): ZoneSheetLayout {
+  const fr = frameRect(size);
+  // Above a full-width title block strip.
+  const f = { ...fr, y0: fr.y0 + (tb.floor ?? 0) };
   const H = f.y1 - f.y0;
   const gap = 4;
   const xr = f.x1 - tb.w;
@@ -675,12 +678,12 @@ const dirLabel = (view: ZoneView, sg: FacadeSegment, segments: number) =>
  * is legible on one sheet in the world projection). `oneSheetDen` is the scale
  * the undivided sheet would use.
  */
-export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }, oneSheetDen: number): ZonePlan | null {
+export function zonePlan(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number; floor?: number }, oneSheetDen: number): ZonePlan | null {
   return drain(zonePlanSteps(p, dm, view, size, tb, oneSheetDen));
 }
 
 /** zonePlan in steps (yields between pieces of work), for building the drawing index in slices. */
-export function* zonePlanSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }, oneSheetDen: number): Generator<void, ZonePlan | null> {
+export function* zonePlanSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number; floor?: number }, oneSheetDen: number): Generator<void, ZonePlan | null> {
   const z = zoningSettings(p);
   if (!z.enabled || !dm.parts.length) return null;
   const segments: FacadeSegment[] =
@@ -922,14 +925,14 @@ export function* zonePlanSteps(p: Project, dm: DerivedModel, view: ZoneView, siz
  * tables): the model with its grids and levels in the area left of the title
  * block column, less the room for level labels, bubbles and dimensions.
  */
-export function oneSheetDen(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }): number {
+export function oneSheetDen(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number; floor?: number }): number {
   return drain(oneSheetDenSteps(p, dm, view, size, tb));
 }
 
-function* oneSheetDenSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number }): Generator<void, number> {
+function* oneSheetDenSteps(p: Project, dm: DerivedModel, view: ZoneView, size: SheetSize, tb: { w: number; h: number; floor?: number }): Generator<void, number> {
   const f = frameRect(size);
   const W = f.x1 - f.x0 - tb.w - 8 - 48;
-  const H = f.y1 - f.y0 - 50;
+  const H = f.y1 - f.y0 - 50 - (tb.floor ?? 0);
   const fr = worldFrame(view);
   let e: Extent = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
   const grow = (q: Vec2) => (e = { x0: Math.min(e.x0, q.x), y0: Math.min(e.y0, q.y), x1: Math.max(e.x1, q.x), y1: Math.max(e.y1, q.y) });
@@ -976,7 +979,7 @@ export function* zonePlanForSteps(ctx: DrawCtx, view: ZoneView): Generator<void,
   const key = `${view}|${size}`;
   const cache = (ctx.zonePlans ??= new Map());
   if (!cache.has(key)) {
-    const tb = { w: ctx.template.width, h: ctx.template.height };
+    const tb = sheetFurniture(ctx.template, size);
     const one = yield* oneSheetDenSteps(ctx.p, ctx.dm, view, size, tb);
     yield;
     const plan = yield* zonePlanSteps(ctx.p, ctx.dm, view, size, tb, one);

@@ -129,6 +129,8 @@ export function assemblyDrawing(p: Project, dm: DerivedModel, asm: Assembly, qty
     title: `Assembly ${asm.mark} – ${desc}`,
     subtitle: `${asm.name ? `${asm.name} · ` : ''}${qty} off · ${asm.mass.toFixed(1)} kg each · ${set.standard === 'ISO' ? `EN 1090-2 ${set.executionClass}` : 'AISC 303'}`,
     scale,
+    material: main.material,
+    finish: main.finish,
   });
 }
 

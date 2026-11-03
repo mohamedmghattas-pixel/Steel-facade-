@@ -25,7 +25,8 @@ import { assemblyByPart, type Assembly, type BoltItem, type DerivedModel, type P
 import { toCsv } from '../reports/bom';
 import type { DLayer, Drawing } from './types';
 import { Sheet, balloon, dimChain, dimLinear, dimRunning, drawTable, tableSize, type TableSpec } from './dims';
-import { frameRect, notesBlock, packBlocks, tableBlock, REV_H, type Block, type Rect } from './layout';
+import { frameRect, notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
+import { sheetFurniture } from './template';
 import { ISO_SCALES, TEXT, generalNotes, scaleLabel } from './standards';
 import { bounds, partCorners } from './project';
 import { depHash, designation, finalize, memo, newSheet, type DrawCtx, type PlanItem } from './compose';
@@ -808,8 +809,9 @@ export function anchorItems(ctx: DrawCtx): PlanItem[] {
   const rowH = 4.5;
   const tableW = ANCHOR_COLS.reduce((t, c) => t + c.w, 0);
   // Beside the title column the table can run down to the bottom of the frame, else it ends above the revision table.
-  const besideTitle = f.x0 + 4 + tableW < f.x1 - ctx.template.width - 4;
-  const bottom = besideTitle ? f.y0 + 8 : f.y0 + ctx.template.height + REV_H + 8;
+  const fur = sheetFurniture(ctx.template, size);
+  const besideTitle = f.x0 + 4 + tableW < f.x1 - fur.w - 4;
+  const bottom = f.y0 + fur.floor + (besideTitle ? 8 : fur.h + fur.rev + 8);
   const perSheet = Math.max(8, Math.floor((f.y1 - 4 - 5 - bottom) / rowH) - 1);
   const pages = Math.ceil(rows.length / perSheet);
   // Totals by type, size and length.
@@ -859,7 +861,7 @@ export function anchorItems(ctx: DrawCtx): PlanItem[] {
           s.tb.w,
         ),
       ];
-      if (besideTitle || top - sz.h > f.y0 + ctx.template.height + REV_H + 60) packBlocks(s, size, blocks);
+      if (besideTitle || top - sz.h > f.y0 + fur.floor + fur.h + fur.rev + 60) packBlocks(s, size, blocks);
     }
     return finalize(ctx, s, size, {
       id: `anchors-${i + 1}`,

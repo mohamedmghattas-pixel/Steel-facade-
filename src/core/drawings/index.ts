@@ -86,6 +86,7 @@ export {
   DEFAULT_TEMPLATE_ID,
   FIELD_SOURCES,
   FREE_TEMPLATE_MAX,
+  SPAN_TEMPLATE_MAX,
   TEMPLATE_TEXT_HEIGHTS,
   activeTemplate,
   drawTemplateTitleBlock,
@@ -97,13 +98,26 @@ export {
   placeholderSource,
   sampleTitleData,
   sanitizeTemplate,
+  sheetFurniture,
   templateBox,
   templateTextValue,
   textPlaceholders,
   titleBlockSvg,
   type TitleData,
 } from './template';
-export { TITLE_BLOCK_UNITS, importScale, readTitleBlockDxf, titleBlockSummary, titleBlockTemplate, type TbText, type TitleBlockChoice, type TitleBlockDxf } from './titleBlockDxf';
+export {
+  TITLE_BLOCK_UNITS,
+  applyFoundValues,
+  foundProjectValues,
+  importScale,
+  readTitleBlockDxf,
+  titleBlockSummary,
+  titleBlockTemplate,
+  type TbRegion,
+  type TbText,
+  type TitleBlockChoice,
+  type TitleBlockDxf,
+} from './titleBlockDxf';
 
 export function partDrawing(p: Project, dm: DerivedModel, part: Part, qty: number, ctx: DrawCtx = makeCtx(p, dm)): Drawing {
   return partDrawingCtx(ctx, part, qty);

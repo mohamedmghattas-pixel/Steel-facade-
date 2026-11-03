@@ -14,7 +14,8 @@
  * project, project number and client, and the ISO 5456-2 projection symbol with
  * the main scale. Lettering per ISO 3098 (type B, 1.8 mm labels, 2.5 / 3.5 / 5 mm values).
  */
-import type { Project, SheetSize, SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateText, Vec2 } from '../model/types';
+import type { DrawingRevision, Finish, Project, SheetSize, SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateRevTable, TemplateText, Vec2 } from '../model/types';
+import { fabSettings } from '../fabrication/settings';
 import { Sheet } from './dims';
 import { frameRect, projectionSymbol, REV_H } from './layout';
 import { entitiesToSvg } from './render';
@@ -75,6 +76,9 @@ export const FIELD_SOURCES: { value: string; label: string }[] = [
   { value: 'drawing.checked', label: 'Checked by' },
   { value: 'drawing.approved', label: 'Approved by' },
   { value: 'drawing.standard', label: 'Drawing standard' },
+  { value: 'drawing.mark', label: 'Mark (part or assembly)' },
+  { value: 'drawing.material', label: 'Material (main part)' },
+  { value: 'drawing.finish', label: 'Finish / coating (main part)' },
   { value: 'projection', label: 'Projection symbol + scale' },
   { value: 'logo', label: 'Logo' },
   { value: 'text:', label: 'Fixed text' },
@@ -94,6 +98,32 @@ export interface TitleData {
   createdBy: string;
   checkedBy: string;
   approvedBy: string;
+  /** Mark of the part or assembly drawn (empty on general sheets). */
+  mark?: string;
+  /** Material and finish of the main part (empty on general sheets). */
+  material?: string;
+  finish?: string;
+  /** Revision history, for a revision table inside the title block. */
+  revisions?: DrawingRevision[];
+}
+
+/** Finish of a part as printed in a title block: the coating system for painted parts (fabrication settings). */
+export function finishText(p: Project, f: Finish | undefined): string {
+  if (!f) return '';
+  const coats = fabSettings(p)
+    .paintCoats.map((c) => c.name.trim())
+    .filter(Boolean)
+    .join(' + ');
+  switch (f) {
+    case 'none':
+      return 'None';
+    case 'hdg':
+      return 'Hot-dip galvanized (EN ISO 1461)';
+    case 'paint':
+      return coats ? `Painted: ${coats}` : 'Painted';
+    case 'hdg+paint':
+      return coats ? `HDG + ${coats}` : 'HDG + paint';
+  }
 }
 
 /** The template used for every sheet: the active custom template, else the ISO 7200 default. */
@@ -108,6 +138,12 @@ const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite
 /** Size limits of templates with free content (imported or drawn): they must leave room for the views on an A3 sheet. */
 export const FREE_TEMPLATE_MAX = { w: 380, h: 240 } as const;
 export const FREE_TEMPLATE_MIN = { w: 40, h: 5 } as const;
+/** Size limits of a full-width strip (span 'width'), in its own units: it is scaled to the frame width on every sheet. */
+export const SPAN_TEMPLATE_MAX = { w: 5000, h: 2000 } as const;
+/** A strip may take at most this share of the frame height (it is scaled down further if needed). */
+export const SPAN_MAX_SHARE = 0.25;
+/** Width of the column above a full-width strip (notes, legends, the key plan), as the ISO 7200 block. */
+export const STRIP_COLUMN_W = 180;
 
 /** Does a template carry free content (linework, free texts or a logo rectangle) besides grid fields? */
 export const hasFreeContent = (t: Pick<SheetTemplate, 'graphics' | 'texts' | 'logoRect'>) => !!(t.graphics?.length || t.texts?.length || t.logoRect);
@@ -148,14 +184,28 @@ function cleanText(x: TemplateText): TemplateText | null {
   return out;
 }
 
+const REV_KEYS = new Set<TemplateRevTable['cols'][number]['key']>(['rev', 'description', 'date', 'drawn', 'checked', 'approved', 'status']);
+
+/** A revision table with valid columns and rows, else undefined. */
+function cleanRevTable(r: TemplateRevTable | undefined): TemplateRevTable | undefined {
+  if (!r || typeof r !== 'object' || !Array.isArray(r.cols) || !Array.isArray(r.rows)) return undefined;
+  const cols = r.cols.filter((c) => c && REV_KEYS.has(c.key) && fin(c.x0) && fin(c.x1) && c.x1 > c.x0).map((c) => ({ key: c.key, x0: c.x0, x1: c.x1 }));
+  const rows = r.rows.filter((q) => q && fin(q.y0) && fin(q.y1) && q.y1 > q.y0).map((q) => ({ y0: q.y0, y1: q.y1 }));
+  if (!cols.length || !rows.length) return undefined;
+  return { cols, rows: rows.slice(0, 40), h: fin(r.h) && r.h > 0 ? r.h : 2.2 };
+}
+
 /** A template with sane sizes (keeps imported or hand-edited JSON from breaking the sheets). */
 export function sanitizeTemplate(t: SheetTemplate): SheetTemplate {
   const free = hasFreeContent(t);
+  const span = t.span === 'width';
+  const maxW = span ? SPAN_TEMPLATE_MAX.w : FREE_TEMPLATE_MAX.w;
+  const maxH = span ? SPAN_TEMPLATE_MAX.h : FREE_TEMPLATE_MAX.h;
   const out: SheetTemplate = {
     ...t,
-    // Grid templates keep their original limits; free content keeps its imported size.
-    width: free ? Math.min(FREE_TEMPLATE_MAX.w, Math.max(FREE_TEMPLATE_MIN.w, num(t.width, 180))) : Math.min(400, Math.max(60, num(t.width, 180))),
-    height: free ? Math.min(FREE_TEMPLATE_MAX.h, Math.max(FREE_TEMPLATE_MIN.h, num(t.height, 40))) : Math.min(150, Math.max(10, num(t.height, 40))),
+    // Grid templates keep their original limits; free content keeps its imported size (a strip is scaled per sheet).
+    width: free || span ? Math.min(maxW, Math.max(FREE_TEMPLATE_MIN.w, num(t.width, 180))) : Math.min(400, Math.max(60, num(t.width, 180))),
+    height: free || span ? Math.min(maxH, Math.max(FREE_TEMPLATE_MIN.h, num(t.height, 40))) : Math.min(150, Math.max(10, num(t.height, 40))),
     grid: Math.max(0.5, num(t.grid, 1)),
     notes: Array.isArray(t.notes) ? t.notes.filter((n) => typeof n === 'string') : [],
     fields: (Array.isArray(t.fields) ? t.fields : [])
@@ -178,6 +228,11 @@ export function sanitizeTemplate(t: SheetTemplate): SheetTemplate {
     else delete out.logoRect;
   }
   if (t.border !== undefined) out.border = t.border !== false;
+  if (span) out.span = 'width';
+  else delete out.span;
+  const rt = cleanRevTable(t.revTable);
+  if (rt) out.revTable = rt;
+  else delete out.revTable;
   if (t.imported !== undefined) {
     const im = t.imported;
     if (im && typeof im === 'object') out.imported = { file: String(im.file ?? ''), units: String(im.units ?? ''), unitScale: num(im.unitScale, 1), date: String(im.date ?? '') };
@@ -225,6 +280,8 @@ export function parseTemplates(json: string): SheetTemplate[] {
         ...(t.logoRect !== undefined ? { logoRect: t.logoRect } : {}),
         ...(t.border !== undefined ? { border: t.border } : {}),
         ...(t.imported !== undefined ? { imported: t.imported } : {}),
+        ...(t.span !== undefined ? { span: t.span } : {}),
+        ...(t.revTable !== undefined ? { revTable: t.revTable } : {}),
       }),
     );
   }
@@ -276,6 +333,12 @@ export function fieldValue(p: Project, source: string, d: TitleData): string {
       return d.approvedBy;
     case 'drawing.standard':
       return set.standard === 'ISO' ? 'ISO / EN 1090-2' : 'ASME / AISC 303';
+    case 'drawing.mark':
+      return d.mark ?? '';
+    case 'drawing.material':
+      return d.material ?? '';
+    case 'drawing.finish':
+      return d.finish ?? '';
     default:
       return '';
   }
@@ -325,6 +388,9 @@ const KEYWORD_LIST: [string, string[]][] = [
   ['drawing.checked', ['CHECKED', 'CHECKEDBY', 'CHECKER']],
   ['drawing.approved', ['APPROVED', 'APPROVEDBY', 'APPROVER']],
   ['drawing.standard', ['STANDARD', 'DRAWINGSTANDARD']],
+  ['drawing.mark', ['MARK', 'PARTNO', 'PARTNUMBER', 'PARTNR', 'PARTMARK', 'PIECEMARK', 'PIECENO', 'ASSEMBLYMARK', 'ASSEMBLYNO', 'ASSEMBLYNUMBER', 'ASSYNO', 'ITEMNO', 'POSITION', 'POSNO']],
+  ['drawing.material', ['MATERIAL', 'GRADE', 'MATERIALGRADE', 'STEELGRADE', 'MAT']],
+  ['drawing.finish', ['FINISH', 'COATING', 'SURFACETREATMENT', 'SURFACEFINISH', 'TREATMENT', 'PROTECTION', 'CORROSIONPROTECTION']],
   ['projection', ['PROJECTION', 'PROJECTIONSYMBOL']],
 ];
 const normKey = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -378,6 +444,19 @@ function fitText(v: string, h: number, maxW: number | undefined, bold = false): 
   return v.length > max ? `${v.slice(0, max - 1)}…` : v;
 }
 
+/** Smallest share of its height a field value may shrink to before it is shortened. */
+const SHRINK_MIN = 0.7;
+
+/** A value fitted into `maxW`: first smaller lettering (down to 70 %), then shortened with "…". */
+function fitValue(v: string, h: number, maxW: number | undefined, bold = false): { text: string; h: number } {
+  if (!maxW || maxW <= 0 || !v) return { text: v, h };
+  const adv = bold ? 0.8 : 0.72;
+  const need = v.length * h * adv;
+  if (need <= maxW) return { text: v, h };
+  const h2 = Math.max(h * SHRINK_MIN, maxW / (v.length * adv));
+  return { text: fitText(v, h2, maxW, bold), h: h2 };
+}
+
 const LAYER_OF: Record<TemplateLineWeight, DLayer> = { thin: 'thin', medium: 'medium', wide: 'visible', frame: 'border' };
 
 /** An entity scaled by k about the origin, then moved by (ox, oy). */
@@ -401,10 +480,29 @@ function mapEnt(e: DEnt, k: number, ox: number, oy: number): DEnt {
  * Size of a template's title block on a sheet: the template size, scaled down (k < 1)
  * only where it would not fit the frame with the revision table above it.
  */
-export function templateBox(t: Pick<SheetTemplate, 'width' | 'height'>, size: SheetSize): { w: number; h: number; k: number } {
+export function templateBox(t: Pick<SheetTemplate, 'width' | 'height' | 'span'>, size: SheetSize): { w: number; h: number; k: number } {
   const f = frameRect(size);
+  if (t.span === 'width') {
+    // A strip: the frame width, unless that would make it taller than its share of the frame.
+    const k = Math.min((f.x1 - f.x0) / t.width, ((f.y1 - f.y0) * SPAN_MAX_SHARE) / t.height);
+    return { w: t.width * k, h: t.height * k, k };
+  }
   const k = Math.min(1, (f.x1 - f.x0) / t.width, (f.y1 - f.y0 - REV_H - 2) / t.height);
   return k >= 1 ? { w: t.width, h: t.height, k: 1 } : { w: t.width * k, h: t.height * k, k };
+}
+
+/**
+ * What a sheet keeps clear for the template (mm on the sheet). `w` × `h`: the
+ * block at the bottom right, with `rev` for the revision table above it (0 when the
+ * block has its own) — the column above it is `w` wide. A full-width strip instead
+ * raises the floor of the layout by `floor` (its height); the column above it is the
+ * ISO 7200 width and starts on the strip.
+ */
+export function sheetFurniture(t: Pick<SheetTemplate, 'width' | 'height' | 'span' | 'revTable'>, size: SheetSize): { w: number; h: number; rev: number; floor: number } {
+  const box = templateBox(t, size);
+  const rev = t.revTable ? 0 : REV_H;
+  if (t.span === 'width') return { w: Math.min(STRIP_COLUMN_W, box.w), h: 0, rev, floor: box.h };
+  return { w: box.w, h: box.h, rev, floor: 0 };
 }
 
 /**
@@ -507,12 +605,31 @@ export function drawTitleBlockAt(s: Sheet, x0: number, y0: number, p: Project, t
     }
     const raw = templateTextValue(p, tx.source, d);
     const v = raw || (PLACEHOLDER.has(tx.source) ? '—' : '');
-    s.text(at, fitText(v, tx.h, tx.maxW, tx.bold), tx.h, tx.anchor ?? 'start', 'text', tx.rot ?? 0, !!tx.bold);
+    // Fixed texts keep their size; values shrink a little before they are shortened.
+    const fit = tx.source.startsWith('text:') ? { text: fitText(v, tx.h, tx.maxW, tx.bold), h: tx.h } : fitValue(v, tx.h, tx.maxW, tx.bold);
+    s.text(at, fit.text, fit.h, tx.anchor ?? 'start', 'text', tx.rot ?? 0, !!tx.bold);
   }
 
   // Logo rectangle (free placement).
   const r = t.logoRect;
   if (r && t.logo) s.image({ x: x0 + r.x, y: y0 + r.y }, r.w, r.h, t.logo);
+
+  // Revision rows of the block itself: the latest revisions, oldest next to the header.
+  const rt = t.revTable;
+  if (rt && d.revisions?.length) {
+    const shown = d.revisions.slice(-rt.rows.length);
+    shown.forEach((rv, i) => {
+      const row = rt.rows[i];
+      const h = Math.min(rt.h, (row.y1 - row.y0) * 0.6);
+      const y = y0 + row.y0 + (row.y1 - row.y0 - h) / 2;
+      for (const c of rt.cols) {
+        const v = c.key === 'rev' ? rv.rev : c.key === 'description' ? rv.description : c.key === 'date' ? rv.date : c.key === 'drawn' ? rv.drawn : c.key === 'checked' ? rv.checked : c.key === 'approved' ? rv.approved : rv.status;
+        const w = c.x1 - c.x0;
+        const mid = c.key === 'rev' || c.key === 'date';
+        s.text({ x: x0 + (mid ? (c.x0 + c.x1) / 2 : c.x0 + h * 0.4), y }, fitText(v ?? '', h, w - h * 0.8), h, mid ? 'middle' : 'start', 'text');
+      }
+    });
+  }
 }
 
 const rectCorners = (x: number, y: number, w: number, h: number): Vec2[] => [
@@ -558,5 +675,9 @@ export function sampleTitleData(p: Project): TitleData {
     createdBy: p.info.designer,
     checkedBy: p.drawings.settings.checkedBy,
     approvedBy: p.drawings.settings.approvedBy,
+    mark: 'M1',
+    material: 'S355J2',
+    finish: finishText(p, 'hdg'),
+    revisions: [{ rev: p.drawings.settings.revisionScheme === 'numeric' ? '0' : 'A', date: new Date().toISOString().slice(0, 10), description: 'First issue', drawn: p.info.designer, checked: p.drawings.settings.checkedBy, approved: p.drawings.settings.approvedBy, status: 'Released', fingerprint: '' }],
   };
 }

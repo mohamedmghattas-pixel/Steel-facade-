@@ -26,11 +26,12 @@
  * - Model space is read; a file with nothing in model space is read from paper
  *   space. Invisible entities, frozen and switched-off layers are left out.
  */
-import type { SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateText, Vec2 } from '../model/types';
+import type { Project, SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateRevTable, TemplateText, Vec2 } from '../model/types';
+import { hexChunks, olePicture } from '../io/bitmap';
 import { gHas, gNum, gStr, readDxf, type DxfDocument, type DxfEntity } from '../io/dxfReader';
 import { splinePoints, suggestedUnitScale, UNIT_NAMES } from '../io/dxfGeometry';
 import { textWidth } from './dims';
-import { FREE_TEMPLATE_MAX, placeholderSource, textPlaceholders } from './template';
+import { FREE_TEMPLATE_MAX, SPAN_TEMPLATE_MAX, placeholderSource, textPlaceholders } from './template';
 
 export type TbTextKind = 'TEXT' | 'MTEXT' | 'ATTDEF' | 'ATTRIB';
 type Anchor = 'start' | 'middle' | 'end';
@@ -49,6 +50,34 @@ export interface TbText {
   bold: boolean;
   /** Suggested mapping: a field source, "fmt:" (text with placeholders), or "text:" (fixed). */
   suggested: string;
+  /** The label in the same cell that the suggestion comes from ("JOB NAME:"). */
+  label?: string;
+  /** Not in the DXF: a value added for a label whose cell is empty (the sheet number beside "SHEET"). */
+  added?: boolean;
+}
+
+/**
+ * A part of the drawing that may be the title block (the file is a whole sheet:
+ * frame, views, tables and the title block): a block insert with title-block
+ * labels. Coordinates are those of `TitleBlockDxf.overview`.
+ */
+export interface TbRegion {
+  id: string;
+  label: string;
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  /** Title-block labels in it (DATE, DRAWN BY, SCALE, SHEET, REV …). */
+  score: number;
+}
+
+/** What was read from the whole drawing, for choosing the title block in it (mm, origin bottom left of the extents). */
+export interface TbOverview {
+  width: number;
+  height: number;
+  graphics: TemplateGraphic[];
+  texts: { x: number; y: number; h: number; text: string; anchor: Anchor; rot: number }[];
 }
 
 export interface TitleBlockDxf {
@@ -72,6 +101,22 @@ export interface TitleBlockDxf {
   logoRect?: { x: number; y: number; w: number; h: number };
   /** IMAGE entities found (external files: not imported). */
   images: number;
+  /** Logo found in the DXF (an embedded OLE picture inside the title block), PNG data URL. */
+  logo?: string;
+  /** Pixel size of that logo. */
+  logoPx?: { w: number; h: number };
+  /** Revision rows of the title block itself (a REV / DATE / description header with rows), mm of the block. */
+  revTable?: TemplateRevTable;
+  /** Suggested: the block spans the sheet width (a strip along the bottom of the frame), scaled to every frame. */
+  span: boolean;
+  /** Values found beside their labels (field source → text as drawn): project name, number, names … */
+  found: Record<string, string>;
+  /** The whole drawing (when the title block was picked out of it, or other parts could be). */
+  overview?: TbOverview;
+  /** Parts of the drawing that may be the title block, best first. */
+  regions: TbRegion[];
+  /** The part read as the title block (overview coordinates); absent: the whole drawing. */
+  region?: { x0: number; y0: number; x1: number; y1: number; id?: string };
   /** Entities read, by type. */
   read: Record<string, number>;
   /** Entities left out, by reason. */
@@ -82,6 +127,11 @@ export interface TitleBlockDxf {
 export interface TitleBlockDxfOptions {
   /** Millimetres per drawing unit (default: from the header, else guessed from the size). */
   unitScale?: number;
+  /**
+   * The part of the drawing to read: 'auto' (default: the best title-block region of a
+   * whole sheet, else everything), 'all', a region id, or a rectangle in overview mm.
+   */
+  region?: 'auto' | 'all' | string | { x0: number; y0: number; x1: number; y1: number };
 }
 
 /** Unit choices for files without units, mm per drawing unit. */
@@ -234,6 +284,19 @@ interface RawText {
   anchor: Anchor;
   rot: number;
   bold: boolean;
+  /** Top-level entity the text came from (index into the space's entities). */
+  src: number;
+}
+
+/** An OLE object (OLE2FRAME): frame in mm, server name ("Paintbrush Picture"), the entity (bytes read on demand). */
+interface Ole {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  kind: string;
+  e: DxfEntity;
+  src: number;
 }
 
 interface Col {
@@ -241,9 +304,15 @@ interface Col {
   /** Millimetres per drawing unit (in the root matrix). */
   k: number;
   graphics: TemplateGraphic[];
+  /** Top-level entity of each graphic (parallel to `graphics`). */
+  gsrc: number[];
   texts: RawText[];
-  images: { x0: number; y0: number; x1: number; y1: number }[];
+  images: { x0: number; y0: number; x1: number; y1: number; src: number }[];
   logoRects: { x0: number; y0: number; x1: number; y1: number }[];
+  oles: Ole[];
+  /** Top-level entity being collected, and a name for each (block name of an INSERT, else the type). */
+  src: number;
+  tops: string[];
   read: Record<string, number>;
   skipped: Record<string, number>;
   notes: Set<string>;
@@ -272,6 +341,7 @@ function addGraphic(col: Col, g: TemplateGraphic) {
     return;
   }
   col.graphics.push(g);
+  col.gsrc.push(col.src);
 }
 
 /** Chord points of a circular arc in local coordinates (centre c, radius r), mapped by M. */
@@ -397,7 +467,7 @@ function singleLineText(col: Col, e: DxfEntity, M: M2, kind: TbTextKind) {
   const qb = { x: q.x - Math.sin(r) * vOff, y: q.y + Math.cos(r) * vOff };
   const shown = text || tag || '';
   const pl = placeText(W, qb, rot, h, anchor, shown);
-  col.texts.push({ kind, ...(tag ? { tag } : {}), lines: [{ p: pl.p, text }], h: pl.h, anchor: pl.anchor, rot: pl.rot, bold: false });
+  col.texts.push({ kind, ...(tag ? { tag } : {}), lines: [{ p: pl.p, text }], h: pl.h, anchor: pl.anchor, rot: pl.rot, bold: false, src: col.src });
   bump(col.read, kind);
 }
 
@@ -429,7 +499,7 @@ function mtext(col: Col, e: DxfEntity, M: M2) {
     out = pl;
     lines.push({ p: pl.p, text });
   });
-  col.texts.push({ kind: 'MTEXT', lines, h: out.h, anchor: out.anchor, rot: out.rot, bold: parsed.bold });
+  col.texts.push({ kind: 'MTEXT', lines, h: out.h, anchor: out.anchor, rot: out.rot, bold: parsed.bold, src: col.src });
   bump(col.read, 'MTEXT');
 }
 
@@ -670,9 +740,16 @@ function collectEntity(col: Col, e: DxfEntity, M: M2, inh: { layer: string | nul
       const nu = gNum(e, 13, 1);
       const nv = gNum(e, 23, 1);
       const pts = [p, { x: p.x + U.x * nu, y: p.y + U.y * nu }, { x: p.x + V.x * nv, y: p.y + V.y * nv }, { x: p.x + U.x * nu + V.x * nv, y: p.y + U.y * nu + V.y * nv }].map((q) => ap(M, q.x, q.y));
-      col.images.push({ x0: Math.min(...pts.map((q) => q.x)), y0: Math.min(...pts.map((q) => q.y)), x1: Math.max(...pts.map((q) => q.x)), y1: Math.max(...pts.map((q) => q.y)) });
+      col.images.push({ x0: Math.min(...pts.map((q) => q.x)), y0: Math.min(...pts.map((q) => q.y)), x1: Math.max(...pts.map((q) => q.x)), y1: Math.max(...pts.map((q) => q.y)), src: col.src });
       col.notes.add('DXF images are external files: upload the logo (PNG or SVG); the image frame is suggested as its rectangle.');
       return bump(col.skipped, 'IMAGE (external file)');
+    }
+    case 'OLE2FRAME': {
+      // Upper-left (10) and lower-right (11) corners; the picture is decoded only when it is kept (logo).
+      const a = ap(M, gNum(e, 10), gNum(e, 20));
+      const b = ap(M, gNum(e, 11), gNum(e, 21));
+      col.oles.push({ x0: Math.min(a.x, b.x), y0: Math.min(a.y, b.y), x1: Math.max(a.x, b.x), y1: Math.max(a.y, b.y), kind: gStr(e, 3), e, src: col.src });
+      return bump(col.read, 'OLE2FRAME');
     }
     case 'VIEWPORT':
       return bump(col.skipped, 'VIEWPORT (layout window)');
@@ -732,9 +809,15 @@ function insert(col: Col, e: DxfEntity, M: M2, layer: string, lw: TemplateLineWe
 }
 
 function collectDoc(doc: DxfDocument, k: number, space: 'model' | 'paper'): Col {
-  const col: Col = { doc, k, graphics: [], texts: [], images: [], logoRects: [], read: {}, skipped: {}, notes: new Set(), stack: [], full: false };
+  const col: Col = { doc, k, graphics: [], gsrc: [], texts: [], images: [], logoRects: [], oles: [], src: 0, tops: [], read: {}, skipped: {}, notes: new Set(), stack: [], full: false };
   const top = doc.entities.filter((e) => (gNum(e, 67) === 1) === (space === 'paper'));
-  collect(col, top, [k, 0, 0, 0, k, 0], { layer: null }, 0, 'block');
+  const root: M2 = [k, 0, 0, 0, k, 0];
+  top.forEach((e, i) => {
+    if (col.full) return;
+    col.src = i;
+    col.tops.push(e.type === 'INSERT' ? gStr(e, 2) : e.type);
+    collectEntity(col, e, root, { layer: null }, 0, 'block');
+  });
   return col;
 }
 
@@ -842,50 +925,100 @@ export function readTitleBlockDxf(text: string, o: TitleBlockDxfOptions = {}): T
   let k = o.unitScale && o.unitScale > 0 ? o.unitScale : hdr.scale;
   let source: TitleBlockDxf['unitSource'] = o.unitScale && o.unitScale > 0 ? 'user' : hdr.source === 'none' ? 'guess' : hdr.source;
   let col = collectDoc(doc, k, space);
-  const extents = (c: Col) => {
-    const b = emptyBox();
-    for (const g of c.graphics) for (const q of graphicPoints(g)) grow(b, q);
-    for (const t of c.texts) for (const l of t.lines) if (l.text.trim()) for (const q of textCorners(l.p, l.text, t.h, t.anchor, t.rot)) grow(b, q);
-    for (const im of c.images) {
-      grow(b, { x: im.x0, y: im.y0 });
-      grow(b, { x: im.x1, y: im.y1 });
-    }
-    return b;
-  };
-  let box = extents(col);
+  let box = extentsOf(col, () => true);
   if (!Number.isFinite(box.x0)) throw new Error('No title block found: the DXF has no lines, texts or blocks in model space or paper space.');
   if (source === 'guess') {
     const g = guessUnitScale(box.x1 - box.x0);
     if (g !== 1) {
       k = g;
       col = collectDoc(doc, k, space);
-      box = extents(col);
+      box = extentsOf(col, () => true);
     }
   }
-  const dx = -box.x0;
-  const dy = -box.y0;
-  const graphics = col.graphics.map((g) => shiftGraphic(g, dx, dy, 1));
+  // A whole sheet: the block insert with the most title-block labels is the title block.
+  const regions = findRegions(col, box);
+  const whole = (box.x1 - box.x0) * (box.y1 - box.y0);
+  const best = regions[0];
+  const autoPick = best && best.score >= 3 && (best.x1 - best.x0) * (best.y1 - best.y0) < 0.6 * whole ? best : undefined;
+  let pick: Box | undefined;
+  let pickId: string | undefined;
+  const want = o.region ?? 'auto';
+  if (want === 'auto') {
+    pick = autoPick;
+    pickId = autoPick?.id;
+  } else if (typeof want === 'string' && want !== 'all') {
+    const r = regions.find((x) => x.id === want);
+    if (r) {
+      pick = r;
+      pickId = r.id;
+    }
+  } else if (typeof want === 'object') pick = { x0: want.x0 + box.x0, y0: want.y0 + box.y0, x1: want.x1 + box.x0, y1: want.y1 + box.y0 };
+  const tol = 0.5;
+  const inPick = (b: Box) => !pick || (b.x0 >= pick.x0 - tol && b.y0 >= pick.y0 - tol && b.x1 <= pick.x1 + tol && b.y1 <= pick.y1 + tol);
+  const centreIn = (b: Box) => !pick || ((b.x0 + b.x1) / 2 >= pick.x0 && (b.x0 + b.x1) / 2 <= pick.x1 && (b.y0 + b.y1) / 2 >= pick.y0 && (b.y0 + b.y1) / 2 <= pick.y1);
+  const keepG = col.graphics.map((g) => inPick(boxOfPoints(graphicPoints(g))));
+  const keepT = col.texts.map((t) => inPick(rawTextBox(t)));
+  const kept = extentsOf(col, (kind, i) => (kind === 'g' ? keepG[i] : kind === 't' ? keepT[i] : centreIn(kind === 'i' ? col.images[i] : col.oles[i])));
+  if (!Number.isFinite(kept.x0)) throw new Error('Nothing of the drawing lies in the chosen part: pick a larger area.');
+  const tb = pick ? { x0: Math.max(kept.x0, pick.x0), y0: Math.max(kept.y0, pick.y0), x1: Math.min(kept.x1, pick.x1), y1: Math.min(kept.y1, pick.y1) } : kept;
+  const dx = -tb.x0;
+  const dy = -tb.y0;
+  const graphics = col.graphics.filter((_, i) => keepG[i]).map((g) => shiftGraphic(g, dx, dy, 1));
   const P = (q: Vec2) => ({ x: rnd(q.x + dx), y: rnd(q.y + dy) });
-  const texts: TbText[] = col.texts
-    .filter((t) => t.lines.some((l) => l.text.trim()) || t.tag)
-    .map((t) => ({
-      kind: t.kind,
-      ...(t.tag ? { tag: t.tag } : {}),
-      lines: t.lines.map((l) => ({ ...P(l.p), text: l.text })),
-      h: rnd(t.h),
-      anchor: t.anchor,
-      rot: rnd(t.rot),
-      bold: t.bold,
-      suggested: suggest(t),
-    }));
-  const logo = col.images[0] ?? col.logoRects[0];
+  const width = rnd(tb.x1 - tb.x0);
+  const height = rnd(tb.y1 - tb.y0);
+  const raws = col.texts.filter((t, i) => keepT[i] && (t.lines.some((l) => l.text.trim()) || t.tag));
+  let texts: TbText[] = raws.map((t) => ({
+    kind: t.kind,
+    ...(t.tag ? { tag: t.tag } : {}),
+    lines: t.lines.map((l) => ({ ...P(l.p), text: l.text })),
+    h: rnd(t.h),
+    anchor: t.anchor,
+    rot: rnd(t.rot),
+    bold: t.bold,
+    suggested: suggest(t),
+  }));
+  const grid = gridOf(graphics, width, height);
+  const rev = findRevTable(texts, grid);
+  const revTable = rev?.table;
+  const found: Record<string, string> = {};
+  texts = pairLabels(texts, grid, rev?.box, found);
+  // Logo: an embedded picture whose centre lies in the title block, fitted into its cell.
   const notes = [...col.notes];
-  const width = rnd(box.x1 - box.x0);
-  const height = rnd(box.y1 - box.y0);
-  if (width > FREE_TEMPLATE_MAX.w || height > FREE_TEMPLATE_MAX.h)
-    notes.push(`The extents are ${Math.round(width)} × ${Math.round(height)} mm — larger than a title block (at most ${FREE_TEMPLATE_MAX.w} × ${FREE_TEMPLATE_MAX.h} mm): check the units, or keep only the title block in the DXF (no sheet frame).`);
+  let logo: { url: string; width: number; height: number } | null = null;
+  let logoBox: Box | undefined;
+  for (const ole of col.oles) {
+    if (!centreIn(ole)) continue;
+    const bytes = hexChunks(ole.e.values.filter((_, i) => ole.e.codes[i] === 310));
+    const pic = olePicture(bytes);
+    if (!pic) {
+      notes.push(`An embedded OLE object (${ole.kind || 'unknown'}) holds no picture that can be read: upload the logo instead.`);
+      continue;
+    }
+    logo = pic;
+    const c = { x: (ole.x0 + ole.x1) / 2 + dx, y: (ole.y0 + ole.y1) / 2 + dy };
+    const cell = cellAt(grid, c);
+    const fr = { x0: ole.x0 + dx, y0: ole.y0 + dy, x1: ole.x1 + dx, y1: ole.y1 + dy };
+    // The frame as drawn, kept inside the cell that holds its centre (some writers let it run over the lines).
+    const inset = Math.min(cell.x1 - cell.x0, cell.y1 - cell.y0) * 0.04;
+    logoBox = { x0: Math.max(fr.x0, cell.x0 + inset), y0: Math.max(fr.y0, cell.y0 + inset), x1: Math.min(fr.x1, cell.x1 - inset), y1: Math.min(fr.y1, cell.y1 - inset) };
+    if (logoBox.x1 - logoBox.x0 < 1 || logoBox.y1 - logoBox.y0 < 1) logoBox = { x0: cell.x0 + inset, y0: cell.y0 + inset, x1: cell.x1 - inset, y1: cell.y1 - inset };
+    break;
+  }
+  const otherOles = col.oles.filter((x) => !centreIn(x)).length;
+  if (otherOles && pick) notes.push(`${otherOles} embedded picture${otherOles === 1 ? '' : 's'} outside the title block left out.`);
+  const image = col.images.find((im) => centreIn(im));
+  const logoRect = col.logoRects.find((r) => centreIn(r));
+  const lr = logoBox ?? (image ? { x0: image.x0 + dx, y0: image.y0 + dy, x1: image.x1 + dx, y1: image.y1 + dy } : logoRect ? { x0: logoRect.x0 + dx, y0: logoRect.y0 + dy, x1: logoRect.x1 + dx, y1: logoRect.y1 + dy } : undefined);
+  // A strip across the sheet (most of the drawing's width), or a block far wider than high: span the frame.
+  const span = (pick ? width >= 0.85 * (box.x1 - box.x0) : false) || width / Math.max(height, 1e-9) >= 7;
+  if (!span && (width > FREE_TEMPLATE_MAX.w || height > FREE_TEMPLATE_MAX.h))
+    notes.push(`The extents are ${Math.round(width)} × ${Math.round(height)} mm — larger than a title block (at most ${FREE_TEMPLATE_MAX.w} × ${FREE_TEMPLATE_MAX.h} mm): check the units, or pick the title block in the drawing.`);
   if (source === 'guess') notes.push(`The file does not state its units: ${unitName(k)} assumed from the size — choose the units if the size is wrong.`);
   if (space === 'paper') notes.push('Read from paper space (model space is empty).');
+  if (pick && pickId && want === 'auto') notes.push(`The file is a whole drawing sheet: the title block was taken from block "${regions.find((r) => r.id === pickId)?.label ?? pickId}" (${Math.round(width)} × ${Math.round(height)}); choose another part of the drawing if it is not.`);
+  if (revTable) notes.push(`Revision table found in the title block (${revTable.rows.length} rows): revisions fill it, and no separate revision table is drawn.`);
+  const ov = regions.length || pick ? overviewOf(col, box) : undefined;
   return {
     graphics,
     texts,
@@ -897,12 +1030,271 @@ export function readTitleBlockDxf(text: string, o: TitleBlockDxfOptions = {}): T
     insunits: doc.insunits,
     measurement: doc.measurement,
     space,
-    ...(logo ? { logoRect: { x: rnd(logo.x0 + dx), y: rnd(logo.y0 + dy), w: rnd(logo.x1 - logo.x0), h: rnd(logo.y1 - logo.y0) } } : {}),
+    ...(lr ? { logoRect: { x: rnd(lr.x0), y: rnd(lr.y0), w: rnd(lr.x1 - lr.x0), h: rnd(lr.y1 - lr.y0) } } : {}),
     images: col.images.length,
+    ...(logo ? { logo: logo.url, logoPx: { w: logo.width, h: logo.height } } : {}),
+    ...(revTable ? { revTable } : {}),
+    span,
+    found,
+    ...(ov ? { overview: ov } : {}),
+    regions: regions.map((r) => ({ ...r, x0: rnd(r.x0 - box.x0), y0: rnd(r.y0 - box.y0), x1: rnd(r.x1 - box.x0), y1: rnd(r.y1 - box.y0) })),
+    ...(pick ? { region: { x0: rnd(tb.x0 - box.x0), y0: rnd(tb.y0 - box.y0), x1: rnd(tb.x1 - box.x0), y1: rnd(tb.y1 - box.y0), ...(pickId ? { id: pickId } : {}) } } : {}),
     read: col.read,
     skipped: col.skipped,
     notes,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Whole sheets: regions, cells, labels and the revision table
+
+function boxOfPoints(pts: Vec2[]): Box {
+  const b = emptyBox();
+  for (const q of pts) grow(b, q);
+  return b;
+}
+
+function rawTextBox(t: RawText): Box {
+  const b = emptyBox();
+  for (const l of t.lines) if (l.text.trim()) for (const q of textCorners(l.p, l.text, t.h, t.anchor, t.rot)) grow(b, q);
+  if (!Number.isFinite(b.x0) && t.lines[0]) grow(b, t.lines[0].p);
+  return b;
+}
+
+/** Extents of the collected items that `keep` accepts ('g' graphic, 't' text, 'i' image, 'o' OLE object, by index). */
+function extentsOf(col: Col, keep: (kind: 'g' | 't' | 'i' | 'o', i: number) => boolean): Box {
+  const b = emptyBox();
+  col.graphics.forEach((g, i) => keep('g', i) && graphicPoints(g).forEach((q) => grow(b, q)));
+  col.texts.forEach((t, i) => {
+    if (!keep('t', i)) return;
+    for (const l of t.lines) if (l.text.trim()) for (const q of textCorners(l.p, l.text, t.h, t.anchor, t.rot)) grow(b, q);
+  });
+  col.images.forEach((im, i) => {
+    if (!keep('i', i)) return;
+    grow(b, { x: im.x0, y: im.y0 });
+    grow(b, { x: im.x1, y: im.y1 });
+  });
+  return b;
+}
+
+/** Title-block label of a text: its field source ("JOB NAME:" → project.name, "DRAWN BY" → drawing.drawn), or null. */
+export function labelSource(text: string): string | null {
+  const t = text.trim().replace(/[:.\s]+$/, '');
+  if (!t || t.length > 24 || /^\d/.test(t)) return null;
+  return placeholderSource(t);
+}
+
+/** Top-level block inserts with title-block labels, as candidate title blocks (absolute mm), best first. */
+function findRegions(col: Col, all: Box): (TbRegion & Box)[] {
+  const by = new Map<number, { b: Box; score: number; n: number }>();
+  const at = (src: number) => {
+    let r = by.get(src);
+    if (!r) by.set(src, (r = { b: emptyBox(), score: 0, n: 0 }));
+    return r;
+  };
+  col.graphics.forEach((g, i) => {
+    const r = at(col.gsrc[i]);
+    for (const q of graphicPoints(g)) grow(r.b, q);
+  });
+  for (const t of col.texts) {
+    const r = at(t.src);
+    for (const q of graphicPoints({ t: 'poly', pts: textCorners(t.lines[0].p, t.lines.map((l) => l.text).join(' '), t.h, t.anchor, t.rot), closed: true })) grow(r.b, q);
+    r.n++;
+    if (t.lines.some((l) => labelSource(l.text))) r.score++;
+  }
+  const out: (TbRegion & Box)[] = [];
+  for (const [src, r] of by) {
+    if (col.tops[src] === undefined || !Number.isFinite(r.b.x0) || r.n < 2) continue;
+    const area = (r.b.x1 - r.b.x0) * (r.b.y1 - r.b.y0);
+    if (area >= 0.95 * (all.x1 - all.x0) * (all.y1 - all.y0)) continue;
+    out.push({ id: `top:${src}`, label: col.tops[src], ...r.b, score: r.score });
+  }
+  return out.sort((a, b) => b.score - a.score || (b.x1 - b.x0) * (b.y1 - b.y0) - (a.x1 - a.x0) * (a.y1 - a.y0));
+}
+
+/** The whole drawing for the region picker (mm from the bottom left of the extents). */
+function overviewOf(col: Col, box: Box): TbOverview {
+  return {
+    width: rnd(box.x1 - box.x0),
+    height: rnd(box.y1 - box.y0),
+    graphics: col.graphics.map((g) => shiftGraphic(g, -box.x0, -box.y0, 1)),
+    texts: col.texts.flatMap((t) => t.lines.filter((l) => l.text.trim()).map((l) => ({ x: rnd(l.p.x - box.x0), y: rnd(l.p.y - box.y0), h: rnd(t.h), text: l.text, anchor: t.anchor, rot: rnd(t.rot) }))),
+  };
+}
+
+interface Grid {
+  /** Horizontal segments: y, x from, x to. */
+  h: [number, number, number][];
+  /** Vertical segments: x, y from, y to. */
+  v: [number, number, number][];
+  w: number;
+  ht: number;
+}
+
+/** Axis-parallel segments of the linework (lines, rectangle and polyline edges). */
+function gridOf(graphics: TemplateGraphic[], w: number, ht: number): Grid {
+  const g: Grid = { h: [], v: [], w, ht };
+  const seg = (a: Vec2, b: Vec2) => {
+    const L = Math.hypot(b.x - a.x, b.y - a.y);
+    if (L < 1e-6) return;
+    if (Math.abs(a.y - b.y) <= 0.002 * L) g.h.push([(a.y + b.y) / 2, Math.min(a.x, b.x), Math.max(a.x, b.x)]);
+    else if (Math.abs(a.x - b.x) <= 0.002 * L) g.v.push([(a.x + b.x) / 2, Math.min(a.y, b.y), Math.max(a.y, b.y)]);
+  };
+  for (const gr of graphics) {
+    if (gr.t === 'line') seg(gr.a, gr.b);
+    else if (gr.t === 'rect' && !gr.fill) {
+      const c = [
+        { x: gr.x, y: gr.y },
+        { x: gr.x + gr.w, y: gr.y },
+        { x: gr.x + gr.w, y: gr.y + gr.h },
+        { x: gr.x, y: gr.y + gr.h },
+      ];
+      for (let i = 0; i < 4; i++) seg(c[i], c[(i + 1) % 4]);
+    } else if (gr.t === 'poly' && !gr.fill) for (let i = 0; i + 1 < gr.pts.length + (gr.closed ? 1 : 0); i++) seg(gr.pts[i], gr.pts[(i + 1) % gr.pts.length]);
+  }
+  return g;
+}
+
+/** The cell of the grid around a point: nearest lines above, below, left and right that pass it (else the block edges). */
+function cellAt(g: Grid, q: Vec2): Box {
+  const e = 0.05;
+  let x0 = 0;
+  let x1 = g.w;
+  let y0 = 0;
+  let y1 = g.ht;
+  for (const [y, a, b] of g.h) {
+    if (q.x < a - e || q.x > b + e) continue;
+    if (y > q.y + e) y1 = Math.min(y1, y);
+    else if (y < q.y - e) y0 = Math.max(y0, y);
+  }
+  for (const [x, a, b] of g.v) {
+    if (q.y < a - e || q.y > b + e) continue;
+    if (x > q.x + e) x1 = Math.min(x1, x);
+    else if (x < q.x - e) x0 = Math.max(x0, x);
+  }
+  return { x0, y0, x1, y1 };
+}
+
+const textCentre = (t: TbText): Vec2 => {
+  const l = t.lines.find((x) => x.text.trim()) ?? t.lines[0];
+  const c = textCorners(l, l.text, t.h, t.anchor, t.rot);
+  return { x: (c[0].x + c[3].x) / 2, y: (c[0].y + c[3].y) / 2 };
+};
+const sameBox = (a: Box, b: Box) => Math.abs(a.x0 - b.x0) < 0.01 && Math.abs(a.x1 - b.x1) < 0.01 && Math.abs(a.y0 - b.y0) < 0.01 && Math.abs(a.y1 - b.y1) < 0.01;
+
+/** Revision-table column of a header text. */
+function revColumn(text: string): TemplateRevTable['cols'][number]['key'] | null {
+  const k = text.toUpperCase().replace(/[^A-Z]/g, '');
+  if (/^(REV|REVISION|REVNO|REVINDEX|INDEX)$/.test(k)) return 'rev';
+  if (/^(DATE|REVDATE)$/.test(k)) return 'date';
+  if (/^(ACTION|DESCRIPTION|DESC|AMENDMENT|AMENDMENTS|REMARK|REMARKS|CHANGE|CHANGES|MODIFICATION|DETAILS|REASON)$/.test(k)) return 'description';
+  if (/^(DRAWN|DRAWNBY|BY|DRN|DR)$/.test(k)) return 'drawn';
+  if (/^(CHECKED|CHECKEDBY|CHK|CHKD|CH)$/.test(k)) return 'checked';
+  if (/^(APPROVED|APPROVEDBY|APP|APPD|APPR)$/.test(k)) return 'approved';
+  if (/^(STATUS)$/.test(k)) return 'status';
+  return null;
+}
+
+/**
+ * A revision table inside the title block: a header row with REV and at least one
+ * of DATE / description / names, each in its own cell, and rows of the same width
+ * running away from the header (up when the header is at the bottom).
+ */
+function findRevTable(texts: TbText[], g: Grid): { table: TemplateRevTable; box: Box } | undefined {
+  const heads = texts
+    .map((t) => ({ t, key: t.lines.length === 1 ? revColumn(t.lines[0].text) : null, c: textCentre(t) }))
+    .filter((x): x is { t: TbText; key: NonNullable<ReturnType<typeof revColumn>>; c: Vec2 } => !!x.key && !x.t.rot);
+  for (const r of heads.filter((x) => x.key === 'rev')) {
+    const cell = cellAt(g, r.c);
+    const row = heads.filter((x) => Math.abs(x.c.y - r.c.y) < Math.max(r.t.h, x.t.h) * 0.6).map((x) => ({ ...x, cell: cellAt(g, x.c) }));
+    const cols = row.filter((x) => Math.abs(x.cell.y0 - cell.y0) < 0.05 && Math.abs(x.cell.y1 - cell.y1) < 0.05);
+    const keys = new Set(cols.map((x) => x.key));
+    if (cols.length < 2 || keys.size < 2) continue;
+    cols.sort((a, b) => a.cell.x0 - b.cell.x0);
+    // Adjacent cells only: the header row of one table.
+    let ok = true;
+    for (let i = 1; i < cols.length; i++) if (Math.abs(cols[i].cell.x0 - cols[i - 1].cell.x1) > 0.05) ok = false;
+    if (!ok) continue;
+    const x0 = cols[0].cell.x0;
+    const x1 = cols[cols.length - 1].cell.x1;
+    const spans = (a: number, b: number) => a <= x0 + 0.05 * (x1 - x0) && b >= x1 - 0.05 * (x1 - x0);
+    const ys = [...new Set(g.h.filter(([, a, b]) => spans(a, b)).map(([y]) => Math.round(y * 1000) / 1000))].sort((a, b) => a - b);
+    const up = ys.filter((y) => y > cell.y1 + 0.05);
+    const down = ys.filter((y) => y < cell.y0 - 0.05).reverse();
+    const dir = up.length >= down.length ? 'up' : 'down';
+    const lines = dir === 'up' ? [cell.y1, ...up] : [cell.y0, ...down];
+    // The block edge closes the last row when no line does.
+    if (dir === 'up' && lines[lines.length - 1] < g.ht - 0.5 && up.length) lines.push(g.ht);
+    const rows: { y0: number; y1: number }[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const a = Math.min(lines[i - 1], lines[i]);
+      const b = Math.max(lines[i - 1], lines[i]);
+      if (b - a > 0.5) rows.push({ y0: rnd(a), y1: rnd(b) });
+    }
+    if (!rows.length) continue;
+    const table: TemplateRevTable = { cols: cols.map((x) => ({ key: x.key, x0: rnd(x.cell.x0), x1: rnd(x.cell.x1) })), rows, h: rnd(Math.min(...cols.map((x) => x.t.h))) };
+    const ally = [cell.y0, cell.y1, ...rows.flatMap((q) => [q.y0, q.y1])];
+    return { table, box: { x0, x1, y0: Math.min(...ally), y1: Math.max(...ally) } };
+  }
+  return undefined;
+}
+
+/** Field sources that a value beside a label may take (the projection symbol and the standard are not values). */
+const VALUE_SOURCES = (src: string) => src !== 'projection' && src !== 'drawing.standard';
+
+/**
+ * Filled-in sheets: a value in the same cell as a label ("JOB NAME:" … "Speed Park")
+ * becomes that field; a label alone in a roomy cell gets a value added (the sheet
+ * number beside "SHEET"). Texts of the revision table are left as drawn.
+ */
+function pairLabels(texts: TbText[], g: Grid, revBox: Box | undefined, found: Record<string, string>): TbText[] {
+  const info = texts.map((t) => {
+    const c = textCentre(t);
+    const whole = t.lines.map((l) => l.text).join(' ');
+    const insideRev = !!revBox && c.x >= revBox.x0 && c.x <= revBox.x1 && c.y >= revBox.y0 && c.y <= revBox.y1;
+    return { c, cell: cellAt(g, c), label: t.kind === 'TEXT' || t.kind === 'MTEXT' ? labelSource(whole) : null, insideRev };
+  });
+  const out = texts.map((t) => ({ ...t }));
+  const valueHeights: number[] = [];
+  texts.forEach((t, i) => {
+    const L = info[i];
+    if (!L.label || !VALUE_SOURCES(L.label) || L.insideRev || t.suggested !== 'text:') return;
+    const mates = texts.map((_, j) => j).filter((j) => j !== i && !info[j].insideRev && sameBox(info[j].cell, L.cell));
+    const values = mates.filter((j) => !info[j].label && texts[j].suggested === 'text:');
+    if (!values.length) return;
+    // The largest value text in the cell (a second line stays fixed).
+    const j = values.sort((a, b) => texts[b].h - texts[a].h)[0];
+    out[j].suggested = L.label;
+    out[j].label = t.lines.map((l) => l.text).join(' ').trim();
+    found[L.label] ??= texts[j].lines.map((l) => l.text).join(' ').trim();
+    valueHeights.push(texts[j].h);
+  });
+  const vh = valueHeights.length ? valueHeights.sort((a, b) => a - b)[Math.floor(valueHeights.length / 2)] : 0;
+  const used = new Set(Object.keys(found));
+  texts.forEach((t, i) => {
+    const L = info[i];
+    if (!L.label || !VALUE_SOURCES(L.label) || L.insideRev || used.has(L.label) || t.suggested !== 'text:') return;
+    const alone = !texts.some((_, j) => j !== i && sameBox(info[j].cell, L.cell));
+    const cellH = L.cell.y1 - L.cell.y0;
+    const h = vh || t.h;
+    const line = t.lines[0];
+    // Room for a value below the label.
+    const room = line.y - L.cell.y0;
+    if (!alone || t.rot || room < h * 1.4 || cellH < 2 * t.h) return;
+    used.add(L.label);
+    out.push({
+      kind: 'TEXT',
+      lines: [{ x: rnd((L.cell.x0 + L.cell.x1) / 2), y: rnd(L.cell.y0 + Math.max(0.6, (room - h) / 2)), text: '' }],
+      h: rnd(h),
+      anchor: 'middle',
+      rot: 0,
+      bold: false,
+      suggested: L.label,
+      label: t.lines.map((l) => l.text).join(' ').trim(),
+      added: true,
+    });
+  });
+  return out;
 }
 
 /** The header's unit name for a file ($INSUNITS), for messages. */
@@ -923,12 +1315,17 @@ export interface TitleBlockChoice {
   /** Outer border 0.7 mm (default on); linework on the outline is then left out. */
   border?: boolean;
   file?: string;
+  /** Span the frame width on every sheet (default: the import's suggestion). */
+  span?: boolean;
+  /** Use the revision rows found in the block (default on when found). */
+  revTable?: boolean;
 }
 
-/** Scale applied to an import: `scale` within the template limits. */
-export function importScale(imp: Pick<TitleBlockDxf, 'width' | 'height'>, scale = 1): number {
+/** Scale applied to an import: `scale` within the template limits (a strip spanning the frame has its own, wider ones). */
+export function importScale(imp: Pick<TitleBlockDxf, 'width' | 'height'>, scale = 1, span = false): number {
   const k = scale > 0 ? scale : 1;
-  return k * Math.min(1, FREE_TEMPLATE_MAX.w / (imp.width * k), FREE_TEMPLATE_MAX.h / (imp.height * k));
+  const M = span ? SPAN_TEMPLATE_MAX : FREE_TEMPLATE_MAX;
+  return k * Math.min(1, M.w / (imp.width * k), M.h / (imp.height * k));
 }
 
 /**
@@ -982,7 +1379,8 @@ function onOutline(g: TemplateGraphic, W: number, H: number): boolean {
  * filled per sheet, fixed texts, texts with placeholders), logo, size in mm.
  */
 export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlockChoice): SheetTemplate {
-  const k = importScale(imp, c.scale);
+  const span = c.span ?? imp.span;
+  const k = importScale(imp, c.scale, span);
   const W = rnd(imp.width * k);
   const H = rnd(imp.height * k);
   const border = c.border !== false;
@@ -1022,7 +1420,10 @@ export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlock
     const room = !t.rot && src !== 'projection' ? roomFor(graphics, others, x, y, style.h, t.anchor, W) : 0;
     texts.push({ x, y, ...style, source: src, ...(room > 0 ? { maxW: rnd(room) } : {}), origin });
   });
-  const lr = c.logoRect;
+  // The logo rectangle of the file unless the choice sets one (or removes it: logoRect undefined).
+  const lr = 'logoRect' in c ? c.logoRect : imp.logoRect;
+  const logo = c.logo ?? imp.logo;
+  const rt = c.revTable !== false ? imp.revTable : undefined;
   const t: SheetTemplate = {
     id,
     name: c.name || 'Imported title block',
@@ -1034,11 +1435,44 @@ export function titleBlockTemplate(imp: TitleBlockDxf, id: string, c: TitleBlock
     graphics,
     texts,
     border,
-    ...(c.logo ? { logo: c.logo } : {}),
+    ...(logo ? { logo } : {}),
     ...(lr && lr.w > 0 && lr.h > 0 ? { logoRect: { x: rnd(lr.x * k), y: rnd(lr.y * k), w: rnd(lr.w * k), h: rnd(lr.h * k) } } : {}),
     imported: { file: c.file ?? '', units: imp.units, unitScale: imp.unitScale, date: new Date().toISOString().slice(0, 10) },
+    ...(span ? { span: 'width' as const } : {}),
+    ...(rt ? { revTable: { cols: rt.cols.map((x) => ({ ...x, x0: rnd(x.x0 * k), x1: rnd(x.x1 * k) })), rows: rt.rows.map((r) => ({ y0: rnd(r.y0 * k), y1: rnd(r.y1 * k) })), h: rnd(rt.h * k) } } : {}),
   };
   return t;
+}
+
+/** Project-wide values a filled-in title block carries, with where they go in the project. */
+const PROJECT_VALUES: { source: string; label: string }[] = [
+  { source: 'project.name', label: 'Project name' },
+  { source: 'project.number', label: 'Project number' },
+  { source: 'project.client', label: 'Client' },
+  { source: 'owner', label: 'Legal owner' },
+  { source: 'drawing.drawn', label: 'Drawn by (designer)' },
+  { source: 'drawing.checked', label: 'Checked by' },
+  { source: 'drawing.approved', label: 'Approved by' },
+];
+
+/** The values found beside labels that belong to the project (name, number, client, names), with the project's current ones. */
+export function foundProjectValues(imp: Pick<TitleBlockDxf, 'found'>, p: Project): { source: string; label: string; value: string; current: string }[] {
+  const cur = (src: string) =>
+    src === 'project.name' ? p.info.name : src === 'project.number' ? p.info.number : src === 'project.client' ? p.info.client : src === 'owner' ? p.drawings.settings.legalOwner : src === 'drawing.drawn' ? p.info.designer : src === 'drawing.checked' ? p.drawings.settings.checkedBy : p.drawings.settings.approvedBy;
+  return PROJECT_VALUES.filter((x) => imp.found[x.source]?.trim()).map((x) => ({ ...x, value: imp.found[x.source].trim(), current: cur(x.source) ?? '' }));
+}
+
+/** Writes the project values found in a title block into the project (inside store.apply). */
+export function applyFoundValues(p: Project, imp: Pick<TitleBlockDxf, 'found'>) {
+  for (const v of foundProjectValues(imp, p)) {
+    if (v.source === 'project.name') p.info.name = v.value;
+    else if (v.source === 'project.number') p.info.number = v.value;
+    else if (v.source === 'project.client') p.info.client = v.value;
+    else if (v.source === 'owner') p.drawings.settings.legalOwner = v.value;
+    else if (v.source === 'drawing.drawn') p.info.designer = v.value;
+    else if (v.source === 'drawing.checked') p.drawings.settings.checkedBy = v.value;
+    else if (v.source === 'drawing.approved') p.drawings.settings.approvedBy = v.value;
+  }
 }
 
 /** One-line summary of what was read and left out, for the review dialog and the assistant. */

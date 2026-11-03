@@ -25,6 +25,7 @@ import {
   rectPts,
   resetEdits,
   readTitleBlockDxf,
+  applyFoundValues,
   sanitizeTemplate,
   sheetLabel,
   titleBlockSummary,
@@ -182,7 +183,7 @@ export const drawingsModule: ToolModule = {
     {
       name: 'sheet_templates',
       description:
-        'Company sheet templates (title block layout, logo, fixed notes). Actions: list (templates, the active one and the field sources), create (copy of the default ISO 7200 block or of "from"), update (name, width, height, grid, fields, notes of a template), set_active (id, or "iso7200" for the default), delete, import_dxf (the client\'s title block from DXF text "dxf": linework, texts, blocks with attributes; placeholders like {PROJECT} {DRAWING_NO} and attribute tags become fields; optional units mm per drawing unit, name, map, activate), map_texts (id, map: change what free texts show). A field is {label, source, col, row, w, h, textH?, bold?} in grid cells (row 0 = bottom); source is one of the listed sources, "text:<fixed text>", "fmt:<text with {PLACEHOLDERS}>", or "" (leave out, import only). map items: {i (text index from import_dxf / list), source}.',
+        'Company sheet templates (title block layout, logo, fixed notes). Actions: list (templates, the active one and the field sources), create (copy of the default ISO 7200 block or of "from"), update (name, width, height, grid, fields, notes of a template), set_active (id, or "iso7200" for the default), delete, import_dxf (the client\'s title block from DXF text "dxf", alone or found in a whole sheet: linework, texts, attributes, embedded logo, own revision rows; placeholders, tags and values beside labels become fields; a bottom strip spans the frame; optional units, name, map, activate, copyProjectData), map_texts (id, map: change what free texts show). A field is {label, source, col, row, w, h, textH?, bold?} in grid cells (row 0 = bottom); source is one of the listed sources, "text:<fixed text>", "fmt:<text with {PLACEHOLDERS}>", or "" (leave out, import only). map items: {i (text index from import_dxf / list), source}.',
       input_schema: {
         type: 'object',
         properties: {
@@ -205,6 +206,7 @@ export const drawingsModule: ToolModule = {
           activate: { type: 'boolean' },
           dxf: { type: 'string', description: 'DXF file content (import_dxf)' },
           units: { type: 'number', description: 'mm per drawing unit (import_dxf; default from the file)' },
+          copyProjectData: { type: 'boolean', description: 'import_dxf: project name, number, drawn/checked/approved from the file' },
           map: { type: 'array', items: { type: 'object', properties: { i: num, source: str }, required: ['i', 'source'] } },
         },
         required: ['action'],
@@ -462,9 +464,15 @@ export const drawingsModule: ToolModule = {
         st().apply('Assistant: import title block', (q) => {
           (q.drawings.templates ??= []).push(t);
           if (input.activate) q.drawings.activeTemplate = t.id;
+          if (input.copyProjectData) applyFoundValues(q, imp);
         });
         return {
           ...brief(t),
+          span: !!t.span,
+          revisionRows: t.revTable?.rows.length ?? 0,
+          logo: !!t.logo,
+          region: imp.region ? `${imp.regions.find((r) => r.id === imp.region?.id)?.label ?? 'area'} of a whole sheet` : 'whole file',
+          found: imp.found,
           units: imp.units,
           unitSource: imp.unitSource,
           summary: titleBlockSummary(imp),

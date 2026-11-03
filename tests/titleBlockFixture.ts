@@ -173,3 +173,138 @@ export function isoSizeTitleBlockDxf(): string {
   g(0, 'EOF');
   return out.join('\n') + '\n';
 }
+
+/**
+ * A whole drawing sheet exported from a detailing package (synthetic): blocks for the
+ * frame, a view with dimensions, a part list at the top and the title block — a strip
+ * 790 × 80 mm along the bottom with a logo cell (an OLE2FRAME "Paintbrush Picture"
+ * holding a 4 × 2 px bitmap, its frame running over the cell), a revision table
+ * (REV / ACTION / DATE header at the bottom, five rows above) and filled-in cells:
+ * label and value in one cell (JOB NAME, PROJECT NO., DRAWN BY, DRAWING TITLE, REV.,
+ * PART NO.) and SHEET with no value. Millimetres ($INSUNITS 4).
+ */
+export function sheetTitleBlockDxf(): string {
+  const out: string[] = [];
+  const g = (code: number, v: string | number) => out.push(String(code), String(v));
+  const ent = (type: string, ...pairs: [number, string | number][]) => {
+    g(0, type);
+    for (const [c, v] of pairs) g(c, v);
+  };
+  const line = (x1: number, y1: number, x2: number, y2: number) => ent('LINE', [8, '0'], [10, x1], [20, y1], [30, 0], [11, x2], [21, y2], [31, 0]);
+  const text = (x: number, y: number, h: number, s: string, rot = 0) => ent('TEXT', [8, '0'], [10, x], [20, y], [30, 0], [40, h], [1, s], ...(rot ? ([[50, rot]] as [number, number][]) : []));
+  const rect = (x0: number, y0: number, x1: number, y1: number) => {
+    line(x0, y0, x1, y0);
+    line(x1, y0, x1, y1);
+    line(x1, y1, x0, y1);
+    line(x0, y1, x0, y0);
+  };
+  const block = (name: string, body: () => void) => {
+    ent('BLOCK', [8, '0'], [2, name], [70, 0], [10, 0], [20, 0], [30, 0], [3, name]);
+    body();
+    ent('ENDBLK', [8, '0']);
+  };
+  // A 4 × 2 px 24-bit bitmap: red, green, blue, white / black, grey, yellow, cyan (rows bottom up).
+  const bmp = (() => {
+    const w = 4;
+    const h = 2;
+    const stride = 12;
+    const px = [
+      [0, 0, 0, 128, 128, 128, 0, 255, 255, 255, 255, 0], // bottom row (BGR): black, grey, yellow, cyan
+      [0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255], // top row: red, green, blue, white
+    ];
+    const size = 54 + stride * h;
+    const b: number[] = [0x42, 0x4d, ...le(size, 4), 0, 0, 0, 0, ...le(54, 4), ...le(40, 4), ...le(w, 4), ...le(h, 4), ...le(1, 2), ...le(24, 2), ...le(0, 4), ...le(stride * h, 4), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (const r of px) b.push(...r);
+    return b;
+  })();
+  // OLE header bytes (any), then the compound-file signature and the bitmap.
+  const ole = [0x80, 0x55, 0x01, 0x02, 0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, ...Array.from({ length: 40 }, (_, i) => (i * 7) & 0xff), ...bmp, 0, 0, 0, 0];
+  const hex = ole.map((v) => v.toString(16).padStart(2, '0').toUpperCase()).join('');
+
+  g(0, 'SECTION');
+  g(2, 'HEADER');
+  g(9, '$ACADVER');
+  g(1, 'AC1032');
+  g(9, '$INSUNITS');
+  g(70, 4);
+  g(0, 'ENDSEC');
+  g(0, 'SECTION');
+  g(2, 'BLOCKS');
+  block('SHEET_FRAME', () => {
+    rect(5, 0, 800, 560);
+    text(2, 2, 4, 'CAD system', 90);
+  });
+  block('VIEW_FRONT', () => {
+    rect(100, 250, 500, 400);
+    line(100, 240, 500, 240);
+    text(290, 242, 7, '5596');
+    text(260, 230, 8, 'FRONT VIEW');
+  });
+  block('PART_LIST', () => {
+    rect(5, 520, 305, 560);
+    line(5, 540, 305, 540);
+    text(10, 545, 6, 'MARK');
+    text(80, 545, 6, 'QTY');
+    text(140, 545, 6, 'PROFILE');
+    text(10, 525, 6, 'L09-X');
+    text(80, 525, 6, '138');
+  });
+  block('COMPANY_TB', () => {
+    rect(10, 0, 800, 80);
+    // Logo cell, revision table, job, names / title, sheet / rev / part no.
+    line(150, 0, 150, 80);
+    line(170, 0, 170, 80);
+    line(290, 0, 290, 80);
+    line(330, 0, 330, 80);
+    for (const y of [12, 24, 36, 48, 60]) line(150, y, 330, y);
+    text(152, 4, 4, 'REV');
+    text(175, 4, 4, 'ACTION');
+    text(295, 4, 4, 'DATE');
+    line(330, 30, 550, 30);
+    text(335, 70, 4, 'JOB NAME:');
+    text(380, 45, 6, 'Demo Tower');
+    text(335, 20, 4, 'PROJECT NO.');
+    text(420, 10, 5, 'P-100');
+    line(550, 0, 550, 80);
+    line(550, 40, 800, 40);
+    text(555, 70, 4, 'DRAWN BY:');
+    text(600, 50, 3, 'J.D');
+    text(555, 30, 4, 'DRAWING TITLE:');
+    text(580, 10, 4, 'BRACKET');
+    line(680, 0, 680, 80);
+    line(740, 40, 740, 80);
+    text(685, 70, 4, 'SHEET');
+    text(745, 70, 4, 'REV.');
+    text(770, 50, 8, '0');
+    text(685, 30, 4, 'PART NO.');
+    text(700, 10, 4, 'M1');
+    // The logo: upper-left and lower-right corners, running above the strip.
+    g(0, 'OLE2FRAME');
+    g(8, '0');
+    g(70, 2);
+    g(3, 'Paintbrush Picture');
+    g(10, 20);
+    g(20, 90);
+    g(30, 0);
+    g(11, 140);
+    g(21, 10);
+    g(31, 0);
+    g(71, 2);
+    g(72, 1);
+    g(73, 2);
+    g(90, ole.length);
+    for (let i = 0; i < hex.length; i += 254) g(310, hex.slice(i, i + 254));
+    g(1, 'OLE');
+  });
+  g(0, 'ENDSEC');
+  g(0, 'SECTION');
+  g(2, 'ENTITIES');
+  for (const b of ['SHEET_FRAME', 'VIEW_FRONT', 'PART_LIST', 'COMPANY_TB']) ent('INSERT', [8, '0'], [2, b], [10, 0], [20, 0], [30, 0]);
+  g(0, 'ENDSEC');
+  g(0, 'EOF');
+  return out.join('\n');
+}
+
+function le(v: number, n: number): number[] {
+  return Array.from({ length: n }, (_, i) => (v >>> (8 * i)) & 0xff);
+}

@@ -32,6 +32,7 @@ import { shapeSignature } from '../library/shapes';
 import type { DLayer, Drawing, DrawingZone, Viewport } from './types';
 import { dimChain, dimLinear, type Sheet, type TableSpec } from './dims';
 import { frameRect, notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
+import { sheetFurniture } from './template';
 import { ISO_SCALES, TEXT, scaleLabel } from './standards';
 import { centroid, convexHull, partCorners } from './project';
 import { depHash, designation, finalize, newSheet, type DrawCtx, type PlanItem } from './compose';
@@ -544,7 +545,7 @@ function* buildPlan(ctx: DrawCtx): Generator<void, UnfoldedPlan | null> {
   const dev = yield* developmentSteps(p, dm);
   if (!dev) return null;
   const size = p.drawings.settings.gaSheet;
-  const tb = { w: ctx.template.width, h: ctx.template.height };
+  const tb = sheetFurniture(ctx.template, size);
   const z = zoningSettings(p);
   const items: MarkItem[] = [];
   for (const [a, v] of dev.anchors) if (dm.partByRef.get(a.main)?.kind !== 'profile') items.push({ at: v, text: a.mark });
@@ -555,7 +556,7 @@ function* buildPlan(ctx: DrawCtx): Generator<void, UnfoldedPlan | null> {
   const h = Math.max(e.y1 - e.y0, 100);
   // One sheet: the strip in the area left of the title block column (as the GA estimate).
   const f = frameRect(size);
-  const one = ISO_SCALES.find((d) => w / d <= f.x1 - f.x0 - tb.w - 8 - 48 && h / d <= f.y1 - f.y0 - 50) ?? ISO_SCALES[ISO_SCALES.length - 1];
+  const one = ISO_SCALES.find((d) => w / d <= f.x1 - f.x0 - tb.w - 8 - 48 && h / d <= f.y1 - f.y0 - 50 - tb.floor) ?? ISO_SCALES[ISO_SCALES.length - 1];
   const preferred = z.scale > 0 ? z.scale : 0;
   const target = preferred || legible || one;
   if (!z.enabled || one <= target) return { dev, size, den: 0, legible, zones: [], reason: `legible on one sheet at 1:${one}` };

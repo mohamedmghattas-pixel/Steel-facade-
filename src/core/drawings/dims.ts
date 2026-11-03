@@ -38,8 +38,14 @@ export class Sheet {
   ents: DEnt[] = [];
   /** Edit tags stamped on every entity added (see EntTag). */
   tag: EntTag = {};
-  /** Title block size of the sheet template (layout keeps clear of it). */
-  tb = { w: 180, h: 40 };
+  /**
+   * Title block of the sheet template as the layout sees it (see template.ts
+   * sheetFurniture): the block at the bottom right `w` × `h` with the revision table
+   * `rev` above it; the column above is `w` wide.
+   */
+  tb = { w: 180, h: 40, rev: 25 };
+  /** Height of a full-width title block strip along the bottom of the frame (0: none); the layout starts above it. */
+  floor = 0;
   /** Blocks the layout packer could not place on this sheet; they continue on further sheets of the drawing. */
   overflow: SheetBlock[] = [];
   /** Layout notices of the generator (shown with the sheet, e.g. marks left out). */

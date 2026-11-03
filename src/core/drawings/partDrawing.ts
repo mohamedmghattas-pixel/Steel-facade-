@@ -159,6 +159,8 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
     title: `Part ${part.mark} – ${part.name === part.profile ? part.profile : part.name}`,
     subtitle: `${designation(part)} · ${part.material} · ${qty} off`,
     scale,
+    material: part.material,
+    finish: part.finish,
   });
 }
 

@@ -1,10 +1,10 @@
-import type { Project, SheetSize, SheetTemplate } from '../model/types';
+import type { Finish, Project, SheetSize, SheetTemplate } from '../model/types';
 import type { DerivedModel, Part } from '../derive/model';
 import { Sheet } from './dims';
 import { drawFrame, drawRevisionTable, frameRect, packColumns, REV_H } from './layout';
 import { drawingNumber, fingerprint, partUsage, revisionState, type UsedIn } from './register';
 import { SHEETS, STANDARDS, type StdProfile } from './standards';
-import { activeTemplate, drawTemplateTitleBlock, templateBox } from './template';
+import { activeTemplate, drawTemplateTitleBlock, finishText, sheetFurniture } from './template';
 import { applyEdits, hasEdits } from './edits';
 import type { Drawing, DrawingKind, DrawingZone, Viewport } from './types';
 import type { ZonePlan } from './zoning';
@@ -105,8 +105,9 @@ export function newSheet(size: SheetSize, ctx?: DrawCtx): Sheet {
   const s = SHEETS[size];
   const sh = new Sheet(s.w, s.h);
   if (ctx) {
-    const box = templateBox(ctx.template, size);
-    sh.tb = { w: box.w, h: box.h };
+    const fur = sheetFurniture(ctx.template, size);
+    sh.tb = { w: fur.w, h: fur.h, rev: fur.rev };
+    sh.floor = fur.floor;
   }
   if (ctx?.measure) sh.dry = true;
   return sh;
@@ -140,6 +141,9 @@ export interface SheetInfo {
   fingerprint?: string;
   /** Identification number, when it is not derivable from the id (numbered series). */
   number?: string;
+  /** Material and finish of the main part, for title blocks that show them. */
+  material?: string;
+  finish?: Finish;
   viewports?: Viewport[];
   zone?: DrawingZone;
 }
@@ -235,6 +239,10 @@ function finishSheet(ctx: DrawCtx, s: Sheet, size: SheetSize, o: SheetInfo, shee
       createdBy: last?.drawn || ctx.p.info.designer,
       checkedBy: last?.checked || set.checkedBy,
       approvedBy: last?.approved || set.approvedBy,
+      mark: o.kind === 'part' || o.kind === 'assembly' ? o.mark : '',
+      material: o.material ?? '',
+      finish: finishText(ctx.p, o.finish),
+      revisions: rs.revisions,
     },
     ctx.std.projection,
   );
@@ -261,7 +269,7 @@ function finishSheet(ctx: DrawCtx, s: Sheet, size: SheetSize, o: SheetInfo, shee
     edited: edited || undefined,
     viewports,
     entities: s.ents,
-    regions: sheetRegions(size, s.tb),
+    regions: sheetRegions(size, s.tb, s.floor),
     ...(sheetCount && sheetCount > 1 ? { sheetIndex, sheetCount } : {}),
     ...(o.zone ? { zone: o.zone } : {}),
     ...(s.notices.length ? { notices: [...s.notices] } : {}),
@@ -278,13 +286,19 @@ export function flattenSheets(ds: Drawing[]): Drawing[] {
   return out;
 }
 
-/** Reserved regions of a sheet: the frame, the title block (bottom right) and the revision table above it. */
-export function sheetRegions(size: SheetSize, tb: { w: number; h: number }) {
+/**
+ * Reserved regions of a sheet: the frame, the title block (bottom right, or a strip
+ * across the bottom) and the revision table above it (empty when the title block
+ * carries its own).
+ */
+export function sheetRegions(size: SheetSize, tb: { w: number; h: number; rev?: number }, floor = 0) {
   const f = frameRect(size);
+  const rev = tb.rev ?? REV_H;
+  const top = f.y0 + floor + tb.h;
   return {
     frame: f,
-    titleBlock: { x0: f.x1 - tb.w, y0: f.y0, x1: f.x1, y1: f.y0 + tb.h },
-    revisionTable: { x0: f.x1 - tb.w, y0: f.y0 + tb.h, x1: f.x1, y1: f.y0 + tb.h + REV_H },
+    titleBlock: floor > 0 ? { x0: f.x0, y0: f.y0, x1: f.x1, y1: f.y0 + floor } : { x0: f.x1 - tb.w, y0: f.y0, x1: f.x1, y1: f.y0 + tb.h },
+    revisionTable: { x0: f.x1 - tb.w, y0: top, x1: f.x1, y1: top + rev },
   };
 }
 

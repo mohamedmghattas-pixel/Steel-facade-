@@ -947,6 +947,26 @@ export interface SheetTemplate {
   border?: boolean;
   /** Imported title block: source file, units and scale (mm per drawing unit). */
   imported?: { file: string; units: string; unitScale: number; date: string };
+  /**
+   * 'width': the block is a strip along the bottom of the frame, scaled uniformly to
+   * the frame width of every sheet size (a company sheet whose title block runs edge
+   * to edge). Absent: fixed size at the bottom right (ISO 7200 position).
+   */
+  span?: 'width';
+  /** Revision rows of the block itself; the sheets then draw no separate revision table. */
+  revTable?: TemplateRevTable;
+}
+
+/**
+ * Revision table inside a title block: columns by content and rows (mm of the block),
+ * the row next to the header first. Revisions fill the rows oldest first, the latest
+ * `rows.length` of them.
+ */
+export interface TemplateRevTable {
+  cols: { key: 'rev' | 'description' | 'date' | 'drawn' | 'checked' | 'approved' | 'status'; x0: number; x1: number }[];
+  rows: { y0: number; y1: number }[];
+  /** Lettering height, mm of the block. */
+  h: number;
 }
 
 /** Line weight of template linework (ISO 128-2): thin 0.25, medium 0.35, wide 0.5, frame 0.7 mm. */

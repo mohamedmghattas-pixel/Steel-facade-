@@ -17,9 +17,12 @@ import {
   DEFAULT_TEMPLATE_ID,
   FIELD_SOURCES,
   FREE_TEMPLATE_MAX,
+  SPAN_TEMPLATE_MAX,
   TEMPLATE_TEXT_HEIGHTS,
   TITLE_BLOCK_UNITS,
+  applyFoundValues,
   drawTitleBlockAt,
+  foundProjectValues,
   entitiesToSvg,
   hasFreeContent,
   importScale,
@@ -27,6 +30,7 @@ import {
   parseTemplates,
   readTitleBlockDxf,
   sampleTitleData,
+  sheetFurniture,
   templateTextValue,
   textPlaceholders,
   titleBlockSummary,
@@ -36,7 +40,7 @@ import {
 } from '../../core/drawings';
 import { Sheet, textWidth } from '../../core/drawings/dims';
 import { newId } from '../../core/model/ops';
-import type { Project, SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateText, Vec2 } from '../../core/model/types';
+import type { Project, SheetSize, SheetTemplate, TemplateGraphic, TemplateLineWeight, TemplateText, Vec2 } from '../../core/model/types';
 import { download, pickFile, safeName } from '../../state/storage';
 import { askConfirm } from '../askState';
 import { Icon } from '../icons';
@@ -794,7 +798,7 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
     );
   const g = t.grid ?? 1;
   // Size limits (as sanitizeTemplate): free content (imported / drawn blocks) or a grid of fields.
-  const lim = hasFreeContent(t) ? { w0: 40, w1: FREE_TEMPLATE_MAX.w, h0: 5, h1: FREE_TEMPLATE_MAX.h } : { w0: 60, w1: 400, h0: 10, h1: 150 };
+  const lim = t.span === 'width' ? { w0: 40, w1: SPAN_TEMPLATE_MAX.w, h0: 5, h1: SPAN_TEMPLATE_MAX.h } : hasFreeContent(t) ? { w0: 40, w1: FREE_TEMPLATE_MAX.w, h0: 5, h1: FREE_TEMPLATE_MAX.h } : { w0: 60, w1: 400, h0: 10, h1: 150 };
   const tools: { id: Tool; label: string; title: string; icon?: string }[] = [
     { id: 'select', label: 'Select', title: 'Select, move (drag) and resize (corner handles); arrow keys nudge 1 mm, Delete removes', icon: 'select' },
     { id: 'line', label: 'Line', title: 'Drag to draw a line', icon: 'line' },
@@ -881,7 +885,7 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
                 <Field label="Name">
                   <TextInput value={t.name} onChange={(v) => edit('name', (x) => void (x.name = v))} />
                 </Field>
-                <Field label="Size (width × height)" hint="Bottom right of the frame; the revision table sits on top">
+                <Field label="Size (width × height)" hint={t.span === 'width' ? `Scaled to the frame width on every sheet: ${stripSizes(t)}` : 'Bottom right of the frame; the revision table sits on top'}>
                   <span className="row-inline">
                     <NumberInput value={t.width} unit="mm" min={lim.w0} onChange={(v) => edit('width', (x) => void (x.width = Math.min(lim.w1, v)))} />
                     <NumberInput value={t.height} unit="mm" min={lim.h0} onChange={(v) => edit('height', (x) => void (x.height = Math.min(lim.h1, v)))} />
@@ -892,6 +896,23 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
                     <NumberInput value={g} unit="mm" min={0.5} onChange={(v) => edit('grid', (x) => void (x.grid = v))} />
                     <label className="tpl-check" title="Outer border 0.7 mm (ISO 7200)">
                       <input type="checkbox" checked={t.border !== false} onChange={(e) => edit('border', (x) => void (x.border = e.target.checked))} /> 0.7
+                    </label>
+                    <label className="tpl-check" title="A strip along the bottom of the frame, scaled to the frame width of every sheet">
+                      <input
+                        type="checkbox"
+                        checked={t.span === 'width'}
+                        onChange={(e) =>
+                          edit('span', (x) => {
+                            if (e.target.checked) x.span = 'width';
+                            else {
+                              delete x.span;
+                              x.width = Math.min(x.width, FREE_TEMPLATE_MAX.w);
+                              x.height = Math.min(x.height, FREE_TEMPLATE_MAX.h);
+                            }
+                          })
+                        }
+                      />{' '}
+                      Full width
                     </label>
                     <button className="secondary-btn" onClick={() => void uploadLogo()}>
                       {t.logo ? 'Replace logo' : 'Logo…'}
@@ -906,7 +927,8 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
               </div>
               {t.imported && (
                 <p className="muted">
-                  Imported from {t.imported.file || 'DXF'} ({t.imported.units}) on {t.imported.date}: {t.graphics?.length ?? 0} lines, {t.texts?.length ?? 0} texts.
+                  Imported from {t.imported.file || 'DXF'} ({t.imported.units}) on {t.imported.date}: {t.graphics?.length ?? 0} lines, {t.texts?.length ?? 0} texts
+                  {t.revTable ? `, revision table with ${t.revTable.rows.length} rows (no separate revision table on the sheets)` : ''}.
                 </p>
               )}
               <details className="tpl-table">
@@ -922,6 +944,46 @@ export function TemplateDesignerDialog({ onClose }: { onClose: () => void }) {
       </div>
     </Modal>
   );
+}
+
+const overviewCache = new WeakMap<object, string>();
+/** The overview markup, made once per read (the whole sheet can hold thousands of entities). */
+function overviewFor(ov: NonNullable<TitleBlockDxf['overview']>): string {
+  let m = overviewCache.get(ov);
+  if (m === undefined) overviewCache.set(ov, (m = overviewMarkup(ov)));
+  return m;
+}
+
+const STRIP_SIZES: SheetSize[] = ['A3', 'A2', 'A1', 'A0'];
+
+/** "A3 390 × 33 mm · A1 811 × 69 mm …": a full-width strip on each sheet size, with its smallest lettering. */
+function stripSizes(t: Pick<SheetTemplate, 'width' | 'height' | 'span' | 'revTable' | 'texts'>): string {
+  const hMin = Math.min(...(t.texts ?? []).map((x) => x.h).filter((h) => h > 0), Infinity);
+  return STRIP_SIZES.map((sz) => {
+    const f = sheetFurniture({ ...t, span: 'width' }, sz);
+    const k = f.floor / t.height;
+    const lt = Number.isFinite(hMin) ? `, text ≥ ${(hMin * k).toFixed(1)} mm` : '';
+    return `${sz} ${Math.round(t.width * k)} × ${Math.round(f.floor)} mm${lt}`;
+  }).join(' · ');
+}
+
+/** SVG markup of a whole drawing (the region picker of the import), y up flipped by `H`. */
+function overviewMarkup(ov: NonNullable<TitleBlockDxf['overview']>): string {
+  const H = ov.height;
+  const out: string[] = [];
+  const P = (q: Vec2) => `${q.x.toFixed(2)},${(H - q.y).toFixed(2)}`;
+  for (const g of ov.graphics) {
+    if (g.t === 'line') out.push(`<line x1="${g.a.x}" y1="${H - g.a.y}" x2="${g.b.x}" y2="${H - g.b.y}"/>`);
+    else if (g.t === 'rect') out.push(`<rect x="${g.x}" y="${H - g.y - g.h}" width="${g.w}" height="${g.h}"${g.fill ? ' class="f"' : ''}/>`);
+    else if (g.t === 'poly') out.push(`<${g.closed ? 'polygon' : 'polyline'} points="${g.pts.map(P).join(' ')}"${g.fill ? ' class="f"' : ''}/>`);
+    else if (g.t === 'circle') out.push(`<circle cx="${g.c.x}" cy="${H - g.c.y}" r="${g.r}"/>`);
+  }
+  const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;');
+  for (const t of ov.texts) {
+    const a = t.anchor === 'middle' ? 'middle' : t.anchor === 'end' ? 'end' : 'start';
+    out.push(`<text x="${t.x}" y="${H - t.y}" font-size="${t.h}" text-anchor="${a}"${t.rot ? ` transform="rotate(${-t.rot} ${t.x} ${H - t.y})"` : ''}>${esc(t.text)}</text>`);
+  }
+  return out.join('');
 }
 
 /** SVG of a template's title block with sample data, for previews. */
@@ -1024,14 +1086,24 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
   const apply = useStore((s) => s.apply);
   const notify = useStore((s) => s.notify);
   const [units, setUnits] = useState<number | undefined>(undefined);
+  // Part of the drawing read as the title block: the best block of a whole sheet, all of it, a block, or a picked area.
+  const [region, setRegion] = useState<'auto' | 'all' | string | { x0: number; y0: number; x1: number; y1: number }>('auto');
   const parsed = useMemo((): { imp: TitleBlockDxf } | { error: string } => {
     try {
-      return { imp: readTitleBlockDxf(file.text, units ? { unitScale: units } : {}) };
+      return { imp: readTitleBlockDxf(file.text, { ...(units ? { unitScale: units } : {}), region }) };
     } catch (e) {
       return { error: (e as Error).message };
     }
-  }, [file.text, units]);
+  }, [file.text, units, region]);
   const imp = 'imp' in parsed ? parsed.imp : null;
+  const [span, setSpan] = useState<boolean | undefined>(undefined);
+  const [useRev, setUseRev] = useState(true);
+  const found = useMemo(() => (imp ? foundProjectValues(imp, project) : []), [imp, project]);
+  const [copyValues, setCopyValues] = useState<boolean | undefined>(undefined);
+  const copy = copyValues ?? found.every((v) => !v.current.trim() || v.current === v.value);
+  const [picking2, setPicking2] = useState(false);
+  const ovRef = useRef<SVGSVGElement | null>(null);
+  const [rubber2, setRubber2] = useState<{ a: Vec2; b: Vec2 } | null>(null);
   const [map, setMap] = useState<string[]>([]);
   const [scale, setScale] = useState(1);
   const [name, setName] = useState(file.name.replace(/\.dxf$/i, '') || 'Company title block');
@@ -1045,9 +1117,14 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
   useEffect(() => {
     setMap(imp ? imp.texts.map((t) => t.suggested) : []);
     setLogoRect(imp?.logoRect);
+    setSpan(undefined);
   }, [imp]);
-  const k = imp ? importScale(imp, scale) : 1;
-  const tpl = useMemo(() => (imp && map.length === imp.texts.length ? titleBlockTemplate(imp, 'preview', { name, map, scale, logo, logoRect, border, file: file.name }) : null), [imp, map, scale, logo, logoRect, border, name, file.name]);
+  const spanOn = span ?? imp?.span ?? false;
+  const k = imp ? importScale(imp, scale, spanOn) : 1;
+  const tpl = useMemo(
+    () => (imp && map.length === imp.texts.length ? titleBlockTemplate(imp, 'preview', { name, map, scale, logo, logoRect, border, file: file.name, span: spanOn, revTable: useRev }) : null),
+    [imp, map, scale, logo, logoRect, border, name, file.name, spanOn, useRev],
+  );
   const sample = useMemo(() => sampleTitleData(project), [project]);
   const markup = useMemo(() => (tpl ? blockMarkup(project, tpl, sample) : ''), [project, tpl, sample]);
   const svgRef = useRef<SVGSVGElement | null>(null);
@@ -1056,7 +1133,12 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
     return (
       <Modal title="Import title block (DXF)" onClose={onClose}>
         <p className="warning">{'error' in parsed ? parsed.error : 'Reading the file…'}</p>
-        <p className="muted">Export the title block from CAD as an ASCII DXF (any version), with only the title block in the drawing.</p>
+        <p className="muted">Export the title block (or a whole drawing sheet with it) from CAD as an ASCII DXF, any version.</p>
+        {region !== 'auto' && (
+          <button className="secondary-btn" onClick={() => setRegion('auto')}>
+            Back to the title block found
+          </button>
+        )}
       </Modal>
     );
   const W = tpl.width;
@@ -1073,13 +1155,30 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
   const unitOpts = [{ value: '0', label: `${imp.unitSource === 'insunits' || imp.unitSource === 'measurement' ? `From the file: ${imp.units}` : `Not in the file (assumed: ${imp.units})`}` }, ...TITLE_BLOCK_UNITS.map((u) => ({ value: String(u.value), label: u.label }))];
   const save = () => {
     const id = newId('tpl');
-    const t = titleBlockTemplate(imp, id, { name: name.trim() || 'Company title block', map, scale, logo, logoRect, border, file: file.name });
+    const t = titleBlockTemplate(imp, id, { name: name.trim() || 'Company title block', map, scale, logo, logoRect, border, file: file.name, span: spanOn, revTable: useRev });
     apply('Import title block', (p) => {
       (p.drawings.templates ??= []).push(t);
       if (activate) p.drawings.activeTemplate = id;
+      if (copy && found.length) applyFoundValues(p, imp);
     });
-    notify(`Title block "${t.name}" imported (${Math.round(t.width)} × ${Math.round(t.height)} mm)${activate ? ' and used for every sheet' : ''}.`);
+    notify(
+      `Title block "${t.name}" imported (${t.span ? 'full frame width' : `${Math.round(t.width)} × ${Math.round(t.height)} mm`})${activate ? ' and used for every sheet' : ''}${copy && found.length ? `; project data set from the file (${found.map((v) => v.label.toLowerCase()).join(', ')})` : ''}.`,
+    );
     onSaved(id);
+  };
+  const ov = imp.overview;
+  const regionValue = typeof region === 'object' ? 'area' : region === 'auto' ? (imp.region?.id ?? 'all') : region;
+  const regionOpts = [
+    ...imp.regions.filter((r) => r.score > 0 || r.id === imp.region?.id).map((r) => ({ value: r.id, label: `Block ${r.label} — ${Math.round(r.x1 - r.x0)} × ${Math.round(r.y1 - r.y0)} (${r.score} title-block label${r.score === 1 ? '' : 's'})` })),
+    { value: 'all', label: 'The whole drawing' },
+    ...(typeof region === 'object' ? [{ value: 'area', label: 'The area picked on the drawing' }] : []),
+  ];
+  const OH = ov?.height ?? 0;
+  const ovMm = (e: { clientX: number; clientY: number }): Vec2 => {
+    const ctm = ovRef.current?.getScreenCTM();
+    if (!ctm) return { x: 0, y: 0 };
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+    return { x: pt.x, y: OH - pt.y };
   };
   const live = map.filter((s) => s && s !== 'text:').length;
   return (
@@ -1105,11 +1204,15 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
         <Field label="Units" hint={imp.insunits !== null ? `$INSUNITS = ${imp.insunits}` : imp.measurement !== null ? `$MEASUREMENT = ${imp.measurement}` : 'The file states no units'}>
           <Select value={String(units ?? 0)} options={unitOpts} onChange={(v) => setUnits(Number(v) || undefined)} />
         </Field>
-        <Field label="Size" hint={`As drawn: ${Math.round(imp.width * 10) / 10} × ${Math.round(imp.height * 10) / 10} mm; it sits at the bottom right of the frame`}>
-          <span className="row-inline">
-            <NumberInput value={r1(imp.width * k)} unit="mm" min={10} onChange={(v) => setScale(v / imp.width)} />
-            <span className="muted">× {r1(imp.height * k)} mm</span>
-          </span>
+        <Field label="Size" hint={spanOn ? `As drawn: ${r1(imp.width)} × ${r1(imp.height)}; scaled to the frame width of each sheet` : `As drawn: ${Math.round(imp.width * 10) / 10} × ${Math.round(imp.height * 10) / 10} mm; it sits at the bottom right of the frame`}>
+          {spanOn ? (
+            <span className="muted">Full frame width</span>
+          ) : (
+            <span className="row-inline">
+              <NumberInput value={r1(imp.width * k)} unit="mm" min={10} onChange={(v) => setScale(v / imp.width)} />
+              <span className="muted">× {r1(imp.height * k)} mm</span>
+            </span>
+          )}
         </Field>
         <Field label="Outer border" hint="0.7 mm like the ISO 7200 block; the DXF outline is then left out">
           <label className="tpl-check">
@@ -1123,6 +1226,77 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
             <li key={n}>{n}</li>
           ))}
         </ul>
+      )}
+      {ov && (
+        <div className="tb-region">
+          <div className="row-inline">
+            <Field label="Title block in the drawing" hint="The file is a whole sheet: only this part is the title block">
+              <Select value={regionValue} options={regionOpts} onChange={(v) => v !== 'area' && setRegion(v)} />
+            </Field>
+            <button className={`secondary-btn ${picking2 ? 'on' : ''}`} onClick={() => setPicking2(!picking2)} title="Drag a rectangle around the title block on the drawing">
+              {picking2 ? 'Drag on the drawing…' : 'Pick the area'}
+            </button>
+          </div>
+          <div className={`tpl-canvas tb-overview ${picking2 ? 'picking' : ''}`} data-testid="tb-overview">
+            <svg
+              ref={ovRef}
+              viewBox={`${-OH * 0.01} ${-OH * 0.01} ${ov.width + OH * 0.02} ${OH * 1.02}`}
+              fontFamily="Arial, Helvetica, sans-serif"
+              onPointerDown={(e) => {
+                if (!picking2) return;
+                (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
+                const q = ovMm(e);
+                setRubber2({ a: q, b: q });
+              }}
+              onPointerMove={(e) => rubber2 && setRubber2({ a: rubber2.a, b: ovMm(e) })}
+              onPointerUp={() => {
+                if (!rubber2) return;
+                const b = { x0: Math.min(rubber2.a.x, rubber2.b.x), y0: Math.min(rubber2.a.y, rubber2.b.y), x1: Math.max(rubber2.a.x, rubber2.b.x), y1: Math.max(rubber2.a.y, rubber2.b.y) };
+                setRubber2(null);
+                if (b.x1 - b.x0 > ov.width * 0.01 && b.y1 - b.y0 > OH * 0.01) {
+                  setRegion(b);
+                  setPicking2(false);
+                }
+              }}
+            >
+              <rect x={0} y={0} width={ov.width} height={OH} fill="#fff" />
+              <g className="tb-ov-ink" dangerouslySetInnerHTML={{ __html: overviewFor(ov) }} />
+              {imp.regions
+                .filter((r) => r.score > 0)
+                .map((r) => (
+                  <rect key={r.id} className="tb-ov-region" x={r.x0} y={OH - r.y1} width={r.x1 - r.x0} height={r.y1 - r.y0} vectorEffect="non-scaling-stroke" onClick={() => !picking2 && setRegion(r.id)} />
+                ))}
+              {imp.region && <rect className="tb-ov-pick" x={imp.region.x0} y={OH - imp.region.y1} width={imp.region.x1 - imp.region.x0} height={imp.region.y1 - imp.region.y0} vectorEffect="non-scaling-stroke" />}
+              {rubber2 && <rect className="tpl-rubber" x={Math.min(rubber2.a.x, rubber2.b.x)} y={OH - Math.max(rubber2.a.y, rubber2.b.y)} width={Math.abs(rubber2.b.x - rubber2.a.x)} height={Math.abs(rubber2.b.y - rubber2.a.y)} vectorEffect="non-scaling-stroke" />}
+            </svg>
+          </div>
+        </div>
+      )}
+      <div className="row-inline tb-options">
+        <label className="tpl-check" title="A strip along the bottom of the frame, scaled uniformly to the frame width of every sheet size">
+          <input type="checkbox" checked={spanOn} onChange={(e) => setSpan(e.target.checked)} /> Spans the frame width
+        </label>
+        {imp.revTable && (
+          <label className="tpl-check" title="Revisions are written into the rows of the title block; no separate revision table is drawn">
+            <input type="checkbox" checked={useRev} onChange={(e) => setUseRev(e.target.checked)} /> Revision table in the block ({imp.revTable.rows.length} rows)
+          </label>
+        )}
+      </div>
+      {spanOn && <p className="muted">On the sheets: {stripSizes(tpl)}.</p>}
+      {found.length > 0 && (
+        <div className="tb-found">
+          <label className="tpl-check">
+            <input type="checkbox" checked={copy} onChange={(e) => setCopyValues(e.target.checked)} /> Copy the project data found in the file into this project
+          </label>
+          <ul>
+            {found.map((v) => (
+              <li key={v.source}>
+                {v.label}: <b>{v.value}</b>
+                {v.current && v.current !== v.value && <span className="muted"> (now {v.current})</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       <p className="muted">
         {titleBlockSummary(imp)} {live} text{live === 1 ? '' : 's'} filled per sheet.
@@ -1193,6 +1367,7 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
             </button>
           </span>
         )}
+        {!logo && imp.logo && logoRect && <span className="muted">Logo found in the DXF ({imp.logoPx?.w} × {imp.logoPx?.h} px).</span>}
         {!logoRect && !logo && <span className="muted">DXF images are external files: upload the logo here.</span>}
       </div>
       <table className="tpl-fields tb-texts" data-testid="tb-texts">
@@ -1217,10 +1392,11 @@ export function TitleBlockImportDialog({ file, onClose, onSaved }: { file: { nam
             return (
               <tr key={i} className={v && v !== 'text:' ? 'live' : v === '' ? 'out' : ''} onMouseEnter={() => setHover(i)} onMouseLeave={() => setHover(null)}>
                 <td className="tb-text">
-                  {text || <span className="muted">(empty)</span>}
+                  {t.added ? <span className="muted">(added: the value for “{t.label}”)</span> : text || <span className="muted">(empty)</span>}
                   {t.tag && <span className="tb-tag">{t.tag}</span>}
+                  {t.label && !t.added && <span className="tb-tag">{t.label}</span>}
                 </td>
-                <td className="muted">{t.kind === 'ATTRIB' || t.kind === 'ATTDEF' ? 'attribute' : t.kind === 'MTEXT' ? 'MTEXT' : 'text'}</td>
+                <td className="muted">{t.added ? 'added' : t.kind === 'ATTRIB' || t.kind === 'ATTDEF' ? 'attribute' : t.kind === 'MTEXT' ? 'MTEXT' : 'text'}</td>
                 <td>
                   <Select
                     value={v}

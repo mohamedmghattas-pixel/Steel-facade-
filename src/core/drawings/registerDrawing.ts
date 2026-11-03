@@ -3,7 +3,8 @@
  * identification number, title, type, size, scale, revision, date and status.
  */
 import { drawTable, tableSize, type TableSpec } from './dims';
-import { frameRect, notesBlock, packBlocks, REV_H } from './layout';
+import { frameRect, notesBlock, packBlocks } from './layout';
+import { sheetFurniture } from './template';
 import { TEXT, generalNotes } from './standards';
 import { DOC_TYPE, finalize, newSheet, type DrawCtx } from './compose';
 import { drawingNumber, fingerprint, sheetLabel } from './register';
@@ -29,7 +30,8 @@ export function registerDrawings(ctx: DrawCtx, set: RegisterRow[]): Drawing[] {
   const f = frameRect(size);
   const rowH = 4.5;
   // The table is wider than the space beside the title column, so it must end above the revision table.
-  const rowsPerSheet = Math.max(10, Math.floor((f.y1 - 4 - (f.y0 + ctx.template.height + REV_H + 8) - 5) / rowH) - 1);
+  const fur = sheetFurniture(ctx.template, size);
+  const rowsPerSheet = Math.max(10, Math.floor((f.y1 - 4 - (f.y0 + fur.floor + fur.h + fur.rev + 8) - 5) / rowH) - 1);
   const pages = Math.max(1, Math.ceil((set.length + 1) / rowsPerSheet));
   const self = Array.from({ length: pages }, (_, i) => {
     const revs = p.drawings.revisions[`register-${i + 1}`] ?? [];
@@ -58,7 +60,7 @@ export function registerDrawings(ctx: DrawCtx, set: RegisterRow[]): Drawing[] {
     if (i === 0) {
       if (!ctx.measure) s.text({ x: f.x0 + 4, y: top - sz.h - 6 }, '* content changed since the last issued revision', TEXT.label, 'start');
       // Notes go above the title block when there is room beside the table.
-      if (f.x0 + 4 + sz.w < f.x1 - s.tb.w - 4 || top - sz.h > f.y0 + s.tb.h + REV_H + 60) {
+      if (f.x0 + 4 + sz.w < f.x1 - s.tb.w - 4 || top - sz.h > f.y0 + s.floor + s.tb.h + s.tb.rev + 60) {
         packBlocks(s, size, [notesBlock('General notes', generalNotes(p, { kind: 'register', welded: false, hdg: false, paint: false, hollowClosed: false, plates: false, bolts: false }), s.tb.w)]);
       }
     }

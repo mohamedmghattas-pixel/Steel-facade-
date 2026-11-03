@@ -141,3 +141,60 @@
 .modal.wide:has(.tb-texts) {
   width: min(1180px, calc(100vw - 32px));
 }
+/* Import of a whole drawing sheet: where the title block is in it */
+.tb-region .row-inline {
+  display: flex;
+  gap: 8px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.tb-region .secondary-btn.on {
+  color: var(--accent);
+  border-color: rgb(242 165 65 / 0.6);
+}
+.tb-overview svg {
+  max-height: 220px;
+}
+.tb-ov-ink {
+  fill: none;
+  stroke: #9aa0a6;
+  stroke-width: 0.4;
+}
+.tb-ov-ink .f {
+  fill: #9aa0a6;
+}
+.tb-ov-ink text {
+  fill: #9aa0a6;
+  stroke: none;
+}
+.tb-ov-region {
+  fill: rgb(26 115 232 / 0.04);
+  stroke: #1a73e8;
+  stroke-width: 1px;
+  stroke-dasharray: 4 3;
+  cursor: pointer;
+}
+.tb-ov-pick {
+  fill: rgb(224 132 26 / 0.12);
+  stroke: #e0841a;
+  stroke-width: 2px;
+  pointer-events: none;
+}
+.tb-options {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 4px 0;
+}
+.tb-found {
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--bg-2);
+}
+.tb-found ul {
+  margin: 4px 0 0;
+  padding-left: 20px;
+  font-size: 12px;
+}

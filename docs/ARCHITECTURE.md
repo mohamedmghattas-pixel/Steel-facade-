@@ -8,7 +8,7 @@ review, maintain or extend FacadeSteel. It explains:
 
 For the geometry of members and connection parts (frames, points, planes),
 see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
-2026-11-02 (after the close-out QA; iterations 1–20 in §2.2).
+2026-11-03, commit after `fb91670` (iterations 1–22 in §2.2).
 
 ## 1. System at a glance
 
@@ -18,34 +18,34 @@ see [CONNECTION_GEOMETRY.md](CONNECTION_GEOMETRY.md). Facts below are as of
 | Runtime | Browser only: no server and no account. Delivered three ways (§3.12). |
 | Language / stack | TypeScript 5.9 (strict), React 19, Three.js 0.187, Zustand 5, Vite 8, Vitest 5 |
 | Third-party runtime libraries | web-ifc 0.0.78 (IFC reading), rhino3dm 8.35.0 (Rhino .3dm, MIT, loaded on demand), dxf-parser, pdfjs-dist, jsPDF + svg2pdf.js, qrcode-generator (MIT), @anthropic-ai/sdk |
-| History | 20 iterations, 2026-10-30 → 2026-11-02, on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
-| Tests | 2,242 Vitest tests in 50 files (14.7k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
+| History | 22 iterations, 2026-10-30 → 2026-11-03, 95 commits on `main` (feature branch `claude/brave-euler-eo03km`, fast-forwarded) |
+| Tests | 2,342 Vitest tests in 56 files (16.9k lines); strict type-check; production build; Playwright QA scenarios (client facade, composite profiles, 24k members); CI on every push |
 | Libraries | 2,047 profiles (EN, BS, AISC), 68 materials, 28 bolt sizes plus anchors and screws |
 | Connections | 30 parametric types plus user templates with formula parameters; auto-connect by roles and topology |
 | Detailing rules | 46 catalogued rules (AISC 360-22, EN 1993-1-8, EN 1090-2, EN ISO 1461, ASTM A123) plus 8 movement rules |
-| Assistant | 92 tools: core tools plus 13 feature modules |
+| Assistant | 95 tools: core tools plus 13 feature modules |
 
 Source size by area (TypeScript lines):
 
 | Area | Lines | Responsibility |
 | --- | ---: | --- |
-| `src/core/model` | 5,102 | Types, geometry helpers, wireframe operations, facade grid, modify toolkit, profiles by role |
-| `src/core/wireframe` | 3,102 | Wireframe check: roles from topology, cuts, surfaces and normals, client confirmation |
-| `src/core/library` | 5,706 | Profiles (incl. POLY outlines, insertion points, sketcher, profile assemblies), sections, materials, bolts, standards |
-| `src/core/connections` | 6,936 | Connection framework, 30 types, registry, templates, catalogue, transforms, follow, auto-connect |
-| `src/core/derive` | 1,327 | Wireframe + connections → parts, holes, bolts, assemblies, accessories, marks |
-| `src/core/geometry` | 947 | End preparations, bent plates, stiffeners, arcs |
+| `src/core/model` | 6,220 | Types, geometry helpers, wireframe operations, facade grid, modify toolkit, profiles by role |
+| `src/core/wireframe` | 3,154 | Wireframe check: roles from topology, cuts, surfaces and normals, client confirmation |
+| `src/core/library` | 5,790 | Profiles (incl. POLY outlines, insertion points, sketcher, profile assemblies), sections, materials, bolts, standards |
+| `src/core/connections` | 7,135 | Connection framework, 30 types, registry, templates, catalogue, transforms, follow, auto-connect |
+| `src/core/derive` | 1,487 | Wireframe + connections → parts, holes, bolts, assemblies, accessories, marks |
+| `src/core/geometry` | 1,383 | End preparations, bent plates, stiffeners, arcs |
 | `src/core/codes` | 2,128 | Detailing-rule engine and tables |
 | `src/core/movement`, `survey` | 2,015 | Thermal / deflection / tolerance stack, slot sizing, survey matching |
-| `src/core/drawings` | 10,612 | ISO drawing set, layout engine, zoning, on-demand set, edits, templates, erection sheets, cuts, navigation, SVG/DXF |
-| `src/core/io` | 6,685 | DXF reader (3D), IFC4 writer and reader, Rhino 3dm, wire import, BCF, DWG detection, ZIP read/write, XLSX templates, GUIDs |
+| `src/core/drawings` | 13,588 | ISO drawing set, layout engine, zoning, on-demand set, edits, templates, erection sheets, cuts, navigation, SVG/DXF |
+| `src/core/io` | 6,701 | DXF reader (3D), IFC4 writer and reader, Rhino 3dm, wire import, BCF, DWG detection, ZIP read/write, XLSX templates, GUIDs |
 | `src/core/export` | 4,315 | Export package: catalogue, templates, planning, building, PDF books and pages, STEP / OBJ, QA forms |
-| `src/core/fabrication`, `optimize`, `reports` | 3,350 | DSTV, extrusions, plate CNC, labels, packing, galvanizing, paint, MIS, nesting, BOM |
+| `src/core/fabrication`, `optimize`, `reports` | 3,437 | DSTV, extrusions, plate CNC, labels, packing, galvanizing, paint, MIS, nesting, BOM |
 | `src/core/clash`, `management` | 1,489 | Clash detection, phases/batches, marks |
 | `src/viewer` | 3,068 | Three.js scene, instancing, spatial index, picking, snapping, previews, outline LOD |
-| `src/state` | 733 | Store, undo/redo with memory budget, derived-model LRU, autosave, IndexedDB blobs |
-| `src/ui` (+ `dialogs`) | 18,964 | React panels, dialogs, drawing editor, connection library, sketcher, export dialog |
-| `src/assistant` | 4,885 | Chat sessions, tool definitions, 13 feature tool modules |
+| `src/state` | 741 | Store, undo/redo with memory budget, derived-model LRU, autosave, IndexedDB blobs |
+| `src/ui` (+ `dialogs`) | 20,561 | React panels, dialogs, drawing editor, connection library, sketcher, export dialog |
+| `src/assistant` | 5,095 | Chat sessions, tool definitions, 13 feature tool modules |
 | `src/platform` | 79 | claude.ai host bridge |
 
 ## 2. Process cycle
@@ -108,8 +108,10 @@ Feedback from the user then starts the next cycle.
 | 18 | 3D ↔ drawings; assemblies; Rhino .3dm | Manual assemblies, part / assembly selection, navigation tags; rhino3dm import / export | `3cc56b4`, `7271a2b` |
 | 19 | Heavy-load QA | Quadratic hot spots removed, large DXF / autosave / PDF fixes (client facade, 24k members) | `0a8ea40` … `976e766` |
 | 20 | Auto-connect sloped facades; drawings on demand; Esc closes menus; assembly profiles from DXF; close-out QA | Auto-connect by roles and topology; drawing index without drawing; composite profile assemblies; memory budgets, balloon spacing, extrusions in the package, sliced STEP | `9483671` … `19f2820` |
+| 21 | Client notes: keep mullions whole and find intersections; auto-cut transoms on profile insertion; fit with the slope both ways; split over stock length at the nearest transom; unfold the drawings; the company title block | Continuous mullions, junction division, stock split (D41); slope-following end fits and auto-cut (D42); unfolded elevation and flat patterns (D43); DXF title block and designer (D44) — four parallel workstreams | `527c7b9`, `d3d5d7e`, `47574bf`, `65afec4`, `84b87d0` |
+| 22 | Uploaded assembly details: every profile got its own insertion point; show the assembly behind each profile | One base point per detail on upload, each profile shown in its detail, *Position in assembly* on component part drawings (D45) | `fb91670` |
 
-### 2.3 Parallel milestone method (iteration 6)
+### 2.3 Parallel milestone method (iterations 6, 20 and 21)
 
 About twenty features across six areas were built at the same time by
 separate workers, each in its own git worktree. The method:
@@ -159,15 +161,41 @@ separate workers, each in its own git worktree. The method:
 6. **Close-out.** Roadmap updated, `main` fast-forwarded, the claude.ai build
    republished, worktrees removed.
 
+The method was used twice more, with the same rules (owned files, shared files
+additive only, one decision number reserved per workstream, the lead merges):
+
+- **Iteration 20** (three workstreams: auto-connect by topology, composite
+  profile assemblies, drawings on demand). Merge-time integration: the export
+  dialog's lazy outline met the on-demand drawing index (the outline reads an
+  index already measured; *Calculate sizes* measures it in slices), assembly
+  sheets keep the composite section when made in full and skip the views when
+  measured.
+- **Iteration 21** (four workstreams for the client's six notes: topology D41,
+  end fitting D42, unfolded drawings D43, title block D44). Each brief named
+  the client's words, the files owned and not to touch, the verification on
+  the client facade and a reserved decision row. Integration fixes at merge:
+  continuous mullions had made auto-connect's mullion brackets land only at
+  piece ends, so brackets now get a node on the span at each floor or slab
+  (`AutoItem.newNode`); the stock split's splice bolts clashed with cleat bolts
+  at 0 mm clearance (150 mm default); two profile pickers did not divide
+  transoms; a rounding case in `brokenAxis` drew slanted ends on fitted parts.
+- **Heavy-load QA after every round:** the client facade end to end in the
+  browser and from `file://` (import → check → roles → auto-connect → every
+  tab → package ZIP verified → IFC / 3dm round trips → undo / redo), the
+  composite version of it, and a 24,000-member model. These runs found the
+  memory leak of D40, the balloon overlaps, the missing extrusion files and
+  the STEP freeze (iteration 20 close-out) and the mid-height brackets
+  (iteration 21).
+
 ### 2.4 Verification gates
 
 | Gate | Tool | Catches | When |
 | --- | --- | --- | --- |
 | Types | `tsc -b` (strict) | Contract breaks across layers, unhandled union cases (e.g. `WorkPlane.kind: 'custom'`) | Every change |
-| Unit | Vitest (414 tests) | Geometry, numbering, code rules, writers (IFC re-read with web-ifc), parsers, nesting, assistant loop with a fake model, host adapters | Every change |
+| Unit | Vitest (2,342 tests) | Geometry, numbering, code rules, writers (IFC re-read with web-ifc), parsers, nesting, assistant loop with a fake model, host adapters | Every change |
 | Build | `vite build` | Bundling, dynamic imports, asset handling | Every merge |
 | Browser | Playwright on `vite preview` or `file://` | Runtime errors, broken UI paths, picking, downloads, IFC/PDF loading, preview updates | Every UI change and every merge |
-| Performance | Benchmark test (20k members < 15 s) and profiling | Quadratic hot spots | Merges touching derivation |
+| Performance | Benchmark tests (20k members < 15 s, 21k-member junction division), CPU profiles of browser runs, heap after forced GC | Quadratic hot spots, freezes, memory growth | Merges touching derivation, drawings or exports |
 | CI | GitHub Actions (`ubuntu-24.04`, Node 22) | Clean-checkout reproducibility | Every push to `main` and every PR |
 
 ### 2.5 Definition of done
@@ -187,7 +215,7 @@ Numbers and claims in docs come from running code, not from memory.
 ### 3.1 Layers and data flow
 
 ```
-             user (UI, keyboard, viewport)            assistant (54 tools)
+             user (UI, keyboard, viewport)            assistant (95 tools)
                          │                                    │
                          ▼                                    ▼
               store.apply(label, fn) ◄───────────────── runTool(name, input)
@@ -248,7 +276,16 @@ lists and NC files cannot disagree.
    unioned on top, with the joints between their members as shop joints
    (bolts flagged `shop`); their main part and prefix come from the group
    ([ASSEMBLIES.md](ASSEMBLIES.md)).
-5. **Numbering:**
+5. **End fitting (D42):** a connection's cut-back carries the plane of the main
+   member's facing side plus the joint's gap (`Trim.fit`), so skewed, sloped and
+   folded ends are cut at the true angle (square joints unchanged, ≤ 0.25° taken
+   as square); an end with no connection and no end preparation is auto-cut to
+   the face it meets (`derive/autoCut.ts`, project gap, default 10 mm). A user
+   Fit, Mitre or Bevel wins.
+6. **Composite members (D38):** one part per fabricated component of a profile
+   assembly, placed from the shared base point, accessories for listed-only
+   components.
+7. **Numbering:**
    - Marks come from geometric signatures, so identical parts and assemblies share marks.
    - Manual overrides and locked marks are honoured, and locked numbers are never reused.
    - Phase, zone and batch are inherited from the main member.
@@ -267,6 +304,14 @@ lists and NC files cannot disagree.
   by a small safe expression evaluator (no `eval`).
 - **Catalogue and preview:** category metadata, plus a live Three.js preview
   that runs the real `deriveModel` on a mini project.
+- **Transforms and follow (D37):** parameters carry mirror / flip rules
+  (`ParamSpec.flip`, `transform.ts`); member operations re-point and transform
+  their connections (`model/connectionFollow.ts`).
+- **Auto-connect (D37, D41):** `planAutoConnect` places joints by member role
+  and topology (transom joints at through-nodes of continuous mullions, fin
+  plates at folds, sleeves at stack joints, brackets from a reference structure
+  or levels) and previews counts and markers; a bracket far from a piece's ends
+  gets a node of its own on the span (`AutoItem.newNode`).
 
 ### 3.6 Rules engine (`src/core/codes`, `src/core/movement`)
 
@@ -323,6 +368,18 @@ lists and NC files cannot disagree.
   drawings it touched, when they are viewed or exported. `allDrawings` (eager)
   gives the same sheets. Exports stream the sheets and paint each PDF page once
   (`export/pdfPages.ts`).
+- **Unfolded elevation (D43,** `unfolded.ts`**):** the facade planes of a folded
+  facade turned about their shared fold lines into one flat strip, true lengths,
+  folds as chain lines with their angle, zoned like the GA (`-GA-04` and zone
+  sheets). **Flat patterns** (`flatPattern.ts`): bent plates with bend lines and
+  a bend table, cold-formed sections as developed strips.
+- **Title block (D44,** `template.ts`, `titleBlockDxf.ts`**):** the sheet template is
+  free content: linework, fixed texts and live fields, imported from the
+  company's DXF title block (placeholders and attributes become fields) or drawn
+  in the designer; the layout reserves its real size.
+- **Composite components (D45,** `assemblyKey.ts`**):** a *Position in assembly*
+  view on each component's part drawing: the composite section, this part
+  hatched, BP marked.
 
 ### 3.8 Outputs
 
@@ -356,7 +413,7 @@ lists and NC files cannot disagree.
 
 ### 3.10 Assistant (`src/assistant`)
 
-- **Tools:** 54 tools defined as JSON schemas. `runTool` calls the same store
+- **Tools:** 95 tools defined as JSON schemas. `runTool` calls the same store
   actions as the UI, so every assistant change is undoable. Feature areas
   register a `ToolModule`.
 - **API-key session** (normal browser):
@@ -384,6 +441,28 @@ lists and NC files cannot disagree.
 | claude.ai artifact | `dist/` published as a multi-file artifact with `downloads` and `sample` capabilities | Exports by confirmation; assistant on the viewer's account |
 | Offline single file | `npm run build:offline` → `dist-offline/FacadeSteel.html` (~14 MB) | Code, CSS, web-ifc and rhino3dm WASM and pdf.js worker inlined; runs from `file://` in Chrome/Edge; tested |
 | From source | `npm install && npm run dev` | Development |
+
+### 3.13 Wireframe to steel (`src/core/wireframe`, `model/junctions.ts`, `model/stockSplit.ts`)
+
+- **Wireframe check (D29, D32):** whole lines from fragmented DXF, roles from
+  topology, stack joints kept, surface normals, client confirmation against a
+  fingerprint. Mullions stay continuous by default (D41): a transom end on a
+  mullion is a through-node on its span.
+- **Junction division:** inserting profiles (by role, Assign, Auto-assign,
+  Properties, assemblies) divides transoms where they cross or meet a mullion
+  without a node, in the same undo step (`divideAtMullions`).
+- **Stock split:** a mullion longer than its stock bar is divided at the transom
+  nearest below the limit, joint at its middle, bottom or top, stack-joint gap
+  plus clearance; auto-connect then adds the splice.
+
+### 3.14 Profiles and profile assemblies (`src/core/library`)
+
+- **Custom profiles (D30, D31):** POLY outlines with arcs, insertion points,
+  DXF / JSON / CSV upload, the sketcher, profiles by role.
+- **Profile assemblies (D38):** an assembly-detail DXF becomes components drawn
+  about one base point. A profile upload of such a drawing re-bases every
+  outline of a detail on that base point too (D45, `shareDetailBasePoints`), and
+  previews draw each profile in its detail (`ui/profileContext.ts`).
 
 ## 4. Decision record
 
@@ -433,6 +512,7 @@ lists and NC files cannot disagree.
 | D42 | End fitting that follows the slope: a connection's cut-back carries the plane of the main member's facing side plus the joint's clearance (`Trim.fit`, `faceTrim`), applied through the end-cut machinery (`resolveEndCuts`) where the joint is more than 0.25° off square; the project auto-cut (`settings.autoCut`, `derive/autoCut.ts`) cuts ends without a connection, preparation or extension to the face they meet, choosing the main member as auto-connect does; user Fit / Mitre / Bevel wins; on a skewed joint the end plate lies on the main face | Sloped, V-shaped and folded facades: a square cut-back at the axis overlaps the main member on one side and leaves a wedge gap on the other; the client asked for profiles cut to the mullions as they are inserted and for fits in both directions with the slope. Deriving the cut from the joint keeps it right through every edit and output (3D, IFC, DSTV, drawings, lists, numbering) | Writing `fit` end preparations onto members when connections are placed (stale after edits, and a user fit could no longer be told apart); a larger gap on skewed joints (still a wedge, still an overlap at steep angles); turning every cleat onto the face (bent cleats: a new part kind) | Square joints derive bit for bit as before (fixture of 164 joints and facades; gusset braces, 45°, re-recorded: only the brace end changed, the old hash is asserted with fits off); new projects auto-cut with a 10 mm gap, projects saved before keep their ends (auto-cut off) but get the face fits on skewed connected ends; cleats, tee flanges, seats and fins of skewed joints still bear on the face along one line; client facade: 398 of 504 transom ends cut at 0.7°–52.4° ([CONNECTION_GEOMETRY.md §3.4a](CONNECTION_GEOMETRY.md)) |
 | D43 | Unfolded elevation as a rigid development of the GA's facade planes: each facade part (refitted on its members' axes, vertical within 1°) turned about the fold line it shares with the previous one into the drawing plane, one view frame per part, the strip turned to vertical folds; zoned on the strip like a GA view; its own drawing family (`-GA-04`, measured for the index, keyed by the parts it draws). Flat patterns of folded sections by the bent-plate method (outside legs and bend deductions for C / Z / L / U, mid-line of POLY thin-wall outlines) | The client asked to "unfold the drawings" in both senses; a rigid placement per plane keeps true shapes and lengths and makes the planes meet exactly at the folds, and reusing the facade parts keeps the names (*facade A, B*) of the GA's normal views | Arc-length development along the plan line (exact only for cylindrical facades, breaks members that span a fold); zoning each facade plane separately (a sheet per facet); unfolding folded sections from their outlines only | Planar facades get no new sheet (sample fixtures unchanged); curved facades are developed as at most eight best-fit planes; one assembly is drawn in one plane even where it crosses a fold; bent plates' part drawings show the formed shape instead of the flat edge view ([DRAWING_STANDARDS.md](DRAWING_STANDARDS.md) *Unfolded elevation*, *Flat patterns*) |
 | D44 | The client's own title block as free template content: `SheetTemplate` gains optional linework, free texts (a field source, fixed text or text with {PLACEHOLDERS}), a logo rectangle and a border flag; a DXF title block is read in 2D (`titleBlockDxf.ts`: lines, polylines, arcs, circles, ellipses, splines, solids, solid hatches, TEXT / MTEXT, INSERT with ATTDEF / ATTRIB, units) into that content, placeholders and attribute tags becoming live fields; the layout reserves the block's actual (fitted) size | One title-block model for imported, designed and grid templates, drawn by the same function into SVG, PDF and DXF; CAD title blocks carry their fields as placeholder texts or attributes, which map to the existing field sources | Embedding the DXF as an underlay (no live fields, no PDF / DXF parity); converting the DXF to grid cells (loses arbitrary linework) | Old templates and the ISO 7200 default draw exactly as before (additive model, migration sanitises); fingerprints exclude the title block (D15), so a block of the same size keeps every fingerprint; CAD fonts, line types, pattern hatches and images are not carried over (logo uploaded separately) |
+| D45 | Uploaded assembly details share one base point: the profile upload re-bases every outline of a detail (the assembly import's details: POINTs and marker blocks, clustered outlines) on that detail's base point, insertion point (0, 0) for all, with a group per detail (`ProfileDef.group`); every component is shown in its detail (previews, *Position in assembly* on part drawings) | The upload looked for each outline's insertion point within a quarter of its own size, so outlines of one detail got different insertion points (21 of 30 on the client's file had none) and were not extruded and cut about one line | Telling users to use only the assembly import; a manual common point in the review | A drawing without base points reads as before; the review can go back to one point per outline; inner loops are still holes in the profile upload (gaskets in grooves need the assembly import) |
 
 ## 5. Known limits and open items
 
@@ -457,6 +537,17 @@ lists and NC files cannot disagree.
   graphics.
 - **Platform:** no cloud projects, sharing or approval workflow; GitHub Pages
   needs one repository setting.
+- **Per feature:** each reference keeps its own limits section:
+  - wireframe check and continuous mullions: [WIREFRAME_CHECK.md §13](WIREFRAME_CHECK.md);
+  - modify tools: [MODIFY.md](MODIFY.md) *Limits*;
+  - connections: [CONNECTIONS.md](CONNECTIONS.md) *Limits*;
+  - profiles: [PROFILES.md §9](PROFILES.md);
+  - profile assemblies: [PROFILE_ASSEMBLIES.md §8](PROFILE_ASSEMBLIES.md);
+  - unfolded elevation and drawings on demand: [DRAWING_STANDARDS.md](DRAWING_STANDARDS.md);
+  - export package: [EXPORT_PACKAGE.md](EXPORT_PACKAGE.md) *Limits*;
+  - assemblies: [ASSEMBLIES.md](ASSEMBLIES.md) *Limits*;
+  - movement: [MOVEMENT.md](MOVEMENT.md) *Limits*;
+  - modelling: [MODELLING.md](MODELLING.md) *Limits*.
 
 ## 6. How to extend
 

@@ -36,7 +36,12 @@ export interface DxfProfileFound {
   def: ProfileDef;
   /** Where the name and the insertion point came from. */
   nameFrom: 'text' | 'file';
-  insertionFrom: 'point' | 'marker' | 'origin' | 'none';
+  /** 'detail': the base point of the assembly detail the outline belongs to (shared by all its outlines). */
+  insertionFrom: 'point' | 'marker' | 'origin' | 'none' | 'detail';
+  /** Where the outline's origin (its insertion point, else its box centre) lies in the drawing, mm. */
+  at: Vec2;
+  /** The assembly detail it belongs to (shareDetailBasePoints): its index, name and base point (drawing mm). */
+  detail?: { index: number; name: string; base: Vec2 };
   /** Validation problem (the profile cannot be added as it is). */
   error?: string;
   warnings: string[];
@@ -438,7 +443,7 @@ export function parseProfileDxf(text: string, opts: DxfProfileOptions = {}): Dxf
     const err = validateShape(shape);
     const deeper = loops.filter((h) => h.parent >= 0 && loops[h.parent].parent === i && h.depth === l.depth + 2).length;
     if (deeper) warnings.push(`${deeper} loop${deeper === 1 ? '' : 's'} inside a hole imported as separate profile${deeper === 1 ? '' : 's'}.`);
-    found.push({ def, nameFrom, insertionFrom, warnings, ...(err ? { error: err.replace(/^POLY: /, '') } : {}) });
+    found.push({ def, nameFrom, insertionFrom, at: { x: o.x, y: o.y }, warnings, ...(err ? { error: err.replace(/^POLY: /, '') } : {}) });
   });
   return { profiles: found, notes, unitScale: k, unitSource: opts.unitScale && opts.unitScale > 0 ? 'user' : sug.source };
 }

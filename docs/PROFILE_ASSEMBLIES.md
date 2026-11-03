@@ -231,7 +231,13 @@ carries the load. Consequences:
   `section:detail-callout`, `dim:section:bp-…`, `dim:detail:bp-…` (edits can hide or move them).
 - **Part drawings**: every fabricated component is a derived part, so it gets its own part
   drawing from the existing generator; POLY sections draw their outline and hollows in the
-  section and end views (tested for every component).
+  section and end views (tested for every component). A **Position in assembly** block
+  (`assemblyKey.ts`, id `block:assembly-key`) shows the whole composite section at a small ISO
+  scale (largest side ≤ 44 mm), this component hatched with a heavy outline, the others thin, and
+  the base point BP on a leader: the insertion point every component shares.
+- **Library**: the components table of an assembly, the custom-profile list and the selected
+  profile's preview draw a component in its assembly (the others dimmed, BP marked;
+  `profileContext` in `src/ui/profileContext.ts`).
 
 ## 6. Assistant (`src/assistant/modules/profileAssemblies.ts`)
 

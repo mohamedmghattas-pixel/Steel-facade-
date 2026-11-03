@@ -3,20 +3,14 @@
  * detail under review) in the assembly's section coordinates, coloured by
  * material class, the main component outlined, and the base point (BP) marked.
  */
+import { useMemo } from 'react';
 import type { ProfileAssembly, Vec2 } from '../core/model/types';
 import { assemblySections, materialClass, type MaterialClass } from '../core/library/profileAssembly';
+import { useStore } from '../state/store';
+import { profileContext, type PreviewLoop } from './profileContext';
 
-export interface PreviewLoop {
-  key: string;
-  outer: Vec2[];
-  holes: Vec2[][];
-  material: string;
-  main?: boolean;
-  off?: boolean;
-  /** Highlighted (hover in the components list). */
-  hot?: boolean;
-  title?: string;
-}
+export { profileContext, type PreviewLoop } from './profileContext';
+
 
 const path = (pts: Vec2[]) => `M${pts.map((q) => `${q.x.toFixed(2)},${(-q.y).toFixed(2)}`).join('L')}Z`;
 export const CLASS_COLOR: Record<MaterialClass, string> = { steel: '#5f86c0', stainless: '#8fa3b8', aluminium: '#c3ccd6', rubber: '#2f3338', plastic: '#e2a63c' };
@@ -77,4 +71,12 @@ export function AssemblyPreview({ asm, size = 96, rotation = 0 }: { asm: Profile
     title: `${x.comp.name} · ${x.comp.material}`,
   }));
   return <LoopsPreview loops={loops} size={size} label={`${asm.name}: composite section with its base point`} />;
+}
+
+/** A profile drawn in its detail (see profileContext); null when it has none. */
+export function ProfileContextPreview({ name, size = 96, height }: { name: string; size?: number; height?: number }) {
+  const lib = useStore((s) => s.project.library);
+  const ctx = useMemo(() => profileContext(lib, name), [lib, name]);
+  if (!ctx) return null;
+  return <LoopsPreview loops={ctx.loops} size={size} height={height} label={`${ctx.title}: the profile highlighted in its detail, base point = shared insertion point`} />;
 }

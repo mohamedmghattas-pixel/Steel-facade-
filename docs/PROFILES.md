@@ -188,6 +188,20 @@ In the review step you can rename profiles, untick them, set the family and the 
 all of them, and change the DXF drawing units. *Edit in sketcher…* opens an outline in the
 sketcher before it is added.
 
+**One base point per detail.** When the drawing holds assembly details (POINTs or base-point
+marker blocks such as `CP`, the same rule as the assembly import, [PROFILE_ASSEMBLIES.md
+§2](PROFILE_ASSEMBLIES.md)), every outline of a detail is re-based on that detail's base point:
+all of them get it as their insertion point, so they are extruded and cut about one line, as
+they sit in the detail (`shareDetailBasePoints` in `core/library/profileAssemblyDxf.ts`). Before,
+each outline looked for a marker within a quarter of its own size, so outlines away from the
+base point (covers, gaskets, packers) fell back to the DXF origin or their own centre. The
+outlines get a group (`ProfileDef.group`, e.g. `profiles · detail 1`), and the review and the
+library show each one in its detail: the other outlines dimmed, the base point marked. The
+marker itself (a tiny loop on a base point) is listed but not imported. *Insertion point → Each
+outline its own* in the review goes back to the per-outline rule. A drawing without base points
+is read as before. For details with gaskets in grooves (loops inside other loops), *Import as
+profile assembly…* is still the right path: the profile upload reads an inner loop as a hole.
+
 ### 4.1 JSON (all shapes)
 
 `profileDefsToJson` / `parseProfileJson`:

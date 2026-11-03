@@ -20,7 +20,9 @@ export interface ReviewItem {
   warnings: string[];
   /** DXF: where the name / insertion point came from. */
   nameFrom?: 'text' | 'file';
-  insertionFrom?: 'point' | 'marker' | 'origin' | 'none';
+  insertionFrom?: 'point' | 'marker' | 'origin' | 'none' | 'detail';
+  /** DXF: the assembly detail the outline belongs to (its base point is the shared insertion point). */
+  detail?: { index: number; name: string };
 }
 
 /** Profiles found in an uploaded file, waiting for the user to review them. */
@@ -33,6 +35,8 @@ export interface ImportReview {
   /** DXF: millimetres per drawing unit, and where it came from. */
   unitScale?: number;
   unitSource?: string;
+  /** DXF: outlines of one detail share its base point as insertion point (default true). */
+  sharedBase?: boolean;
 }
 
 /** A reviewed detail of an assembly-detail upload: what to do with it and the choices made. */

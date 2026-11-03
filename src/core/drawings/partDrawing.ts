@@ -24,6 +24,7 @@ import type { PartSlot } from '../derive/model';
 import type { Drawing } from './types';
 import { Sheet, dimChain, dimLinear, dimRunning } from './dims';
 import { notesBlock, packBlocks, tableBlock, type Block, type Rect } from './layout';
+import { assemblyKeyBlock } from './assemblyKey';
 import { ISO_SCALES, FINISH_LABEL, TEXT, generalNotes, scaleLabel } from './standards';
 import { bendMarks, brokenAxis, drawBand, endFeatures, endMarks, endOutline, frontInnerLines, symmetricSection, topInnerLines, uniqSorted } from './views';
 import { closedByWelding, designation, finalize, newSheet, type DrawCtx } from './compose';
@@ -140,6 +141,12 @@ export function partDrawing(ctx: DrawCtx, part: Part, qty: number): Drawing {
   }
   const strip = partStrip(part);
   if (strip) blocks.push(flatStripBlock(strip, part.length));
+  // A component of a composite member: where it sits in the assembly section, about the shared base point.
+  if (part.component) {
+    const asm = p.library?.profileAssemblies?.find((a) => a.id === part.component!.assembly);
+    const key = asm ? assemblyKeyBlock(asm, part.component.key, s.tb.w) : null;
+    if (key) blocks.push(key);
+  }
   const areas = packBlocks(s, size, blocks);
   const free = [areas.full, areas.left];
   // Measuring (drawing index): the blocks decide the sheet count; the views (and with them the scale) are left out.

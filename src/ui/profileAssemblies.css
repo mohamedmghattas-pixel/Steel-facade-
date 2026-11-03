@@ -209,3 +209,15 @@
   width: 100%;
   justify-content: flex-end;
 }
+
+/* A profile in its detail (library preview, component rows). */
+.profile-context {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+.asm-comp-pos {
+  width: 48px;
+  padding: 2px 4px;
+}

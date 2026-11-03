@@ -502,3 +502,12 @@ export function componentFinish(c: ProfileAssemblyComponent, memberFinish: Finis
   const k = materialClass(c.material);
   return k === 'steel' ? memberFinish : 'none';
 }
+
+/** The profile assembly a profile is a component of (the first one, when several use it), with that component. */
+export function assemblyOfProfile(p: Pick<Project, 'library'>, profile: string): { asm: ProfileAssembly; comp: ProfileAssemblyComponent } | undefined {
+  for (const asm of p.library?.profileAssemblies ?? []) {
+    const comp = asm.components.find((c) => c.profile === profile);
+    if (comp) return { asm, comp };
+  }
+  return undefined;
+}

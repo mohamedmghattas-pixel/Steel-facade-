@@ -8,6 +8,7 @@ import type { Id, MemberRole, Project, RoleProfile } from '../core/model/types';
 import { ROLE_LABEL } from '../core/model/ops';
 import { getProfile, isCustomProfile, parseProfileCsv, parseProfileJson, profileDefsToCsv, profileDefsToJson, type ProfileDef } from '../core/library/profiles';
 import { parseProfileDxf, profileToDxf } from '../core/library/profileDxf';
+import { shareDetailBasePoints } from '../core/library/profileAssemblyDxf';
 import { emptySketch, sketchFromDef } from '../core/library/sketch';
 import { assignProfilesByRole, roleProfilePatch, setRoleProfile } from '../core/model/roleProfiles';
 import { divideAtMullions, type DivideResult } from '../core/model/junctions';
@@ -105,13 +106,23 @@ export async function deleteCustomProfile(name: string) {
 // Upload with review
 
 /** Review list for an uploaded file (DXF, JSON or CSV). */
-export function reviewFromText(fileName: string, text: string, unitScale?: number): ImportReview {
+export function reviewFromText(fileName: string, text: string, unitScale?: number, sharedBase = true): ImportReview {
   const ext = fileName.toLowerCase().split('.').pop() ?? '';
   const kind: ImportReview['kind'] = ext === 'dxf' || /^\s*0\s*[\r\n]+\s*SECTION/.test(text) ? 'dxf' : ext === 'json' || /^\s*[[{]/.test(text) ? 'json' : 'csv';
   if (kind === 'dxf') {
-    const r = parseProfileDxf(text, { fileName, unitScale });
-    const items: ReviewItem[] = r.profiles.map((f) => ({ def: f.def, include: !f.error, error: f.error, warnings: f.warnings, nameFrom: f.nameFrom, insertionFrom: f.insertionFrom }));
-    return { fileName, kind, text, items, notes: r.notes, unitScale: r.unitScale, unitSource: r.unitSource };
+    // Outlines of an assembly detail share the detail's base point as insertion point (one line to extrude and cut about).
+    const parsed = parseProfileDxf(text, { fileName, unitScale });
+    const r = sharedBase ? shareDetailBasePoints(text, parsed, { fileName, unitScale: parsed.unitScale }) : parsed;
+    const items: ReviewItem[] = r.profiles.map((f) => ({
+      def: f.def,
+      include: !f.error,
+      error: f.error,
+      warnings: f.warnings,
+      nameFrom: f.nameFrom,
+      insertionFrom: f.insertionFrom,
+      ...(f.detail ? { detail: { index: f.detail.index, name: f.detail.name } } : {}),
+    }));
+    return { fileName, kind, text, items, notes: r.notes, unitScale: r.unitScale, unitSource: r.unitSource, sharedBase };
   }
   const r = kind === 'json' ? parseProfileJson(text) : parseProfileCsv(text);
   return { fileName, kind, text, items: r.defs.map((def) => ({ def, include: true, warnings: [] })), notes: r.errors };

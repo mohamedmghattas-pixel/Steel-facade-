@@ -35,7 +35,7 @@
 import type { ComponentLengthRule, ProfileAssembly, ProfileAssemblyComponent, ProfileComponentKind, Vec2 } from '../model/types';
 import { readDxf, gNum, gStr, type DxfDocument } from '../io/dxfReader';
 import { suggestedUnitScale } from '../io/dxfGeometry';
-import { chain, collectDxf2d, crossing, type Piece } from './profileDxf';
+import { chain, collectDxf2d, crossing, type DxfProfileImport, type Piece } from './profileDxf';
 import { flattenLoop, loopArea, loopBox, pointInPolygon, polygonsTouch, reverseLoop, signedArea, type PolyVertex } from './polyShape';
 import { validateShape, type PolyShape } from './shapes';
 import type { ProfileDef } from './profiles';
@@ -645,4 +645,69 @@ export function buildDetailAssembly(imp: AsmDxfImport, detail: number, choice: D
     ...(choice.source ? { source: choice.source } : {}),
   };
   return { assembly, defs, errors };
+}
+
+// ---------------------------------------------------------------------------
+// Profile upload: one base point per detail
+
+/**
+ * A profile upload (parseProfileDxf) of a drawing with assembly details: every
+ * outline of a detail is re-based on that detail's base point, so all of them
+ * share one insertion point (the base point) and are extruded and cut about the
+ * same line. The details are those of the assembly import (parseAssemblyDxf on
+ * the same text and units: base points from POINTs and marker blocks, outlines
+ * clustered and each cluster given to its nearest base point); outlines are
+ * matched by their box. Details whose base point is not a marker (no POINT or
+ * marker block in the drawing) are left as they are, and so are outlines in no
+ * detail. Outlines that are the marker itself (a tiny loop on a base point) are
+ * flagged, not imported.
+ */
+export function shareDetailBasePoints(text: string, r: DxfProfileImport, opts: { fileName?: string; unitScale?: number } = {}): DxfProfileImport {
+  let imp: AsmDxfImport;
+  try {
+    imp = parseAssemblyDxf(text, { fileName: opts.fileName, unitScale: opts.unitScale ?? r.unitScale });
+  } catch {
+    return r;
+  }
+  if (!imp.basePoints.length) return r;
+  const real = (d: AsmDetail) => !d.baseFrom.every((f) => f.startsWith('none'));
+  const file = (opts.fileName ?? 'drawing').replace(/\.[^.]+$/, '').trim() || 'drawing';
+  const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+  let shared = 0;
+  const details = new Set<number>();
+  const profiles = r.profiles.map((f) => {
+    const shape = f.def.shape;
+    if (shape.type !== 'POLY') return f;
+    const pts = flattenLoop(shape.outer);
+    const b0 = loopBox(pts);
+    const box = { minX: b0.minX + f.at.x, minY: b0.minY + f.at.y, maxX: b0.maxX + f.at.x, maxY: b0.maxY + f.at.y };
+    const o = imp.outlines.find((x) => x.detail >= 0 && near(x.box.minX, box.minX) && near(x.box.maxX, box.maxX) && near(x.box.minY, box.minY) && near(x.box.maxY, box.maxY));
+    if (!o) {
+      // The marker drawn as a loop (a small circle or square on a base point): not a profile.
+      const size = Math.max(box.maxX - box.minX, box.maxY - box.minY);
+      const onBase = imp.basePoints.some((bp) => bp.p.x >= box.minX - 1 && bp.p.x <= box.maxX + 1 && bp.p.y >= box.minY - 1 && bp.p.y <= box.maxY + 1);
+      if (onBase && size <= 25) return { ...f, error: f.error ?? 'Base-point marker, not a profile.' };
+      return f;
+    }
+    const d = imp.details[o.detail];
+    if (!d || !real(d)) return f;
+    const dx = f.at.x - d.base.x;
+    const dy = f.at.y - d.base.y;
+    const mv = (loop: PolyVertex[]) => loop.map((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
+    const next: PolyShape = { type: 'POLY', outer: mv(shape.outer), ...(shape.holes?.length ? { holes: shape.holes.map(mv) } : {}) };
+    shared++;
+    details.add(d.index);
+    const name = imp.details.length > 1 ? `detail ${d.index + 1}` : 'detail';
+    return {
+      ...f,
+      def: { ...f.def, shape: next, insertion: { x: 0, y: 0 }, group: `${file} · ${name}` },
+      insertionFrom: 'detail' as const,
+      at: { ...d.base },
+      detail: { index: d.index, name: d.name, base: { ...d.base } },
+      warnings: f.warnings.filter((w) => !/insertion point/i.test(w)),
+    };
+  });
+  if (!shared) return r;
+  const notes = [...r.notes, `${shared} outline${shared === 1 ? '' : 's'} of ${details.size} detail${details.size === 1 ? '' : 's'} share their detail's base point as insertion point (extruded and cut about the same line).`];
+  return { ...r, profiles, notes };
 }

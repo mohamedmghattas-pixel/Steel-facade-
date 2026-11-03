@@ -643,3 +643,81 @@ describe('export package with composite members', () => {
     expect(q.items.find((i) => i.item.output === 'extrusions')?.skip).toMatch(/non-steel/);
   });
 });
+
+describe('one base point per detail (profile upload, the assembly behind each profile)', () => {
+  it('a profile upload re-bases every outline of a detail on its base point; markers are left out', async () => {
+    const { parseProfileDxf } = await import('../src/core/library/profileDxf');
+    const { shareDetailBasePoints } = await import('../src/core/library/profileAssemblyDxf');
+    const text = syntheticDxf();
+    const each = parseProfileDxf(text, { fileName: 'cw-details.dxf' });
+    const r = shareDetailBasePoints(text, each, { fileName: 'cw-details.dxf' });
+    const shared = r.profiles.filter((f) => f.insertionFrom === 'detail');
+    // Detail A (unturned): steel box, back profile, cover cap, gasket, shim — all about base point A.
+    const a = shared.filter((f) => f.detail?.index === 0);
+    expect(a.length).toBeGreaterThanOrEqual(4);
+    for (const f of shared) {
+      expect(f.def.insertion).toEqual({ x: 0, y: 0 });
+      expect(f.def.group).toBe(`cw-details · detail ${f.detail!.index + 1}`);
+    }
+    // The outlines sit where they are drawn relative to the base point (100, 100), not about their own centres.
+    const box = (f: (typeof shared)[number]) => {
+      const xs = (f.def.shape as { outer: { x: number; y: number }[] }).outer.map((q) => q.x);
+      const ys = (f.def.shape as { outer: { x: number; y: number }[] }).outer.map((q) => q.y);
+      return [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)].map((v) => Math.round(v));
+    };
+    const boxes = a.map(box);
+    expect(boxes).toContainEqual([-20, 20, 20, 100]); // steel box
+    expect(boxes).toContainEqual([-10, 10, 1, 19]); // back profile
+    expect(boxes).toContainEqual([-15, 15, -20, -10]); // cover cap
+    // Before: each outline about its own box centre (no marker near the cap or the steel box).
+    const capBefore = each.profiles.find((f) => box(f as never).join() === [-15, 15, -5, 5].join());
+    expect(capBefore?.insertionFrom).not.toBe('detail');
+    // The upload names the shared rule in its notes; without base points nothing changes.
+    expect(r.notes.some((n) => /share their detail's base point/.test(n))).toBe(true);
+    const plain = ['0', 'SECTION', '2', 'ENTITIES', '0', 'LWPOLYLINE', '8', 'P', '90', '4', '70', '1', '10', '0', '20', '0', '10', '50', '20', '0', '10', '50', '20', '30', '10', '0', '20', '30', '0', 'ENDSEC', '0', 'EOF'].join('\n');
+    const pr = parseProfileDxf(plain, { fileName: 'one.dxf' });
+    expect(shareDetailBasePoints(plain, pr, { fileName: 'one.dxf' })).toBe(pr);
+  });
+
+  it('the upload review shares by default and can give each outline its own insertion point', async () => {
+    const { reviewFromText } = await import('../src/ui/profileActions');
+    const shared = reviewFromText('cw-details.dxf', syntheticDxf());
+    expect(shared.sharedBase).toBe(true);
+    expect(shared.items.filter((it) => it.insertionFrom === 'detail').length).toBeGreaterThanOrEqual(8);
+    const each = reviewFromText('cw-details.dxf', syntheticDxf(), undefined, false);
+    expect(each.items.some((it) => it.insertionFrom === 'detail')).toBe(false);
+    // The group survives the JSON round trip of the library.
+    const { profileDefsToJson, parseProfileJson } = await import('../src/core/library/profiles');
+    const defs = shared.items.filter((it) => it.include).map((it) => it.def);
+    const back = parseProfileJson(profileDefsToJson(defs)).defs;
+    expect(back.map((d) => d.group)).toEqual(defs.map((d) => d.group));
+  });
+
+  it('a component, or a profile uploaded with its detail, is shown in its detail', async () => {
+    const { profileContext } = await import('../src/ui/profileContext');
+    const { assemblyOfProfile } = await import('../src/core/library/profileAssembly');
+    const p = createProject('Context');
+    const asm = withAssembly(p);
+    const cap = asm.components.find((c) => c.profile !== asm.components.find((x) => x.key === asm.main)!.profile)!;
+    expect(assemblyOfProfile(p, cap.profile)?.asm.id).toBe(asm.id);
+    const ctx = profileContext(p.library, cap.profile)!;
+    expect(ctx.loops).toHaveLength(asm.components.length);
+    expect(ctx.loops.filter((l) => l.hot).map((l) => l.key)).toEqual([cap.key]);
+    expect(ctx.loops.filter((l) => l.off)).toHaveLength(asm.components.length - 1);
+    // A single profile has no context.
+    expect(profileContext(p.library, 'SHS 100x100x5')).toBeNull();
+  });
+
+  it('a component part drawing shows where the part sits in the assembly, about the base point', () => {
+    const { p, dm } = facadeWithComposite();
+    const part = dm.parts.find((x) => x.component && !x.component.main)!;
+    const qty = dm.parts.filter((x) => x.mark === part.mark).length;
+    const d = partDrawing(p, dm, part, qty);
+    expect(d.entities.some((e) => e.id === 'assembly-key:bp')).toBe(true);
+    expect(d.entities.some((e) => e.id === `assembly-key:${part.component!.key}`)).toBe(true);
+    expect(checkSheetLayout(d)).toEqual([]);
+    // A plain (non-composite) part has none.
+    const plain = dm.parts.find((x) => !x.component && x.kind === 'member')!;
+    expect(partDrawing(p, dm, plain, 1).entities.some((e) => e.id?.startsWith('assembly-key'))).toBe(false);
+  });
+});

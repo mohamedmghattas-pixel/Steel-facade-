@@ -346,6 +346,11 @@ export interface ProfileDef {
   material?: string;
   /** Editable sketch the outline was made from (ProfileSketcher); opaque to the catalogue. */
   sketch?: unknown;
+  /**
+   * Detail the outline was uploaded with ("profiles.dxf · detail 1"): every profile of one group is drawn
+   * about the same base point (their shared insertion point), so they can be shown together.
+   */
+  group?: string;
 }
 
 /** Build a Profile from a definition (throws on an invalid shape or name). */
@@ -757,7 +762,7 @@ export function parseProfileJson(text: string): { defs: ProfileDef[]; errors: st
       return void errors.push(`${label}: ${(e as Error).message.replace(`${d.name.trim()}: `, '')}`);
     }
     const def: ProfileDef = { name: d.name.trim(), shape: d.shape };
-    for (const k of ['standard', 'family', 'mass', 'spec', 'insertion', 'material', 'sketch'] as const) if (d[k] !== undefined) (def as unknown as Record<string, unknown>)[k] = d[k];
+    for (const k of ['standard', 'family', 'mass', 'spec', 'insertion', 'material', 'sketch', 'group'] as const) if (d[k] !== undefined) (def as unknown as Record<string, unknown>)[k] = d[k];
     if (def.material) def.material = findMaterial(def.material)!.name;
     seen.add(def.name);
     defs.push(def);

@@ -5,7 +5,8 @@ import { Field, NumberInput, ProfilePicker, Segmented, Select, TextInput, kg, mm
 import { MEMBER_ROLES, type Align, type AlignMode, type Finish, type Member, type MemberRole } from '../core/model/types';
 import { ROLE_LABEL, updateMembers, newId } from '../core/model/ops';
 import { setMemberRole } from '../core/model/roleProfiles';
-import { assignProfileAssembly } from '../core/library/profileAssembly';
+import { assemblyOfProfile, assignProfileAssembly } from '../core/library/profileAssembly';
+import { ProfileContextPreview, profileContext } from './AssemblyPreview';
 import type { DivideResult } from '../core/model/junctions';
 import { alignModeOf } from '../core/model/geometry';
 import { MATERIALS } from '../core/library/materials';
@@ -584,10 +585,19 @@ function ProjectProps() {
 
 function ProfilePreview({ name }: { name: string }) {
   const p = getProfile(name);
+  const lib = useStore((s) => s.project.library);
+  const ctx = useMemo(() => profileContext(lib, name), [lib, name]);
   if (!p) return null;
   return (
     <div className="profile-preview">
-      <SectionPreview profile={p} size={120} mode={p.insertion ? 'insertion' : 'grid'} title={`${name} cross-section`} />
+      {ctx ? (
+        <div className="profile-context" title={`${name}: ${ctx.of}`}>
+          <ProfileContextPreview name={name} size={120} />
+          <span className="muted asm-small">In its detail · BP = shared insertion point</span>
+        </div>
+      ) : (
+        <SectionPreview profile={p} size={120} mode={p.insertion ? 'insertion' : 'grid'} title={`${name} cross-section`} />
+      )}
       <dl>
         <dt>h × b</dt>
         <dd>
@@ -735,6 +745,7 @@ function LibraryPanel() {
 /** The project's custom profiles with edit / export / remove. */
 function CustomProfileList() {
   const defs = useStore((s) => s.project.library.profiles) as unknown as ProfileDef[];
+  const lib = useStore((s) => s.project.library);
   const set = useStore((s) => s.set);
   const active = useStore((s) => s.activeProfile);
   if (!defs.length) return null;
@@ -744,7 +755,7 @@ function CustomProfileList() {
         const p = getProfile(d.name);
         return (
           <div key={d.name} className={`custom-item ${active === d.name ? 'on' : ''}`}>
-            <SectionPreview profile={p ?? null} size={40} mode={p?.insertion ? 'insertion' : 'grid'} />
+            {d.group || assemblyOfProfile({ library: lib }, d.name) ? <ProfileContextPreview name={d.name} size={40} /> : <SectionPreview profile={p ?? null} size={40} mode={p?.insertion ? 'insertion' : 'grid'} />}
             <button className="link-btn custom-name" onClick={() => set({ activeProfile: d.name })} title="Make it the active profile">
               {d.name}
               <span className="muted"> {p ? `${profileMassIn(p).toFixed(2)} kg/m` : 'invalid'}</span>

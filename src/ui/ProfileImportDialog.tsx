@@ -8,6 +8,8 @@ import { profileFromDef, profileMassIn, type Profile } from '../core/library/pro
 import { MATERIALS } from '../core/library/materials';
 import { Field, Modal, Select } from './widgets';
 import { SectionPreview } from './SectionPreview';
+import { LoopsPreview, type PreviewLoop } from './AssemblyPreview';
+import { flattenLoop } from '../core/library/polyShape';
 import { addReviewed, openSketcherWith, reviewFromText } from './profileActions';
 import { useProfileUi, type ImportReview, type ReviewItem } from './profileUiState';
 import { openAssemblyReview } from './profileAssemblyActions';
@@ -21,7 +23,7 @@ const UNITS: { value: string; label: string }[] = [
   { value: '304.8', label: 'feet' },
 ];
 
-const INS_FROM: Record<string, string> = { point: 'POINT entity', marker: 'INSERT-layer marker', origin: 'DXF origin (0, 0)', none: 'none (3×3 grid)' };
+const INS_FROM: Record<string, string> = { point: 'POINT entity', marker: 'INSERT-layer marker', origin: 'DXF origin (0, 0)', none: 'none (3×3 grid)', detail: 'the base point of its detail, shared by all its outlines' };
 
 export function ProfileImportHost() {
   const review = useProfileUi((s) => s.review);
@@ -48,6 +50,24 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
   const dup = new Set(names.filter((n, i) => names.indexOf(n) !== i));
   const chosen = review.items.filter((it, i) => it.include && built[i].p && !dup.has(it.def.name.trim()));
   const setAll = (patch: Partial<ReviewItem['def']>) => set({ items: review.items.map((it) => ({ ...it, def: { ...it.def, ...patch } })) });
+  /** Read the file again (units, insertion rule), keeping the names typed and the selection. */
+  const reread = (unitScale: number | undefined, sharedBase: boolean) => {
+    const r = reviewFromText(review.fileName, review.text, unitScale, sharedBase);
+    r.items = r.items.map((it, i) => (review.items[i] ? { ...it, include: review.items[i].include && !it.error, def: { ...it.def, name: review.items[i].def.name, family: review.items[i].def.family, material: review.items[i].def.material } } : it));
+    useProfileUi.setState({ review: r });
+  };
+  // Outlines of each detail in its base-point coordinates (for the previews: the outline in its detail).
+  const detailLoops = useMemo(() => {
+    const by = new Map<number, PreviewLoop[]>();
+    review.items.forEach((it, i) => {
+      if (!it.detail || it.def.shape.type !== 'POLY') return;
+      const list = by.get(it.detail.index) ?? [];
+      list.push({ key: String(i), outer: flattenLoop(it.def.shape.outer), holes: (it.def.shape.holes ?? []).map((h) => flattenLoop(h)), material: it.def.material ?? 'S355', title: it.def.name });
+      by.set(it.detail.index, list);
+    });
+    return by;
+  }, [review.items]);
+  const hasDetails = review.items.some((it) => it.detail) || review.sharedBase === false;
   return (
     <Modal
       wide
@@ -70,12 +90,19 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
             <Select
               value={String(review.unitScale ?? 1)}
               options={UNITS.some((u) => u.value === String(review.unitScale)) ? UNITS : [...UNITS, { value: String(review.unitScale), label: `${review.unitScale} mm/unit` }]}
-              onChange={(v) => {
-                const r = reviewFromText(review.fileName, review.text, Number(v));
-                // Keep the names the user typed and the selection.
-                r.items = r.items.map((it, i) => (review.items[i] ? { ...it, include: review.items[i].include && !it.error, def: { ...it.def, name: review.items[i].def.name, family: review.items[i].def.family, material: review.items[i].def.material } } : it));
-                useProfileUi.setState({ review: r });
-              }}
+              onChange={(v) => reread(Number(v), review.sharedBase !== false)}
+            />
+          </Field>
+        )}
+        {review.kind === 'dxf' && hasDetails && (
+          <Field label="Insertion point" hint="An assembly detail: all its outlines are extruded and cut about one base point">
+            <Select<string>
+              value={review.sharedBase === false ? 'each' : 'shared'}
+              options={[
+                { value: 'shared', label: 'Base point of the detail (shared)' },
+                { value: 'each', label: 'Each outline its own' },
+              ]}
+              onChange={(v) => reread(review.unitScale, v === 'shared')}
             />
           </Field>
         )}
@@ -105,7 +132,15 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
           const p = b.p;
           return (
             <div key={i} className={`pi-item ${it.include && p ? '' : 'off'}`}>
-              <SectionPreview profile={p ?? null} shape={p ? undefined : it.def.shape} insertion={null} size={96} mode={p?.insertion ? 'insertion' : 'grid'} />
+              {it.detail && (detailLoops.get(it.detail.index)?.length ?? 0) > 1 ? (
+                <LoopsPreview
+                  loops={detailLoops.get(it.detail.index)!.map((l) => ({ ...l, off: l.key !== String(i), hot: l.key === String(i) }))}
+                  size={96}
+                  label={`${it.def.name} in its detail (base point marked)`}
+                />
+              ) : (
+                <SectionPreview profile={p ?? null} shape={p ? undefined : it.def.shape} insertion={null} size={96} mode={p?.insertion ? 'insertion' : 'grid'} />
+              )}
               <div className="pi-main">
                 <div className="pi-row">
                   <input type="checkbox" checked={it.include && !!p} disabled={!p} onChange={(e) => setItem(i, { include: e.target.checked })} aria-label={`Import ${it.def.name}`} />
@@ -126,6 +161,7 @@ function ProfileImportDialog({ review }: { review: ImportReview }) {
                 )}
                 <div className="muted pi-small">
                   {it.nameFrom && <>Name from {it.nameFrom === 'text' ? 'drawing text' : 'file name'} · </>}
+                  {it.detail && <>Detail {it.detail.index + 1} ({it.detail.name}) · </>}
                   Insertion point: {it.insertionFrom ? INS_FROM[it.insertionFrom] : it.def.insertion ? `${it.def.insertion.x}, ${it.def.insertion.y}` : 'none (3×3 grid)'}
                   {dup.has(it.def.name.trim()) && <span className="warning"> · duplicate name</span>}
                 </div>

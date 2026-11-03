@@ -8,7 +8,7 @@ import type { ProfileAssembly, ProfileComponentKind } from '../core/model/types'
 import { COMPONENT_KINDS, KIND_LABEL, assemblyBox, assemblyMassPerMetre, lengthRuleLabel, validateProfileAssembly } from '../core/library/profileAssembly';
 import { useStore } from '../state/store';
 import { Select } from './widgets';
-import { AssemblyPreview } from './AssemblyPreview';
+import { AssemblyPreview, ProfileContextPreview } from './AssemblyPreview';
 import { MATERIAL_OPTIONS, RuleEditor } from './ProfileAssemblyDialog';
 import { assignAssemblyToSelection, openAssemblyImport, removeAssemblyUi, setComponentUi, setMainComponentUi, updateAssemblyUi } from './profileAssemblyActions';
 import './profileAssemblies.css';
@@ -94,6 +94,7 @@ function AssemblyEditor({ a }: { a: ProfileAssembly }) {
         <table>
           <thead>
             <tr>
+              <th aria-label="Position in the assembly" />
               <th>Component</th>
               <th>Material</th>
               <th>Kind</th>
@@ -105,6 +106,9 @@ function AssemblyEditor({ a }: { a: ProfileAssembly }) {
           <tbody>
             {a.components.map((c) => (
               <tr key={c.key}>
+                <td className="asm-comp-pos">
+                  <ProfileContextPreview name={c.profile} size={44} />
+                </td>
                 <td title={c.profile}>{c.name}</td>
                 <td>
                   <Select value={c.material} options={MATERIAL_OPTIONS.some((m) => m.value === c.material) ? MATERIAL_OPTIONS : [{ value: c.material, label: c.material }, ...MATERIAL_OPTIONS]} onChange={(v) => setComponentUi(a.id, c.key, { material: v })} />
